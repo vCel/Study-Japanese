@@ -1,0 +1,265 @@
+import { expect, test, type Page } from "@playwright/test";
+
+/** Titles of the cards on a listing page (each card renders its title as an h2). */
+async function cardTitles(page: Page, path: string): Promise<string[]> {
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+  return page.locator("main h2").allInnerTexts();
+}
+
+function overlap(a: string[], b: string[]): string[] {
+  const inB = new Set(b);
+  return a.filter((item) => inB.has(item));
+}
+
+test.describe("word lists vs phrase lists", () => {
+  test("home shows word lists only — phrase lists are moved off it", async ({ page }) => {
+    const homeLists = await cardTitles(page, "/");
+    const phraseLists = await cardTitles(page, "/phrases/lists");
+
+    // The seed migration ships one phrase list ("Everyday Phrases").
+    expect(phraseLists.length).toBeGreaterThan(0);
+    expect(overlap(homeLists, phraseLists)).toEqual([]);
+  });
+
+  test("home header hides the add button until you're signed in", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1, name: "Word lists" })).toBeVisible();
+    // The e2e browser is anonymous, so the create button must not be offered.
+    await expect(page.getByRole("link", { name: "Add word list" })).toHaveCount(0);
+  });
+
+  test("phrase lists page counts phrases and tags link back to itself", async ({ page }) => {
+    await page.goto("/phrases/lists");
+    await expect(page.getByRole("heading", { level: 1, name: "Phrase lists" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Everyday Phrases" })
+    ).toBeVisible();
+
+    // Badge counts phrases, not words.
+    await expect(page.locator("main")).toContainText(/\d+\s+phrases/);
+
+    // Tag links keep the reader on the phrase-lists page.
+    await expect(page.getByRole("link", { name: "#phrases" })).toHaveAttribute(
+      "href",
+      "/phrases/lists?tag=phrases"
+    );
+  });
+});
+
+test.describe("phrases vs words", () => {
+  test("phrases are excluded from /words", async ({ page }) => {
+    const words = await cardTitles(page, "/words");
+    const phrases = await cardTitles(page, "/phrases");
+
+    expect(phrases.length).toBeGreaterThan(0);
+    expect(overlap(words, phrases)).toEqual([]);
+  });
+
+  test("/phrases links each phrase to its detail page", async ({ page }) => {
+    await page.goto("/phrases");
+    await expect(page.getByRole("heading", { level: 1, name: "Phrases" })).toBeVisible();
+    await expect(page.locator("main")).toContainText(/\d+\s+phrases?/);
+    await expect(page.locator("main a[href^='/words/']").first()).toBeVisible();
+  });
+});
+
+/**
+ * Filtering by tag looks the same everywhere: the tag becomes a chip under the
+ * search bar (never text inside it), and the chip links stay on the page you
+ * are already browsing.
+ */
+test.describe("tag filters", () => {
+  test("word lists show the active tag as a chip, not in the search box", async ({ page }) => {
+    await page.goto("/?tag=jlpt");
+
+    await expect(page.locator("main input[name='tag']")).toHaveValue("");
+    await expect(page.getByRole("link", { name: "#jlpt ✕" })).toHaveAttribute("href", "/");
+
+    // The popover keeps the reader — and the part-of-speech filter — in place.
+    await page.goto("/?tag=jlpt&pos=noun");
+    await page.getByRole("button", { name: "Tags" }).click();
+    const popover = page.locator("[data-slot='tag-popover']");
+    await expect(popover.getByRole("link", { name: /^#n5\b/ })).toHaveAttribute(
+      "href",
+      "/?tag=n5&pos=noun"
+    );
+  });
+
+  test("phrase lists filter in place", async ({ page }) => {
+    await page.goto("/phrases/lists?tag=phrases");
+
+    await expect(page.locator("main input[name='tag']")).toHaveValue("");
+    await expect(page.getByRole("link", { name: "#phrases ✕" })).toHaveAttribute(
+      "href",
+      "/phrases/lists"
+    );
+
+    // Regression: a tag chip used to send you to the word-list page.
+    await page.getByRole("button", { name: "Tags" }).click();
+    await expect(
+      page.locator("[data-slot='tag-popover']").getByRole("link", { name: /^#jlpt\b/ })
+    ).toHaveAttribute("href", "/phrases/lists?tag=jlpt");
+  });
+
+  test("a phrase list's own tags stay on the phrase-lists page", async ({ page }) => {
+    await page.goto("/lists/3");
+    await expect(page.getByRole("link", { name: "#phrases" })).toHaveAttribute(
+      "href",
+      "/phrases/lists?tag=phrases"
+    );
+  });
+});
+
+/**
+ * Word pages read like a dictionary entry: meanings as running text, examples,
+ * and the list it belongs to at the very bottom.
+ */
+test.describe("word detail", () => {
+  test("lists meanings as text and links its list at the bottom", async ({ page }) => {
+    await page.goto("/words/1");
+    await page.waitForLoadState("networkidle");
+
+    // Meanings are a list, not badges.
+    await expect(page.locator("main ul li").first()).toBeVisible();
+    await expect(page.getByText("Japanese language")).toBeVisible();
+
+    // There is no "study this list" button on a word page…
+    await expect(page.getByRole("link", { name: "Study this list" })).toHaveCount(0);
+
+    // …and the list it belongs to is linked below the examples.
+    const list = page.getByRole("link", { name: "JLPT N5 Starter" });
+    const examples = page.getByText("Example sentences").first();
+    const listBox = await list.boundingBox();
+    const examplesBox = await examples.boundingBox();
+    expect(listBox, "list link").not.toBeNull();
+    expect(examplesBox, "examples heading").not.toBeNull();
+    expect(listBox!.y).toBeGreaterThan(examplesBox!.y);
+  });
+});
+
+/**
+ * Every page opens with the same header block — the back-link row, the title
+ * (+ optional badge) and the subtitle line — so moving from a list into a word,
+ * a phrase or a form never changes the size of the top of the page.
+ */
+test.describe("page header", () => {
+  const PAGES = [
+    "/",
+    "/words",
+    "/phrases",
+    "/phrases/lists",
+    "/examples",
+    "/rules",
+    "/rules/examples",
+    "/study",
+    "/words/1",
+    "/lists/1",
+    "/rules/1",
+    "/lists/new",
+    "/phrases/new",
+    "/rules/new",
+  ];
+
+  test("keeps the same shape and height on lists, detail pages and forms", async ({ page }) => {
+    const heights: number[] = [];
+
+    for (const path of PAGES) {
+      await page.goto(path);
+      await page.waitForLoadState("networkidle");
+
+      const header = page.locator("main [data-slot='page-header']");
+      await expect(header, path).toHaveCount(1);
+      await expect(header.locator("h1"), path).toHaveCount(1);
+      await expect(header.locator("[data-slot='page-subtitle']"), path).toHaveCount(1);
+
+      const box = await header.boundingBox();
+      expect(box, path).not.toBeNull();
+      heights.push(Math.round(box!.height));
+    }
+
+    // Same pixel height everywhere — this is the jump the design prevents.
+    expect(new Set(heights).size, heights.join(", ")).toBe(1);
+  });
+
+  test("puts an item's tags to the right of the subtitle", async ({ page }) => {
+    await page.goto("/rules/1");
+
+    const subtitle = await page.locator("main [data-slot='page-subtitle']").boundingBox();
+    const tags = await page.locator("main [data-slot='page-tags']").boundingBox();
+    expect(subtitle, "subtitle").not.toBeNull();
+    expect(tags, "tags").not.toBeNull();
+    // Same row, and the chips sit to the right of the subtitle.
+    expect(Math.abs(tags!.y - subtitle!.y)).toBeLessThan(8);
+    expect(tags!.x).toBeGreaterThan(subtitle!.x + subtitle!.width);
+
+    // An item without tags reserves the same room, so the header never resizes.
+    const withTags = await page.locator("main [data-slot='page-header']").boundingBox();
+    await page.goto("/words/1");
+    await expect(page.locator("main [data-slot='page-tags']")).toHaveCount(0);
+    const withoutTags = await page.locator("main [data-slot='page-header']").boundingBox();
+    expect(withTags).not.toBeNull();
+    expect(withoutTags).not.toBeNull();
+    expect(withTags!.height).toBe(withoutTags!.height);
+  });
+
+  test("navigates with breadcrumbs rather than back buttons", async ({ page }) => {
+    await page.goto("/rules/new");
+    const crumbs = page.getByRole("navigation", { name: "breadcrumb" });
+    await expect(crumbs.getByRole("link", { name: "Rules & forms" })).toHaveAttribute(
+      "href",
+      "/rules"
+    );
+
+    // The title leads, its subtitle follows, and the trail opens the body.
+    // Measured in one evaluate so a dev-server reload can't detach an element
+    // between the calls, and polled until all three are laid out.
+    const headerOrder = () =>
+      page.evaluate(() => {
+        const y = (selector: string) => {
+          const el = document.querySelector(selector);
+          return el ? Math.round(el.getBoundingClientRect().y) : null;
+        };
+        return {
+          title: y("main h1"),
+          subtitle: y("main [data-slot='page-subtitle']"),
+          trail: y("main [data-slot='page-crumbs']"),
+        };
+      });
+
+    await expect
+      .poll(headerOrder)
+      .toEqual({ title: expect.any(Number), subtitle: expect.any(Number), trail: expect.any(Number) });
+
+    const layout = await headerOrder();
+    expect(layout.title!).toBeLessThan(layout.subtitle!);
+    expect(layout.subtitle!).toBeLessThan(layout.trail!);
+    await expect(crumbs.locator("[aria-current='page']")).toHaveText("Add rule");
+
+    // A nested page trails through every ancestor, outermost first, ending on
+    // the page itself.
+    await page.goto("/lists/1/edit");
+    const editCrumbs = page.getByRole("navigation", { name: "breadcrumb" });
+    await expect(editCrumbs.locator("a")).toHaveCount(2);
+    await expect(editCrumbs.getByRole("link", { name: "Word lists" })).toHaveAttribute(
+      "href",
+      "/"
+    );
+    await expect(editCrumbs.getByRole("link", { name: "JLPT N5 Starter" })).toHaveAttribute(
+      "href",
+      "/lists/1"
+    );
+    await expect(editCrumbs.locator("[aria-current='page']")).toHaveText("Edit word list");
+
+    // Word examples trail through Words, matching the rule-examples page.
+    await page.goto("/examples");
+    await expect(
+      page.getByRole("navigation", { name: "breadcrumb" }).getByRole("link", { name: "Words" })
+    ).toHaveAttribute("href", "/words");
+
+    // Top-level pages have no trail, and nothing says "Back to …" any more.
+    await page.goto("/rules");
+    await expect(page.getByRole("navigation", { name: "breadcrumb" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^Back to / })).toHaveCount(0);
+  });
+});

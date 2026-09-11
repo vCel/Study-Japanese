@@ -1,0 +1,37 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "japanese-vocab",
+	"compatibility_date": "2026-09-07",
+	"main": "./workers/app.ts",
+	"observability": {
+		"enabled": true
+	},
+	"assets": {
+		"directory": "./build/client"
+	},
+	// Cloudflare D1 (serverless SQLite). Create yours with:
+	//   npx wrangler d1 create japanese-vocab-db
+	// then paste the returned database_id below and run:
+	//   npx wrangler d1 migrations apply japanese-vocab-db --remote
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "japanese-vocab-db",
+			"database_id": "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
+		}
+	],
+	// Workers Rate Limiting (native binding). Namespaces are arbitrary ids unique
+	// within the account. See: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
+	"ratelimits": [
+		{
+			"name": "API_LIMITER",
+			"namespace_id": "1001",
+			"simple": { "limit": 60, "period": 60 }
+		},
+		{
+			"name": "UPLOAD_LIMITER",
+			"namespace_id": "1002",
+			"simple": { "limit": 10, "period": 60 }
+		}
+	]
+}

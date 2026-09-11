@@ -1,0 +1,36 @@
+.DS_Store
+.env
+/node_modules/
+*.tsbuildinfo
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# React Router
+/.react-router/
+/build/
+
+# Cloudflare
+.mf
+.wrangler
+.dev.vars*
+worker-configuration.d.ts
+
+# Secrets — never commit tokens or key material
+jwt-private-key.pem
+*.pem
+*.key
+.env.local
+.env.*
+# …but the template (no secrets) belongs in the repo
+!.env.example
+admin-token.txt
+*-token.txt
+signin-*.json
+
+
+.freebuff
+.agents

@@ -1,0 +1,38 @@
+/* Lightswind UI theme variables — https://lightswind.com
+   Dark-first palette: darker backgrounds with a blue-tinted base. */
+:root {
+  --primarylw: #4c6fff;
+  --primarylw-2: #3758f9;
+  --darklw: #0b0d14;
+
+  --background: 222 28% 5%;
+  --foreground: 214 30% 94%;
+  --muted: 221 22% 12%;
+  --muted-foreground: 218 14% 62%;
+  --border: 221 18% 16%;
+  --card: 222 24% 8%;
+  --radius: 0.5rem;
+}
+
+/* Kept for parity — the app is dark-first now. */
+.dark {
+  --background: 222 28% 5%;
+  --foreground: 214 30% 94%;
+  --muted: 221 22% 12%;
+  --muted-foreground: 218 14% 62%;
+  --border: 221 18% 16%;
+  --card: 222 24% 8%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-border: hsl(var(--border));
+  --color-card: hsl(var(--card));
+  --color-primarylw: var(--primarylw);
+  --color-primarylw-2: var(--primarylw-2);
+  --color-darklw: var(--darklw);
+  --radius-lw: var(--radius);
+}

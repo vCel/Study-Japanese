@@ -1,0 +1,118 @@
+﻿node.exe : npm notice run npx
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\peter\AppData\Roaming\ ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (npm notice run npx:String) [], Re 
+   moteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+npm notice run playwright test --reporter=line --workers=1
+
+Running 85 tests using 1 worker
+
+[1/85] [chromium] ΓÇ║ e2e\accordion.spec.ts:13:3 ΓÇ║ JSON bulk-import accordion ΓÇ║ is collapsed and inert until opened
+[2/85] [chromium] ΓÇ║ e2e\accordion.spec.ts:33:3 ΓÇ║ JSON bulk-import accordion ΓÇ║ expands, exposes the textarea and accepts sample JSON
+[3/85] [chromium] ΓÇ║ e2e\accordion.spec.ts:54:3 ΓÇ║ JSON bulk-import accordion ΓÇ║ works the same on all three create pages
+[4/85] [chromium] ΓÇ║ e2e\create-pages.spec.ts:36:5 ΓÇ║ create pages share one layout ΓÇ║ /lists/new renders the manual form + JSON accordion
+[5/85] [chromium] ΓÇ║ e2e\create-pages.spec.ts:36:5 ΓÇ║ create pages share one layout ΓÇ║ /rules/new renders the manual form + JSON accordion
+[6/85] [chromium] ΓÇ║ e2e\create-pages.spec.ts:36:5 ΓÇ║ create pages share one layout ΓÇ║ /phrases/new renders the manual form + JSON accordion
+[7/85] [chromium] ΓÇ║ e2e\create-pages.spec.ts:68:3 ΓÇ║ create pages share one layout ΓÇ║ all three pages share the same header shape
+[8/85] [chromium] ΓÇ║ e2e\create-pages.spec.ts:101:3 ΓÇ║ filling the form from JSON ΓÇ║ word lists: rows appear with meanings, examples and reorder handles
+[9/85] [chromium] ΓÇ║ e2e\create-pages.spec.ts:141:3 ΓÇ║ filling the form from JSON ΓÇ║ phrases: rows are filled and marked as phrases
+[10/85] [chromium] ΓÇ║ e2e\create-pages.spec.ts:159:3 ΓÇ║ filling the form from JSON ΓÇ║ invalid JSON reports the problem and keeps the form
+[11/85] [chromium] ΓÇ║ e2e\dock.spec.ts:22:3 ΓÇ║ mobile navigation ΓÇ║ renders a category dock and hides the sidebar
+[12/85] [chromium] ΓÇ║ e2e\dock.spec.ts:38:3 ΓÇ║ mobile navigation ΓÇ║ a category opens a popover listing only its pages
+[13/85] [chromium] ΓÇ║ e2e\dock.spec.ts:81:3 ΓÇ║ mobile navigation ΓÇ║ the popover hangs off the category that was tapped
+[14/85] [chromium] ΓÇ║ e2e\dock.spec.ts:104:3 ΓÇ║ mobile navigation ΓÇ║ the Profile menu never offers sign out to a signed-out visitor
+[15/85] [chromium] ΓÇ║ e2e\dock.spec.ts:121:3 ΓÇ║ mobile navigation ΓÇ║ choosing a page from the popover navigates and dismisses the menu
+[16/85] [chromium] ΓÇ║ e2e\dock.spec.ts:131:3 ΓÇ║ mobile navigation ΓÇ║ the active category is marked and single-page categories link straight through
+[17/85] [chromium] ΓÇ║ e2e\edit-forms.spec.ts:13:3 ΓÇ║ word edit page ΓÇ║ mirrors the detail structure with reorderable meanings and examples
+[18/85] [chromium] ΓÇ║ e2e\edit-forms.spec.ts:26:3 ΓÇ║ word edit page ΓÇ║ removing a row drops its handle
+[19/85] [chromium] ΓÇ║ e2e\edit-forms.spec.ts:38:3 ΓÇ║ rule edit page ΓÇ║ uses the πâ¥πéñπâ│πâê container and a reorderable example list
+[20/85] [chromium] ΓÇ║ e2e\edit-forms.spec.ts:50:3 ΓÇ║ rule edit page ΓÇ║ examples can be reordered by dragging the handle
+[21/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:15:3 ΓÇ║ custom select fields ΓÇ║ rule type is a custom select wired to the form
+[22/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:33:3 ΓÇ║ custom select fields ΓÇ║ part of speech uses the same component
+[23/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:47:5 ΓÇ║ edit pages match the create page width ΓÇ║ /words/1/edit is no longer column-capped
+[24/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:47:5 ΓÇ║ edit pages match the create page width ΓÇ║ /lists/1/edit is no longer column-capped
+[25/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:47:5 ΓÇ║ edit pages match the create page width ΓÇ║ /rules/1/edit is no longer column-capped
+[26/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:63:3 ΓÇ║ primary buttons align right ΓÇ║ the create button hugs the right edge of the form
+[27/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:85:5 ΓÇ║ admin delete on edit pages ΓÇ║ /rules/1/edit offers a delete button next to save, confirmed by an alert dialog
+[28/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:85:5 ΓÇ║ admin delete on edit pages ΓÇ║ /words/1/edit offers a delete button next to save, confirmed by an alert dialog
+[29/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:85:5 ΓÇ║ admin delete on edit pages ΓÇ║ /lists/1/edit offers a delete button next to save, confirmed by an alert dialog
+[30/85] [chromium] ΓÇ║ e2e\form-ux.spec.ts:124:3 ΓÇ║ toasts ΓÇ║ a rejected save surfaces an error toast
+[31/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:17:3 ΓÇ║ sidebar navigation ΓÇ║ groups the app into four sections
+[32/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:24:3 ΓÇ║ sidebar navigation ΓÇ║ lists Study after the Grammar section
+[33/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Word lists" as current on /
+[34/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Words" as current on /words
+[35/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Examples" as current on /examples
+[36/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Phrase lists" as current on /phrases/lists
+[37/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Phrases" as current on /phrases
+[38/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Study" as current on /study
+[39/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Rules & forms" as current on /rules
+[40/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:34:5 ΓÇ║ sidebar navigation ΓÇ║ marks only "Rule examples" as current on /rules/examples
+[41/85] [chromium] ΓÇ║ e2e\navigation.spec.ts:46:3 ΓÇ║ sidebar navigation ΓÇ║ phrase sub-pages do not mark the parent Phrases link as current
+[42/85] [chromium] ΓÇ║ e2e\pages.spec.ts:16:3 ΓÇ║ word lists vs phrase lists ΓÇ║ home shows word lists only ΓÇö phrase lists are moved off it
+[43/85] [chromium] ΓÇ║ e2e\pages.spec.ts:25:3 ΓÇ║ word lists vs phrase lists ΓÇ║ home header hides the add button until you're signed in
+[44/85] [chromium] ΓÇ║ e2e\pages.spec.ts:32:3 ΓÇ║ word lists vs phrase lists ΓÇ║ phrase lists page counts phrases and tags link back to itself
+[45/85] [chromium] ΓÇ║ e2e\pages.spec.ts:51:3 ΓÇ║ phrases vs words ΓÇ║ phrases are excluded from /words
+[46/85] [chromium] ΓÇ║ e2e\pages.spec.ts:59:3 ΓÇ║ phrases vs words ΓÇ║ /phrases links each phrase to its detail page
+[47/85] [chromium] ΓÇ║ e2e\pages.spec.ts:73:3 ΓÇ║ tag filters ΓÇ║ word lists show the active tag as a chip, not in the search box
+[48/85] [chromium] ΓÇ║ e2e\pages.spec.ts:89:3 ΓÇ║ tag filters ΓÇ║ phrase lists filter in place
+[49/85] [chromium] ΓÇ║ e2e\pages.spec.ts:105:3 ΓÇ║ tag filters ΓÇ║ a phrase list's own tags stay on the phrase-lists page
+[50/85] [chromium] ΓÇ║ e2e\pages.spec.ts:137:3 ΓÇ║ page header ΓÇ║ keeps the same shape and height on lists, detail pages and forms
+[51/85] [chromium] ΓÇ║ e2e\pages.spec.ts:158:3 ΓÇ║ page header ΓÇ║ puts an item's tags to the right of the subtitle
+[52/85] [chromium] ΓÇ║ e2e\pages.spec.ts:179:3 ΓÇ║ page header ΓÇ║ navigates with breadcrumbs rather than back buttons
+  1) [chromium] ΓÇ║ e2e\pages.spec.ts:179:3 ΓÇ║ page header ΓÇ║ navigates with breadcrumbs rather than back buttons 
+
+    Error: trail
+
+    expect(received).not.toBeNull()
+
+    Received: null
+
+      191 |     expect(title, "title").not.toBeNull();
+      192 |     expect(subtitle, "subtitle").not.toBeNull();
+    > 193 |     expect(trail, "trail").not.toBeNull();
+          |                                ^
+      194 |     expect(title!.y).toBeLessThan(subtitle!.y);
+      195 |     expect(subtitle!.y).toBeLessThan(trail!.y);
+      196 |     await expect(crumbs.locator("[aria-current='page']")).toHaveText("Add rule");
+        at C:\Users\peter\Documents\GitHub\Japanese learn\japanese-vocab\e2e\pages.spec.ts:193:32
+
+    attachment #1: screenshot (image/png) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    test-results\pages-page-header-navigate-35695-bs-rather-than-back-buttons-chromium\test-failed-1.png
+    ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    Error Context: test-results\pages-page-header-navigate-35695-bs-rather-than-back-buttons-chromium\error-context.md
+
+
+[53/85] [chromium] ΓÇ║ e2e\redirects.spec.ts:12:5 ΓÇ║ legacy upload URLs ΓÇ║ /upload redirects to /lists/new
+[54/85] [chromium] ΓÇ║ e2e\redirects.spec.ts:12:5 ΓÇ║ legacy upload URLs ΓÇ║ /rules/upload redirects to /rules/new
+[55/85] [chromium] ΓÇ║ e2e\redirects.spec.ts:12:5 ΓÇ║ legacy upload URLs ΓÇ║ /phrases/upload redirects to /phrases/new
+[56/85] [chromium] ΓÇ║ e2e\rules-import.spec.ts:38:3 ΓÇ║ rules: JSON import fills the form ΓÇ║ pasting rules JSON creates editable panels, not database rows
+[57/85] [chromium] ΓÇ║ e2e\rules-import.spec.ts:68:3 ΓÇ║ rules: JSON import fills the form ΓÇ║ imported rules stay editable and reorderable through the panels
+[58/85] [chromium] ΓÇ║ e2e\rules-import.spec.ts:87:3 ΓÇ║ rules: JSON import fills the form ΓÇ║ 'Add rule' adds a panel and rules can be removed again
+[59/85] [chromium] ΓÇ║ e2e\rules-import.spec.ts:103:3 ΓÇ║ rules: JSON import fills the form ΓÇ║ 'Add point' grows a rule up to four points
+[60/85] [chromium] ΓÇ║ e2e\rules-import.spec.ts:127:3 ΓÇ║ rules: JSON import fills the form ΓÇ║ typing in a panel keeps focus between keystrokes
+[61/85] [chromium] ΓÇ║ e2e\rules-import.spec.ts:144:3 ΓÇ║ rules: JSON import fills the form ΓÇ║ the panel grows when the explanation is resized
+[62/85] [chromium] ΓÇ║ e2e\rules.spec.ts:4:3 ΓÇ║ rules & forms list ΓÇ║ leads with the title and keeps the kind badge to its right
+[63/85] [chromium] ΓÇ║ e2e\rules.spec.ts:36:3 ΓÇ║ rules & forms list ΓÇ║ moves the example count to the bottom-left of the card
+[64/85] [chromium] ΓÇ║ e2e\rules.spec.ts:61:3 ΓÇ║ rules & forms list ΓÇ║ shows the pattern in a dashed πâ¥πéñπâ│πâê callout
+[65/85] [chromium] ΓÇ║ e2e\rules.spec.ts:69:3 ΓÇ║ rules & forms list ΓÇ║ shows at most two tags, collapsing the rest into +x
+[66/85] [chromium] ΓÇ║ e2e\rules.spec.ts:85:3 ΓÇ║ rules & forms list ΓÇ║ filters by tag
+[67/85] [chromium] ΓÇ║ e2e\rules.spec.ts:91:3 ΓÇ║ rules & forms list ΓÇ║ searches title, explanation and pattern
+[68/85] [chromium] ΓÇ║ e2e\rules.spec.ts:104:3 ΓÇ║ rule detail ΓÇ║ has an English equivalents section
+[69/85] [chromium] ΓÇ║ e2e\rules.spec.ts:110:3 ΓÇ║ rule detail ΓÇ║ puts the kind badge to the right of the heading
+[70/85] [chromium] ΓÇ║ e2e\rules.spec.ts:130:3 ΓÇ║ rule detail ΓÇ║ shows the πâ¥πéñπâ│πâê callout inside the explanation card, under the text
+[71/85] [chromium] ΓÇ║ e2e\rules.spec.ts:166:3 ΓÇ║ rule detail ΓÇ║ suggests related rules and links to them
+[72/85] [chromium] ΓÇ║ e2e\rules.spec.ts:180:3 ΓÇ║ rule examples page ΓÇ║ is its own page, separate from the word-list examples
+[73/85] [chromium] ΓÇ║ e2e\rules.spec.ts:194:3 ΓÇ║ rule examples page ΓÇ║ links each example back to its rule
+[74/85] [chromium] ΓÇ║ e2e\server-actions.spec.ts:10:3 ΓÇ║ signed-out guards ΓÇ║ adding phrases is rejected
+[75/85] [chromium] ΓÇ║ e2e\server-actions.spec.ts:16:3 ΓÇ║ signed-out guards ΓÇ║ creating a word list is rejected
+[76/85] [chromium] ΓÇ║ e2e\study.spec.ts:36:3 ΓÇ║ study sections ΓÇ║ offers a words, phrases and forms tab
+[77/85] [chromium] ΓÇ║ e2e\study.spec.ts:54:3 ΓÇ║ study sections ΓÇ║ each section keeps its own configuration
+[78/85] [chromium] ΓÇ║ e2e\study.spec.ts:99:3 ΓÇ║ starting a session ΓÇ║ starts a words session
+[79/85] [chromium] ΓÇ║ e2e\study.spec.ts:110:3 ΓÇ║ starting a session ΓÇ║ starts a forms session with grammar cards
+[80/85] [chromium] ΓÇ║ e2e\study.spec.ts:127:3 ΓÇ║ starting a session ΓÇ║ a phrase-list link studies phrases (kind is inferred)
+[81/85] [chromium] ΓÇ║ e2e\study.spec.ts:139:3 ΓÇ║ starting a session ΓÇ║ the answer buttons are wide and the card flips in place
+[82/85] [chromium] ΓÇ║ e2e\study.spec.ts:164:3 ΓÇ║ saved study sessions ΓÇ║ saves a configuration through the save drawer
