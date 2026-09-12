@@ -558,43 +558,70 @@ export interface TagInfo {
   listCount: number;
 }
 
+/**
+ * Tiny in-isolate cache for read-mostly lookups. Cloudflare keeps a Worker
+ * isolate warm between requests, so the second request in the same isolate
+ * answers from this map instead of paying another D1 round-trip (`listAllTags`
+ * and `listAllRuleTags` run on almost every page).
+ *
+ * The window is deliberately short: a tag edit can take up to this long to show
+ * up in another isolate, and the cache is per-isolate, so it is a latency fix,
+ * not a correctness source of truth.
+ */
+const LOOKUP_CACHE_MS = 20_000;
+const lookupCache = new Map<string, { at: number; value: unknown }>();
+
+async function cachedLookup<T>(key: string, load: () => Promise<T>): Promise<T> {
+  const hit = lookupCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < LOOKUP_CACHE_MS) return hit.value as T;
+  const value = await load();
+  lookupCache.set(key, { at: now, value });
+  return value;
+}
+
 /** All tags with how many word lists use them — powers the tag search UI. */
 export async function listAllTags(): Promise<TagInfo[]> {
-  const db = getDb();
-  const { results } = await db
-    .prepare(
-      `SELECT t.name, COUNT(wlt.list_id) AS list_count
-       FROM tags t
-       JOIN word_list_tags wlt ON wlt.tag_id = t.id
-       GROUP BY t.id
-       ORDER BY list_count DESC, t.name ASC`
-    )
-    .all<{ name: string; list_count: number }>();
-  return (results ?? []).map((row) => ({ name: row.name, listCount: row.list_count }));
+  return cachedLookup("listAllTags", async () => {
+    const db = getDb();
+    const { results } = await db
+      .prepare(
+        `SELECT t.name, COUNT(wlt.list_id) AS list_count
+         FROM tags t
+         JOIN word_list_tags wlt ON wlt.tag_id = t.id
+         GROUP BY t.id
+         ORDER BY list_count DESC, t.name ASC`
+      )
+      .all<{ name: string; list_count: number }>();
+    return (results ?? []).map((row) => ({ name: row.name, listCount: row.list_count }));
+  });
 }
 
 export async function getWordList(id: number): Promise<WordListDetail | null> {
   const db = getDb();
-  const list = await db
-    .prepare("SELECT id, title, description, created_by, created_at FROM word_lists WHERE id = ?1")
-    .bind(id)
-    .first<{ id: number; title: string; description: string | null; created_by: string | null; created_at: number }>();
+  // The list row, its words and its tags have no dependency on each other, so
+  // they go out together instead of as three sequential round-trips.
+  const [list, words, tagMap] = await Promise.all([
+    db
+      .prepare("SELECT id, title, description, created_by, created_at FROM word_lists WHERE id = ?1")
+      .bind(id)
+      .first<{ id: number; title: string; description: string | null; created_by: string | null; created_at: number }>(),
+    db
+      .prepare(
+        `SELECT w.id, w.word, w.kana, w.created_at, w.pos,
+                (SELECT m.meaning FROM meanings m WHERE m.word_id = w.id LIMIT 1) AS meaning,
+                w.list_id, l.title AS list_title
+         FROM words w
+         LEFT JOIN word_lists l ON l.id = w.list_id
+         WHERE w.list_id = ?1
+         ORDER BY w.id ASC`
+      )
+      .bind(id)
+      .all<WordRow & { meaning: string | null; list_id: number | null; list_title: string | null }>()
+      .then((result) => result.results ?? []),
+    loadTagsForLists(db, [id]),
+  ]);
   if (!list) return null;
-
-  const { results } = await db
-    .prepare(
-      `SELECT w.id, w.word, w.kana, w.created_at, w.pos,
-              (SELECT m.meaning FROM meanings m WHERE m.word_id = w.id LIMIT 1) AS meaning,
-              w.list_id, l.title AS list_title
-       FROM words w
-       LEFT JOIN word_lists l ON l.id = w.list_id
-       WHERE w.list_id = ?1
-       ORDER BY w.id ASC`
-    )
-    .bind(id)
-    .all<WordRow & { meaning: string | null; list_id: number | null; list_title: string | null }>();
-
-  const tagMap = await loadTagsForLists(db, [id]);
 
   return {
     id: list.id,
@@ -602,9 +629,9 @@ export async function getWordList(id: number): Promise<WordListDetail | null> {
     description: list.description,
     createdAt: list.created_at,
     createdBy: list.created_by,
-    wordCount: (results ?? []).length,
+    wordCount: words.length,
     tags: tagMap.get(id) ?? [],
-    words: (results ?? []).map((row) => ({
+    words: words.map((row) => ({
       id: row.id,
       word: row.word,
       kana: row.kana,
@@ -914,17 +941,19 @@ async function setRuleTags(db: D1Database, ruleId: number, tags: string[]): Prom
 
 /** Tags actually used by rules — powers the rules page tag filter. */
 export async function listAllRuleTags(): Promise<TagInfo[]> {
-  const db = getDb();
-  const { results } = await db
-    .prepare(
-      `SELECT t.name, COUNT(rt.rule_id) AS list_count
-       FROM tags t
-       JOIN rule_tags rt ON rt.tag_id = t.id
-       GROUP BY t.id
-       ORDER BY list_count DESC, t.name ASC`
-    )
-    .all<{ name: string; list_count: number }>();
-  return (results ?? []).map((row) => ({ name: row.name, listCount: row.list_count }));
+  return cachedLookup("listAllRuleTags", async () => {
+    const db = getDb();
+    const { results } = await db
+      .prepare(
+        `SELECT t.name, COUNT(rt.rule_id) AS list_count
+         FROM tags t
+         JOIN rule_tags rt ON rt.tag_id = t.id
+         GROUP BY t.id
+         ORDER BY list_count DESC, t.name ASC`
+      )
+      .all<{ name: string; list_count: number }>();
+    return (results ?? []).map((row) => ({ name: row.name, listCount: row.list_count }));
+  });
 }
 
 export async function listRules(
@@ -1186,6 +1215,27 @@ export async function countRules(
     .bind(...params)
     .first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+/**
+ * The three rule counts the study builder needs — all, word rules, sentence
+ * rules — from a single round-trip instead of three `countRules()` calls.
+ */
+export async function countRulesByKind(): Promise<{
+  all: number;
+  word: number;
+  sentence: number;
+}> {
+  const db = getDb();
+  const { results } = await db
+    .prepare("SELECT kind, COUNT(*) AS n FROM rules GROUP BY kind")
+    .all<{ kind: RuleKind; n: number }>();
+  const counts = { all: 0, word: 0, sentence: 0 };
+  for (const row of results ?? []) {
+    counts[row.kind] = row.n;
+    counts.all += row.n;
+  }
+  return counts;
 }
 
 /** A random deck of rules (with their examples) for the forms study tab. */

@@ -103,6 +103,11 @@ function NavLinkItem({ to, label, icon: Icon }: { to: string; label: string; ico
   return (
     <Link
       to={to}
+      // Prefetch on hover/focus: the route module and its loader data are
+      // already there by the time the click lands, so switching pages does not
+      // wait for a round-trip. Only the intent case — no viewport prefetching,
+      // which would fire a request for every link on the page.
+      prefetch="intent"
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-3 rounded-full px-4 py-2.5 text-base font-medium transition-colors",
@@ -119,7 +124,7 @@ function NavLinkItem({ to, label, icon: Icon }: { to: string; label: string; ico
 
 function Logo() {
   return (
-    <Link to="/" className="flex shrink-0 items-center gap-2">
+    <Link to="/" prefetch="intent" className="flex shrink-0 items-center gap-2">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius)] bg-primarylw text-lg font-bold text-white">
         あ
       </span>

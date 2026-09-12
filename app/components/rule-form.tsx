@@ -3,7 +3,12 @@ import { Form, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 import { Plus, Trash2, X } from "lucide-react";
 
-import { isConvexClientConfigured } from "~/components/convex-provider";
+// Both the create and the edit form gate on the same check — the env-var one
+// (`isAuthConfigured`), not the browser-only client instance. The server has no
+// Convex client, so gating on that made the server render "auth is not
+// configured" while the browser rendered the form: a hydration mismatch that
+// made React discard and re-render the whole tree.
+import { isAuthConfigured as isConvexClientConfigured } from "~/components/convex-provider";
 import { Button } from "~/components/lightswind/button";
 import { Badge } from "~/components/lightswind/badge";
 import { Card, CardContent } from "~/components/lightswind/card";

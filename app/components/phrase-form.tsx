@@ -4,7 +4,7 @@ import * as React from "react";
 import { Form, Link, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 
-import { isConvexClientConfigured } from "~/components/convex-provider";
+import { isAuthConfigured } from "~/components/convex-provider";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent } from "~/components/lightswind/card";
 import { Input, Label } from "~/components/lightswind/input";
@@ -51,7 +51,7 @@ export function PhraseForm() {
   const navigation = useNavigation();
   const actionData = useActionData() as PhraseFormActionData | undefined;
   const token = useAuthToken();
-  const configured = isConvexClientConfigured();
+  const configured = isAuthConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
   const navigate = useNavigate();
   // Creating is the end of the flow: the new phrases show up on the screen the

@@ -5,11 +5,14 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useNavigation,
 } from "react-router";
+import * as React from "react";
 
 import type { Route } from "./+types/root";
 import { ConvexClientProvider } from "~/components/convex-provider";
 import { MobileNav, Sidebar } from "~/components/sidebar";
+import { PageSkeleton } from "~/components/page-skeleton";
 import { Toaster } from "~/components/lightswind/toast";
 import { useBrowsingPageRecorder } from "~/lib/return-to";
 import "./app.css";
@@ -45,10 +48,37 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * `true` only once `active` has stayed true for `delay` ms, so a fast navigation
+ * (loader data already prefetched on hover) does not flash a skeleton.
+ */
+function useDelayedFlag(active: boolean, delay = 120) {
+  const [showing, setShowing] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!active) {
+      setShowing(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowing(true), delay);
+    return () => window.clearTimeout(timer);
+  }, [active, delay]);
+
+  return showing;
+}
+
 export default function App() {
   // Remembers where the reader was browsing, so the create / edit screens can
   // return there once they are saved (see `~/lib/return-to`).
   useBrowsingPageRecorder();
+
+  // A client-side navigation keeps the *previous* page on screen until the new
+  // loader data arrives, which reads as "the click did nothing" on a slow
+  // round-trip. A skeleton appears if that wait passes a moment, so the click
+  // is acknowledged immediately without flashing on fast navigations.
+  const navigation = useNavigation();
+  const loading = navigation.state === "loading";
+  const showSkeleton = useDelayedFlag(loading);
 
   return (
     <ConvexClientProvider>
@@ -57,7 +87,7 @@ export default function App() {
         <div className="flex min-h-dvh w-full min-w-0 flex-col">
           <MobileNav />
           <main className="w-full flex-1 px-6 pb-28 pt-8 md:pb-8">
-            <Outlet />
+            {showSkeleton ? <PageSkeleton /> : <Outlet />}
           </main>
           <footer className="border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
             あああ！ - An open-source Japanese grammar reference with example sentences and English equivalents.

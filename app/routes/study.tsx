@@ -1,5 +1,5 @@
 import type { Route } from "./+types/study";
-import { countRules, listAllRuleTags, listAllTags, listStudyLists } from "~/lib/db.server";
+import { countRulesByKind, listAllRuleTags, listAllTags, listStudyLists } from "~/lib/db.server";
 import { PageHeader } from "~/components/page-header";
 import { StudySetup } from "~/components/study-setup";
 import type { StudyKind } from "~/lib/study-prefs";
@@ -21,26 +21,21 @@ export async function loader({ request }: Route.LoaderArgs) {
     .map((part) => Number.parseInt(part.trim(), 10))
     .filter((id) => !Number.isNaN(id));
 
-  const [library, tags, ruleTags, ruleCount, wordRuleCount, sentenceRuleCount] =
-    await Promise.all([
-      listStudyLists(),
-      listAllTags(),
-      listAllRuleTags(),
-      countRules(),
-      countRules("word"),
-      countRules("sentence"),
-    ]);
+  // Four round-trips, not six: the three rule counts come from one grouped
+  // query (`countRulesByKind`), and the rest run together.
+  const [library, tags, ruleTags, ruleCounts] = await Promise.all([
+    listStudyLists(),
+    listAllTags(),
+    listAllRuleTags(),
+    countRulesByKind(),
+  ]);
 
   return {
     wordLists: library.wordLists,
     phraseLists: library.phraseLists,
     tags,
     ruleTags,
-    ruleCounts: {
-      all: ruleCount,
-      word: wordRuleCount,
-      sentence: sentenceRuleCount,
-    },
+    ruleCounts,
     preselectedLists,
     initialKind: parseKind(url.searchParams.get("kind")),
   };

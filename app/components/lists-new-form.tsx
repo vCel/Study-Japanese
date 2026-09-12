@@ -4,7 +4,7 @@ import * as React from "react";
 import { Form, Link, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 
-import { isConvexClientConfigured } from "~/components/convex-provider";
+import { isAuthConfigured } from "~/components/convex-provider";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent } from "~/components/lightswind/card";
 import { Input, Label } from "~/components/lightswind/input";
@@ -41,7 +41,7 @@ export function ListsNewForm() {
   const navigation = useNavigation();
   const actionData = useActionData() as ListsNewActionData | undefined;
   const token = useAuthToken();
-  const configured = isConvexClientConfigured();
+  const configured = isAuthConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
   const navigate = useNavigate();
   // The new list appears on the screen the reader came from, so that is where

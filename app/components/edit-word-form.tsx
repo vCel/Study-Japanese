@@ -3,7 +3,7 @@ import { Form, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 import { Plus, Pencil } from "lucide-react";
 
-import { isConvexClientConfigured } from "~/components/convex-provider";
+import { isAuthConfigured } from "~/components/convex-provider";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent } from "~/components/lightswind/card";
 import { Input, Label } from "~/components/lightswind/input";
@@ -55,7 +55,7 @@ export function WordEditForm({
   const navigation = useNavigation();
   const actionData = useActionData() as WordEditActionData | undefined;
   const token = useAuthToken();
-  const configured = isConvexClientConfigured();
+  const configured = isAuthConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
   const navigate = useNavigate();
   // Saving is the end of this flow: hand the reader back to the screen they came
