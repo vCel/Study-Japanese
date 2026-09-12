@@ -3,7 +3,7 @@ import { Pencil } from "lucide-react";
 
 import type { Route } from "./+types/list-edit";
 import { getConvexSession } from "~/lib/auth.server";
-import { deleteWordList, getWordList, updateWordList } from "~/lib/db.server";
+import { deleteWordList, getWordList, removeWordsFromList, updateWordList } from "~/lib/db.server";
 import { enforceRateLimit, getClientIp } from "~/lib/ratelimit.server";
 import { Button } from "~/components/lightswind/button";
 import { DeleteButton } from "~/components/delete-button";
@@ -31,6 +31,8 @@ export interface ListEditActionData {
   error?: string;
   needsSignIn?: boolean;
   deleted?: boolean;
+  /** Entries detached from the list by the `remove-words` action. */
+  removed?: number;
 }
 
 const MAX_TAGS = 10;
@@ -83,6 +85,21 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Lis
       return { ok: false, error: "Word list not found." };
     }
     return { ok: true, deleted: true };
+  }
+
+  // Detach entries from the list. The words themselves survive with their
+  // meanings — the same outcome as deleting the whole list — and the update is
+  // scoped to this list id, so an entry of another list can never be pulled out.
+  if (form.get("action") === "remove-words") {
+    const ids = String(form.get("wordIds") ?? "")
+      .split(",")
+      .map((part) => Number.parseInt(part.trim(), 10))
+      .filter((id) => !Number.isNaN(id));
+    const removed = await removeWordsFromList(listId, ids);
+    if (removed === 0) {
+      return { ok: false, error: "That entry is not part of this word list." };
+    }
+    return { ok: true, removed };
   }
 
   const title = typeof form.get("title") === "string" ? (form.get("title") as string).trim() : "";

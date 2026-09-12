@@ -5,7 +5,7 @@ const SECTIONS = ["Word library", "Phrases", "文法 · Grammar", "Study"];
 const ACTIVE_LINK_CASES = [
   { path: "/", label: "Word lists" },
   { path: "/words", label: "Words" },
-  { path: "/examples", label: "Examples" },
+  { path: "/words/examples", label: "Examples" },
   { path: "/phrases/lists", label: "Phrase lists" },
   { path: "/phrases", label: "Phrases" },
   { path: "/study", label: "Study" },

@@ -4,12 +4,15 @@ import { BookMarked, BookOpenText, Plus, Sparkles } from "lucide-react";
 import type { Route } from "./+types/rules";
 import { listAllRuleTags, listRules } from "~/lib/db.server";
 import { isConvexClientConfigured } from "~/components/convex-provider";
+import { ImportantStar } from "~/components/important-star";
+import { SignedInOnly } from "~/components/signed-in-only";
 import { AdminOnly } from "~/components/admin-only";
 import { PageHeader } from "~/components/page-header";
-import { ActiveTagFilter, SearchBar } from "~/components/search-bar";
+import { SearchBar } from "~/components/search-bar";
 import { Badge } from "~/components/lightswind/badge";
 import { Card, CardContent } from "~/components/lightswind/card";
 import { Pagination } from "~/components/lightswind/pagination";
+import { Tooltip } from "~/components/lightswind/tooltip";
 import { RulePoint } from "~/components/rule-point";
 
 export function meta({}: Route.MetaArgs) {
@@ -117,8 +120,6 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
         selectedTag={tag || null}
       />
 
-      {tag && <ActiveTagFilter tag={tag} clearTo={rulesHref({ kind, q })} />}
-
       {loaderData.rules.items.length === 0 ? (
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
@@ -139,9 +140,21 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
                   <Link to={`/rules/${rule.id}`} className="min-w-0 after:absolute after:inset-0">
                     <h2 className="text-lg font-semibold hover:text-primarylw">{rule.title}</h2>
                   </Link>
-                  <Badge variant={rule.kind === "sentence" ? "default" : "kana"}>
-                    {rule.kind === "sentence" ? "Sentence rule" : "Word rule"}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={rule.kind === "sentence" ? "default" : "kana"}>
+                      {rule.kind === "sentence" ? "Sentence rule" : "Word rule"}
+                    </Badge>
+                    {configured && (
+                      <SignedInOnly>
+                        <ImportantStar
+                          kind="rule"
+                          id={rule.id}
+                          label={rule.title}
+                          className="relative z-10"
+                        />
+                      </SignedInOnly>
+                    )}
+                  </div>
                 </div>
 
                 <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
@@ -156,14 +169,14 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
                   </div>
                 )}
 
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="mt-4 flex flex-wrap items-center gap-3">
                   <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <BookMarked className="h-3.5 w-3.5" />
                     {rule.exampleCount} example{rule.exampleCount === 1 ? "" : "s"}
                   </span>
 
                   {rule.tags.length > 0 && (
-                    <div className="relative z-10 flex flex-wrap items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {rule.tags.slice(0, MAX_VISIBLE_TAGS).map((t) => (
                         <Link
                           key={t}
@@ -174,15 +187,16 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
                         </Link>
                       ))}
                       {rule.tags.length > MAX_VISIBLE_TAGS && (
-                        <span
-                          title={rule.tags
+                        <Tooltip
+                          content={rule.tags
                             .slice(MAX_VISIBLE_TAGS)
                             .map((t) => `#${t}`)
                             .join(", ")}
-                          className="rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground"
                         >
-                          +{rule.tags.length - MAX_VISIBLE_TAGS}
-                        </span>
+                          <span className="rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                            +{rule.tags.length - MAX_VISIBLE_TAGS}
+                          </span>
+                        </Tooltip>
                       )}
                     </div>
                   )}

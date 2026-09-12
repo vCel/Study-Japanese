@@ -50,7 +50,7 @@ test.describe("mobile navigation", () => {
     );
     await expect(wordsMenu.getByRole("menuitem", { name: "Examples" })).toHaveAttribute(
       "href",
-      "/examples"
+      "/words/examples"
     );
 
     // Opening another category swaps the menu rather than stacking them.

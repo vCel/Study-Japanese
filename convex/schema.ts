@@ -15,4 +15,18 @@ export default defineSchema({
   })
     .index("email", ["email"])
     .index("username", ["username"]),
+  /**
+   * Per-user "important / priority" stars. The content itself (words, phrases,
+   * rules) lives in D1, so a star is stored here as a (user, kind, itemId)
+   * triple rather than as a column on the content row — starring is a personal
+   * preference that follows the account across devices.
+   */
+  stars: defineTable({
+    userId: v.id("users"),
+    kind: v.union(v.literal("word"), v.literal("rule")),
+    /** `words.id` for words/phrases, `rules.id` for rules. */
+    itemId: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_kind_item", ["userId", "kind", "itemId"]),
 });

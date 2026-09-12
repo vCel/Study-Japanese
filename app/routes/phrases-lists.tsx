@@ -7,7 +7,7 @@ import { ListsHome } from "~/components/lists-home";
 import { isConvexClientConfigured } from "~/components/convex-provider";
 import { SignedInOnlyClient } from "~/components/signed-in-only";
 import { PageHeader } from "~/components/page-header";
-import { ActiveTagFilter, SearchBar } from "~/components/search-bar";
+import { SearchBar } from "~/components/search-bar";
 import { Card, CardContent } from "~/components/lightswind/card";
 
 export function meta({}: Route.MetaArgs) {
@@ -50,7 +50,7 @@ export default function PhrasesLists({ loaderData }: Route.ComponentProps) {
         }
       />
 
-      {/* Tag filter: the tag shows as a chip below, never inside the box */}
+      {/* Tag filter: the active tag shows as a chip inside the search box */}
       <SearchBar
         paramName="tag"
         placeholder="Search phrase lists by tag… (e.g. phrases)"
@@ -61,8 +61,6 @@ export default function PhrasesLists({ loaderData }: Route.ComponentProps) {
         selectedTag={tag}
       />
 
-      {tag && <ActiveTagFilter tag={tag} clearTo="/phrases/lists" />}
-
       {lists.items.length === 0 ? (
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
@@ -72,7 +70,6 @@ export default function PhrasesLists({ loaderData }: Route.ComponentProps) {
                 Create the first one
               </Link>
             </SignedInOnlyClient>
-            .
           </CardContent>
         </Card>
       ) : (

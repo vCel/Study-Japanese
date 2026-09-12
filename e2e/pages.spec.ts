@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { waitForHydration } from "./helpers";
+
 /** Titles of the cards on a listing page (each card renders its title as an h2). */
 async function cardTitles(page: Page, path: string): Promise<string[]> {
   await page.goto(path);
@@ -65,8 +67,8 @@ test.describe("phrases vs words", () => {
 });
 
 /**
- * Filtering by tag looks the same everywhere: the tag becomes a chip under the
- * search bar (never text inside it), and the chip links stay on the page you
+ * Filtering by tag looks the same everywhere: the tag becomes a chip inside the
+ * search bar (never text in the input), and the chip links stay on the page you
  * are already browsing.
  */
 test.describe("tag filters", () => {
@@ -78,12 +80,28 @@ test.describe("tag filters", () => {
 
     // The popover keeps the reader — and the part-of-speech filter — in place.
     await page.goto("/?tag=jlpt&pos=noun");
+    // The Tags button only opens once React has hydrated; clicking sooner is a
+    // silent no-op.
+    await waitForHydration(page);
     await page.getByRole("button", { name: "Tags" }).click();
     const popover = page.locator("[data-slot='tag-popover']");
     await expect(popover.getByRole("link", { name: /^#n5\b/ })).toHaveAttribute(
       "href",
       "/?tag=n5&pos=noun"
     );
+  });
+
+  test("backspacing the empty search box clears the whole tag", async ({ page }) => {
+    await page.goto("/?tag=jlpt");
+    await waitForHydration(page);
+
+    const input = page.locator("main input[name='tag']");
+    await input.click();
+    await input.press("Backspace");
+
+    // The tag filter is gone in one keystroke, not one character.
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("link", { name: "#jlpt ✕" })).toHaveCount(0);
   });
 
   test("phrase lists filter in place", async ({ page }) => {
@@ -96,6 +114,7 @@ test.describe("tag filters", () => {
     );
 
     // Regression: a tag chip used to send you to the word-list page.
+    await waitForHydration(page);
     await page.getByRole("button", { name: "Tags" }).click();
     await expect(
       page.locator("[data-slot='tag-popover']").getByRole("link", { name: /^#jlpt\b/ })
@@ -120,8 +139,8 @@ test.describe("word detail", () => {
     await page.goto("/words/1");
     await page.waitForLoadState("networkidle");
 
-    // Meanings are a list, not badges.
-    await expect(page.locator("main ul li").first()).toBeVisible();
+    // Meanings are a numbered list, not badges.
+    await expect(page.locator("main ol li").first()).toBeVisible();
     await expect(page.getByText("Japanese language")).toBeVisible();
 
     // There is no "study this list" button on a word page…
@@ -149,7 +168,7 @@ test.describe("page header", () => {
     "/words",
     "/phrases",
     "/phrases/lists",
-    "/examples",
+    "/words/examples",
     "/rules",
     "/rules/examples",
     "/study",
@@ -252,7 +271,7 @@ test.describe("page header", () => {
     await expect(editCrumbs.locator("[aria-current='page']")).toHaveText("Edit word list");
 
     // Word examples trail through Words, matching the rule-examples page.
-    await page.goto("/examples");
+    await page.goto("/words/examples");
     await expect(
       page.getByRole("navigation", { name: "breadcrumb" }).getByRole("link", { name: "Words" })
     ).toHaveAttribute("href", "/words");
@@ -261,5 +280,25 @@ test.describe("page header", () => {
     await page.goto("/rules");
     await expect(page.getByRole("navigation", { name: "breadcrumb" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /^Back to / })).toHaveCount(0);
+  });
+});
+
+test.describe("settings page", () => {
+  test("hydrates without a server/client mismatch", async ({ page }) => {
+    const problems: string[] = [];
+    page.on("pageerror", (error) => problems.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") problems.push(message.text());
+    });
+
+    await page.goto("/settings");
+    await page.waitForLoadState("networkidle");
+    await waitForHydration(page);
+
+    // The skeleton renders first (server + first client render), then the
+    // live component mounts — either way, the heading must be present.
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+
+    expect(problems.filter((text) => /hydration/i.test(text))).toEqual([]);
   });
 });

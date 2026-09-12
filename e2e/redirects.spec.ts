@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-/** The legacy upload URLs were folded into the combined create pages. */
+/** Legacy URLs — uploads folded into the create pages, examples under /words. */
 const REDIRECTS = [
   { from: "/upload", to: "/lists/new" },
   { from: "/rules/upload", to: "/rules/new" },
   { from: "/phrases/upload", to: "/phrases/new" },
+  { from: "/examples", to: "/words/examples" },
 ];
 
 test.describe("legacy upload URLs", () => {

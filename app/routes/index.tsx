@@ -7,7 +7,7 @@ import { ListsHome } from "~/components/lists-home";
 import { isConvexClientConfigured } from "~/components/convex-provider";
 import { SignedInOnlyClient } from "~/components/signed-in-only";
 import { isValidPos, PosFilter } from "~/components/pos-filter";
-import { SearchBar, ActiveTagFilter } from "~/components/search-bar";
+import { SearchBar } from "~/components/search-bar";
 import { PageHeader } from "~/components/page-header";
 import { Card, CardContent } from "~/components/lightswind/card";
 
@@ -70,7 +70,7 @@ export default function Index({ loaderData }: Route.ComponentProps) {
         }
       />
 
-      {/* Tag filter: the tag shows as a chip below, never inside the box */}
+      {/* Tag filter: the active tag shows as a chip inside the search box */}
       <SearchBar
         paramName="tag"
         placeholder="Search by tag… (e.g. jlpt)"
@@ -80,8 +80,6 @@ export default function Index({ loaderData }: Route.ComponentProps) {
         tagHref={tagLink}
         selectedTag={tag}
       />
-
-      {tag && <ActiveTagFilter tag={tag} clearTo={pos ? `/?pos=${pos}` : "/"} />}
 
       {/* Part-of-speech filter */}
       <PosFilter active={pos ?? ""} makeHref={makeHref} />
@@ -96,7 +94,6 @@ export default function Index({ loaderData }: Route.ComponentProps) {
                 Create the first one
               </Link>
             </SignedInOnlyClient>
-            .
           </CardContent>
         </Card>
       ) : (

@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Check, Copy } from "lucide-react";
 
 import { cn } from "~/lib/utils";
+import { Tooltip } from "~/components/lightswind/tooltip";
 
 /**
  * Lightswind UI — Animated Copy Button
@@ -52,18 +53,18 @@ export function AnimatedCopyButton({
   const iconSizes = { sm: "h-4 w-4", md: "h-5 w-5", lg: "h-6 w-6" };
 
   return (
-    <button
-      type="button"
-      onClick={() => void handleCopy()}
-      aria-label={isCopied ? "Copied" : label}
-      title={label}
-      className={cn(
-        "relative flex shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius)] border border-border bg-background transition-colors hover:bg-muted",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primarylw/50",
-        sizes[size],
-        className
-      )}
-    >
+    <Tooltip content={label}>
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        aria-label={isCopied ? "Copied" : label}
+        className={cn(
+          "relative flex shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius)] border border-border bg-background transition-colors hover:bg-muted",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primarylw/50",
+          sizes[size],
+          className
+        )}
+      >
       <AnimatePresence mode="wait" initial={false}>
         {isCopied ? (
           <motion.span
@@ -99,6 +100,7 @@ export function AnimatedCopyButton({
           className="absolute inset-0 rounded-[var(--radius)] bg-emerald-500/20"
         />
       )}
-    </button>
+      </button>
+    </Tooltip>
   );
 }

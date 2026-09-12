@@ -21,7 +21,7 @@ Framer Motion.
   - **Words** — pick **tags**, narrow to specific **word lists**, choose **types of words**
     (nouns / verbs / adjectives / adverbs / all) and a **deck size** (10–100).
   - **Phrases** — the same, but over **phrase lists** (no part-of-speech step).
-  - **Forms** — drill admin-managed grammar rules, filtered by **rule type**.
+  - **Rules** — drill admin-managed grammar rules, filtered by **rule type** and **tags**.
 - **Saving a session:** the **Save session** button opens a Lightswind **Drawer** with a form
   (session name + save). **Load** opens a drawer containing a Lightswind **Scroll Area** with a
   **draggable reorder list** — drag the grip to reorder, tap a session to load it, ✕ to delete.
@@ -58,7 +58,7 @@ Framer Motion.
 - **`/phrases`, `/phrases/new`** — every phrase and its detail page; signed-in users add
   phrases by hand or bulk-import them from JSON on the same page. Giving a phrase list
   title groups the phrases into a new list; leaving it blank adds standalone phrases.
-- **`/examples`** — all example sentences in reading mode.
+- **`/words/examples`** — all word example sentences in reading mode (`/examples` redirects here).
 - **`/lists/:id`** — list detail with a *Study this list* button; authors can edit the list.
 - **`/lists/new`** — signed-in users create a word list: title, description, tags and
   draggable word rows (each with word, kana, part of speech, every meaning and example
@@ -76,7 +76,7 @@ Framer Motion.
   rest collapse into `+x`) and the page has a free-text **search** over
   title/explanation/points plus a tag filter.
 - **`/rules/examples`** — every rule/grammar example sentence in one place, each linking back
-  to its rule. Kept separate from `/examples`, which only lists **word-list** examples.
+  to its rule. Kept separate from `/words/examples`, which only lists **word-list** examples.
 - **`/rules/:id`** — rule detail: the explanation card holds the explanation *and* its
   ポイント callouts, then examples, an **English equivalents** section, and a **Related
   rules** section (only the rules an admin linked by hand, see below).
@@ -149,7 +149,9 @@ npm run test:e2e -- --list  # list the specs
 
 Prerequisites match `npm run dev`: `.env.local` with the Convex vars, and a **migrated +
 seeded local D1** database (`npx wrangler d1 migrations apply japanese-vocab-db --local`) —
-the specs assert against the seeded *Everyday Phrases* list.
+the specs assert against the seeded *Everyday Phrases* list. The suite forces those
+bindings local (`CLOUDFLARE_VITE_FORCE_LOCAL=true` in `playwright.config.ts`), so running
+the tests never touches the live database even though `npm run dev` does.
 
 The suite starts its own dev server on port `5199` (see `e2e/test-config.ts`) so it never
 clashes with a dev server you already have open, and `e2e/global-setup.ts` warms Vite up
@@ -263,8 +265,21 @@ npx convex env set JWT_PRIVATE_KEY "<paste output of: openssl genrsa -out key.pe
 npm run dev
 ```
 
-The app runs at http://localhost:5173 with a local D1 database (miniflare). The seed
-migration adds 16 starter words.
+The app runs at http://localhost:5173. Local development is wired to the **live
+Cloudflare resources**, not to copies:
+
+- **D1** — the `DB` binding has `"remote": true` in `wrangler.jsonc`, so
+  `npm run dev` reads *and writes* the deployed `japanese-vocab-db` database.
+  Anything you create locally shows up on the deployed site immediately (and
+  vice versa); there is no local seed data and no local database to keep in
+  sync. Requires an authenticated Wrangler session (`npx wrangler login`).
+- **Convex** — `VITE_CONVEX_URL` in `.env.local` points at the same Convex
+  deployment the deployed Worker was built with, so auth, users and upload
+  authorization are shared too.
+
+To work against a throwaway local database instead, start the dev server with
+`CLOUDFLARE_VITE_FORCE_LOCAL=true npm run dev` (that is what the Playwright
+suite does — see below).
 
 ## Deploy
 
@@ -439,9 +454,12 @@ scope with `getByRole("navigation", { name: … })` rather than a bare `getByRol
 - **Auth tokens.** Sign-in uses Convex Auth. The token is held in the browser and travels
   back to the React Router actions in the `convexToken` hidden form field (or as
   `Authorization: Bearer <token>` on the JSON API). Every action re-verifies it against
-  Convex before touching D1, so a tampered client cannot write. The app sets **no cookies**
-  of its own, so there is nothing to scope with `HttpOnly`/`SameSite`; if that ever changes,
-  server-set auth cookies must be `HttpOnly`, `Secure` and `SameSite=Lax`.
+  Convex before touching D1, so a tampered client cannot write. The Convex Auth JWT / refresh
+  token is **not** kept in `localStorage`: `ConvexAuthProvider` is given a custom
+  `TokenStorage` (`app/components/convex-provider.tsx`) that reads and writes through
+  `/api/auth-token` (`app/routes/api.auth-token.ts`), which stores each token in an
+  `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS). Page scripts can therefore never
+  read the credentials.
 - **Response headers.** `workers/app.ts` adds `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`,
   `Cross-Origin-Opener-Policy: same-origin`, a restrictive `Permissions-Policy`, and

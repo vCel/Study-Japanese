@@ -1,8 +1,10 @@
 import * as React from "react";
 import { useNavigate } from "react-router";
-import { FolderOpen, GraduationCap, RotateCcw, Save, Tags, Trash2 } from "lucide-react";
+import { FolderOpen, GraduationCap, ListChecks, Save } from "lucide-react";
 
 import type { TagInfo, WordListSummary } from "~/lib/db.server";
+import { useStarredIds, type StarredIds } from "~/lib/use-stars";
+import { SettingLabel } from "~/components/setting-label";
 import { Badge } from "~/components/lightswind/badge";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent } from "~/components/lightswind/card";
@@ -19,8 +21,10 @@ import {
 import { Input, Label } from "~/components/lightswind/input";
 import { ReorderList, ReorderRow } from "~/components/lightswind/reorder";
 import { ScrollArea } from "~/components/lightswind/scroll-area";
+import { Switch } from "~/components/lightswind/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/lightswind/tabs";
 import { toast } from "~/components/lightswind/toast";
+import { Tooltip } from "~/components/lightswind/tooltip";
 import { cn } from "~/lib/utils";
 import {
   DEFAULT_STUDY_CONFIG,
@@ -87,6 +91,7 @@ function describeSession(session: SavedSession): string {
     );
     if (session.pos) parts.push(session.pos);
   }
+  if (session.important) parts.push("★ starred only");
   parts.push(`${session.limit} cards`);
   return parts.join(" · ");
 }
@@ -95,11 +100,16 @@ function describeSession(session: SavedSession): string {
  * Study session configurator with three independent sections — words, phrases
  * and grammar forms. Each tab keeps its own selection *and* its own saved
  * sessions, so switching tabs never mixes decks up.
+ *
+ * The source-selection steps get a card each; the three single-setting choices
+ * (priority, deck size, review schedule) share one "Options" card instead of
+ * three near-empty ones.
  */
 export function StudySetup({
   wordLists,
   phraseLists,
   tags,
+  ruleTags,
   ruleCounts,
   preselectedLists,
   initialKind,
@@ -107,6 +117,7 @@ export function StudySetup({
   wordLists: WordListSummary[];
   phraseLists: WordListSummary[];
   tags: TagInfo[];
+  ruleTags: TagInfo[];
   ruleCounts: { all: number; word: number; sentence: number };
   preselectedLists: number[];
   initialKind: StudyKind;
@@ -120,6 +131,8 @@ export function StudySetup({
   const [repetition, setRepetition] = React.useState(
     () => loadPreference(REPETITION_KEY, "1", ["1", "0"]) === "1"
   );
+  // Stars are per-user and live in Convex, so they only arrive in the browser.
+  const starred = useStarredIds();
 
   const updateConfig = (kind: StudyKind, patch: Partial<StudyConfig>) =>
     setConfigs((prev) => ({ ...prev, [kind]: { ...prev[kind], ...patch } }));
@@ -152,9 +165,11 @@ export function StudySetup({
             kind={kind}
             lists={kind === "phrases" ? phraseLists : wordLists}
             tags={tags}
+            ruleTags={ruleTags}
             ruleCounts={ruleCounts}
             config={configs[kind]}
             onChange={(patch) => updateConfig(kind, patch)}
+            starred={starred}
             sessions={sessionsOfKind(sessions, kind)}
             onSessionsChange={(next) => updateSessions(kind, next)}
             repetition={repetition}
@@ -170,9 +185,11 @@ function StudyPanel({
   kind,
   lists,
   tags,
+  ruleTags,
   ruleCounts,
   config,
   onChange,
+  starred,
   sessions,
   onSessionsChange,
   repetition,
@@ -181,9 +198,11 @@ function StudyPanel({
   kind: StudyKind;
   lists: WordListSummary[];
   tags: TagInfo[];
+  ruleTags: TagInfo[];
   ruleCounts: { all: number; word: number; sentence: number };
   config: StudyConfig;
   onChange: (patch: Partial<StudyConfig>) => void;
+  starred: StarredIds;
   sessions: SavedSession[];
   onSessionsChange: (next: SavedSession[]) => void;
   repetition: boolean;
@@ -191,6 +210,8 @@ function StudyPanel({
 }) {
   const navigate = useNavigate();
   const isForms = kind === "forms";
+  // Rules are tagged separately from word/phrase lists.
+  const panelTags = isForms ? ruleTags : tags;
   const [saveOpen, setSaveOpen] = React.useState(false);
   const [loadOpen, setLoadOpen] = React.useState(false);
   const [sessionName, setSessionName] = React.useState("");
@@ -207,11 +228,21 @@ function StudyPanel({
       ? tagFiltered.filter((list) => config.lists.includes(list.id))
       : tagFiltered;
 
+  // The user's starred ids for this section. Stars are per-user, so the count
+  // is the whole library rather than the current selection — the deck itself is
+  // still narrowed to whichever of them fall inside the scope.
+  const starredIds = isForms ? starred.rules : starred.words;
+
+  // The priority filter narrows the deck to the starred cards only.
   const matchCount = isForms
-    ? config.ruleKind
-      ? ruleCounts[config.ruleKind]
-      : ruleCounts.all
-    : eligible.reduce((sum, list) => sum + list.wordCount, 0);
+    ? config.important
+      ? starredIds.size
+      : config.ruleKind
+        ? ruleCounts[config.ruleKind]
+        : ruleCounts.all
+    : config.important
+      ? starredIds.size
+      : eligible.reduce((sum, list) => sum + list.wordCount, 0);
 
   const noun = isForms ? "rule" : kind === "phrases" ? "phrase" : "word";
 
@@ -233,6 +264,41 @@ function StudyPanel({
         : [...config.lists, id],
     });
 
+  // "Select all" is a lists-only control: it acts on the word/phrase lists the
+  // section offers and sits in the top-right of that card, not on a row of its
+  // own above the steps.
+  const selectableLists = tagFiltered
+    .filter((list) => list.wordCount > 0)
+    .map((list) => list.id);
+  const allListsSelected =
+    selectableLists.length > 0 && selectableLists.every((id) => config.lists.includes(id));
+  const toggleSelectAllLists = () =>
+    onChange({ lists: allListsSelected ? [] : selectableLists });
+
+  /**
+   * Small "select all / clear" pill for the lists card's header. It is always
+   * rendered there, just disabled while there is nothing to select yet.
+   */
+  const selectAllPill = (all: boolean, onToggle: () => void, label: string, empty = false) => (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={empty}
+      data-slot="study-select-all"
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+        empty
+          ? "cursor-not-allowed border-border/60 text-muted-foreground/50"
+          : all
+            ? "cursor-pointer border-primarylw bg-primarylw/15 text-primarylw"
+            : "cursor-pointer border-border text-muted-foreground hover:border-primarylw/40 hover:text-foreground"
+      )}
+    >
+      <ListChecks className="h-3.5 w-3.5" />
+      {all ? "Clear selection" : label}
+    </button>
+  );
+
   const openSaveDrawer = (open: boolean) => {
     if (open) setSessionName((prev) => prev || suggestedName);
     setSaveOpen(open);
@@ -249,6 +315,7 @@ function StudyPanel({
       tags: config.tags,
       pos: config.pos,
       ruleKind: config.ruleKind,
+      important: config.important,
       limit: config.limit,
       createdAt: Date.now(),
     };
@@ -270,6 +337,7 @@ function StudyPanel({
       tags: session.tags,
       pos: session.pos,
       ruleKind: session.ruleKind,
+      important: session.important,
       limit: session.limit,
     });
     setLoadOpen(false);
@@ -279,8 +347,12 @@ function StudyPanel({
   const start = () => {
     if (matchCount === 0) return;
     const qs = new URLSearchParams({ kind, limit: String(config.limit) });
+    // A starred-only deck is drawn from the user's starred ids; the server
+    // intersects them with the selected lists / kind / part of speech.
+    if (config.important) qs.set("starredIds", [...starredIds].join(","));
     if (isForms) {
       if (config.ruleKind) qs.set("ruleKind", config.ruleKind);
+      if (config.tags.length > 0) qs.set("tags", config.tags.join(","));
     } else {
       if (config.lists.length > 0) qs.set("lists", config.lists.join(","));
       if (config.tags.length > 0) qs.set("tags", config.tags.join(","));
@@ -289,10 +361,46 @@ function StudyPanel({
     navigate(`/study/session?${qs.toString()}`);
   };
 
-  // The numbered steps differ per section, so build them as a list.
-  const steps: { title: string; body: React.ReactNode }[] = [];
+  // Tag chips are shared by every section (rules have their own tag set, so
+  // `panelTags` picks the right one).
+  const tagsStepBody =
+    panelTags.length === 0 ? (
+      <p className="text-xs text-muted-foreground">No tags in the collection yet.</p>
+    ) : (
+      <div className="flex flex-wrap gap-1.5">
+        {panelTags.map((tag) => {
+          const active = config.tags.includes(tag.name);
+          return (
+            <button
+              key={tag.name}
+              type="button"
+              onClick={() => toggleTag(tag.name)}
+              aria-pressed={active}
+              className={cn(
+                "cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                active
+                  ? "border-primarylw bg-primarylw/15 text-primarylw"
+                  : "border-border text-muted-foreground hover:border-primarylw/40 hover:text-foreground"
+              )}
+            >
+              #{tag.name} <span className="opacity-60">{tag.listCount}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+
+  // The numbered steps differ per section, so build them as a list. Tags are
+  // always the first step — the same order on every tab — and the lists step on
+  // words/phrases carries the "select all" pill in its card header.
+  const steps: { title: string; body: React.ReactNode; action?: React.ReactNode }[] = [];
 
   if (isForms) {
+    // No "select all" here: rules are a flat collection with no list picker, so
+    // their tags are the only multi-select — a select-all on them reads like it
+    // selects the rules themselves. The pill stays a lists-only control.
+    steps.push({ title: "Tags (optional)", body: tagsStepBody });
+
     steps.push({
       title: "Rule type",
       body: (
@@ -315,41 +423,23 @@ function StudyPanel({
       ),
     });
   } else {
-    steps.push({
-      title: "Tags (optional)",
-      body:
-        tags.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No tags in the collection yet.</p>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {tags.map((tag) => {
-              const active = config.tags.includes(tag.name);
-              return (
-                <button
-                  key={tag.name}
-                  type="button"
-                  onClick={() => toggleTag(tag.name)}
-                  aria-pressed={active}
-                  className={cn(
-                    "cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                    active
-                      ? "border-primarylw bg-primarylw/15 text-primarylw"
-                      : "border-border text-muted-foreground hover:border-primarylw/40 hover:text-foreground"
-                  )}
-                >
-                  #{tag.name} <span className="opacity-60">{tag.listCount}</span>
-                </button>
-              );
-            })}
-          </div>
-        ),
-    });
+    steps.push({ title: "Tags (optional)", body: tagsStepBody });
 
     steps.push({
       title: kind === "phrases" ? "Phrase lists" : "Word lists",
+      action: selectAllPill(
+        allListsSelected,
+        toggleSelectAllLists,
+        "Select all lists",
+        selectableLists.length === 0
+      ),
       body:
         tagFiltered.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No lists match the selected tags.</p>
+          <p className="text-xs text-muted-foreground">
+            {lists.length === 0
+              ? `No ${kind === "phrases" ? "phrase" : "word"} lists yet — create one and it appears here.`
+              : "No lists match the selected tags."}
+          </p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {tagFiltered.map((list) => {
@@ -409,90 +499,115 @@ function StudyPanel({
     }
   }
 
-  steps.push({
-    title: "Deck size",
-    body: (
-      <div className="flex flex-wrap gap-1.5">
-        {DECK_SIZES.map((size) => (
-          <button
-            key={size}
-            type="button"
-            onClick={() => onChange({ limit: size })}
-            aria-pressed={config.limit === size}
-            className={pill(config.limit === size)}
-          >
-            {size} cards
-          </button>
-        ))}
-      </div>
-    ),
-  });
-
-  steps.push({
-    title: "Review schedule",
-    body: (
-      <>
-        <button
-          type="button"
-          onClick={onToggleRepetition}
-          aria-pressed={repetition}
-          className={cn(
-            "inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
-            repetition
-              ? "border-primarylw/50 bg-primarylw/15 text-primarylw"
-              : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-          )}
-          title="Spaced repetition: cards you struggle with come back more often, at growing intervals"
-        >
-          <RotateCcw className="h-4 w-4" />
-          Spaced repetition {repetition ? "on" : "off"}
-        </button>
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          Cards you answer "Again" on are rescheduled at growing intervals and come back more
-          often.
-        </p>
-      </>
-    ),
-  });
-
   return (
     <div className="space-y-6">
       {steps.map((step, index) => (
         <Card key={step.title}>
           <CardContent className="p-6">
-            <p className="mb-3 text-sm font-semibold">
-              {index + 1} · {step.title}
-            </p>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold">
+                {index + 1} · {step.title}
+              </p>
+              {step.action}
+            </div>
             {step.body}
           </CardContent>
         </Card>
       ))}
+
+      {/*
+        One card, one row per setting, and the help text lives in a hover
+        tooltip instead of a paragraph — no dividers needed to separate three
+        single-control rows.
+      */}
+      <Card>
+        <CardContent className="p-6">
+          <p className="mb-5 text-sm font-semibold">{steps.length + 1} · Options</p>
+
+          <div className="space-y-5">
+            <div className="flex items-center justify-between gap-4">
+              <SettingLabel
+                label="Starred only"
+                hint={
+                  <>
+                    Drills only the cards you starred with the ★ button inside a list (or on the
+                    rules page).{" "}
+                    {isForms
+                      ? `${starredIds.size} rule${starredIds.size === 1 ? "" : "s"} starred so far.`
+                      : `${starredIds.size} starred card${starredIds.size === 1 ? "" : "s"} in your library.`}{" "}
+                    Only the ones inside the selection above are drawn.
+                  </>
+                }
+              />
+              <Switch
+                checked={config.important}
+                onCheckedChange={(next) => onChange({ important: next })}
+                aria-label="Starred only"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <SettingLabel
+                label="Spaced repetition"
+                hint={`Cards you answer "Again" on come back more often, at growing intervals.`}
+              />
+              <Switch
+                checked={repetition}
+                onCheckedChange={onToggleRepetition}
+                aria-label="Spaced repetition"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <SettingLabel
+                label="Deck size"
+                hint="How many cards to draw for this session."
+              />
+              <div className="flex flex-wrap justify-end gap-1.5">
+                {DECK_SIZES.map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => onChange({ limit: size })}
+                    aria-pressed={config.limit === size}
+                    className={pill(config.limit === size)}
+                  >
+                    {size} cards
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Summary + save / load / start */}
       <div className="flex flex-col items-center justify-between gap-4 rounded-[var(--radius)] border border-primarylw/40 bg-card p-6 md:flex-row">
         <div className="text-center md:text-left">
           <p className="font-semibold">
             {isForms
-              ? `${matchCount} ${noun}${matchCount === 1 ? "" : "s"}${config.ruleKind ? ` · ${config.ruleKind} rules only` : ""}`
-              : `${eligible.length} list${eligible.length === 1 ? "" : "s"} · ≈${matchCount} matching ${noun}s${config.pos ? ` · ${config.pos} only` : ""}`}
+              ? config.important
+                ? `★ Your starred rules${config.ruleKind ? ` · ${config.ruleKind} only` : ""}`
+                : `${matchCount} ${noun}${matchCount === 1 ? "" : "s"}${config.ruleKind ? ` · ${config.ruleKind} rules only` : ""}`
+              : config.important
+                ? `${eligible.length} list${eligible.length === 1 ? "" : "s"} · ★ your starred ${noun}s`
+                : `${eligible.length} list${eligible.length === 1 ? "" : "s"} · ≈${matchCount} matching ${noun}s${config.pos ? ` · ${config.pos} only` : ""}`}
           </p>
           <p className="text-xs text-muted-foreground">
-            Deck of up to {config.limit} random {config.pos ? `${config.pos} ` : ""}cards, drawn
-            from your selection.
+            Up to {config.limit} {config.important ? "starred " : ""}
+            {config.pos ? `${config.pos} ` : ""}cards from your selection.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2">
           <Drawer open={saveOpen} onOpenChange={openSaveDrawer}>
-            <DrawerTrigger asChild>
-              <Button
-                variant="outline"
-                disabled={matchCount === 0}
-                title="Save this configuration to reuse later"
-              >
-                <Save /> Save session
-              </Button>
-            </DrawerTrigger>
+            <Tooltip content="Save this configuration to reuse later">
+              <DrawerTrigger asChild>
+                <Button variant="outline" disabled={matchCount === 0}>
+                  <Save /> Save session
+                </Button>
+              </DrawerTrigger>
+            </Tooltip>
             <DrawerContent>
               <DrawerHeader>
                 <DrawerTitle>Save session</DrawerTitle>
@@ -537,11 +652,13 @@ function StudyPanel({
           </Drawer>
 
           <Drawer open={loadOpen} onOpenChange={setLoadOpen}>
-            <DrawerTrigger asChild>
-              <Button variant="outline" title="Load a saved session" disabled={sessions.length === 0}>
-                <FolderOpen /> Load
-              </Button>
-            </DrawerTrigger>
+            <Tooltip content="Load a saved session">
+              <DrawerTrigger asChild>
+                <Button variant="outline" disabled={sessions.length === 0}>
+                  <FolderOpen /> Load
+                </Button>
+              </DrawerTrigger>
+            </Tooltip>
             <DrawerContent>
               <DrawerHeader>
                 <DrawerTitle>Saved sessions</DrawerTitle>

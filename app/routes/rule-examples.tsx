@@ -51,7 +51,6 @@ export default function RuleExamples({ loaderData }: Route.ComponentProps) {
                 </Link>
               </AdminOnly>
             )}
-            .
           </CardContent>
         </Card>
       ) : (

@@ -1,5 +1,5 @@
 import type { Route } from "./+types/study";
-import { countRules, listAllTags, listStudyLists } from "~/lib/db.server";
+import { countRules, listAllRuleTags, listAllTags, listStudyLists } from "~/lib/db.server";
 import { PageHeader } from "~/components/page-header";
 import { StudySetup } from "~/components/study-setup";
 import type { StudyKind } from "~/lib/study-prefs";
@@ -21,19 +21,26 @@ export async function loader({ request }: Route.LoaderArgs) {
     .map((part) => Number.parseInt(part.trim(), 10))
     .filter((id) => !Number.isNaN(id));
 
-  const [library, tags, ruleCount, wordRuleCount, sentenceRuleCount] = await Promise.all([
-    listStudyLists(),
-    listAllTags(),
-    countRules(),
-    countRules("word"),
-    countRules("sentence"),
-  ]);
+  const [library, tags, ruleTags, ruleCount, wordRuleCount, sentenceRuleCount] =
+    await Promise.all([
+      listStudyLists(),
+      listAllTags(),
+      listAllRuleTags(),
+      countRules(),
+      countRules("word"),
+      countRules("sentence"),
+    ]);
 
   return {
     wordLists: library.wordLists,
     phraseLists: library.phraseLists,
     tags,
-    ruleCounts: { all: ruleCount, word: wordRuleCount, sentence: sentenceRuleCount },
+    ruleTags,
+    ruleCounts: {
+      all: ruleCount,
+      word: wordRuleCount,
+      sentence: sentenceRuleCount,
+    },
     preselectedLists,
     initialKind: parseKind(url.searchParams.get("kind")),
   };
@@ -50,6 +57,7 @@ export default function StudySetupPage({ loaderData }: Route.ComponentProps) {
         wordLists={loaderData.wordLists}
         phraseLists={loaderData.phraseLists}
         tags={loaderData.tags}
+        ruleTags={loaderData.ruleTags}
         ruleCounts={loaderData.ruleCounts}
         preselectedLists={loaderData.preselectedLists}
         initialKind={loaderData.initialKind}

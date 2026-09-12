@@ -38,7 +38,6 @@ export default function Examples({ loaderData }: Route.ComponentProps) {
                 Add some words with examples
               </Link>
             </SignedInOnlyClient>
-            .
           </CardContent>
         </Card>
       ) : (
@@ -64,7 +63,11 @@ export default function Examples({ loaderData }: Route.ComponentProps) {
       )}
 
       <div className="mt-8">
-        <Pagination page={loaderData.page} pages={loaderData.pages} makeHref={() => "/examples"} />
+        <Pagination
+          page={loaderData.page}
+          pages={loaderData.pages}
+          makeHref={() => "/words/examples"}
+        />
       </div>
     </div>
   );

@@ -63,7 +63,6 @@ export default function Phrases({ loaderData }: Route.ComponentProps) {
                 Add the first one
               </Link>
             </SignedInOnlyClient>
-            .
           </CardContent>
         </Card>
       ) : (

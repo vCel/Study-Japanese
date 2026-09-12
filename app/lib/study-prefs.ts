@@ -12,7 +12,7 @@ export const STUDY_KINDS: StudyKind[] = ["words", "phrases", "forms"];
 export const STUDY_KIND_LABELS: Record<StudyKind, string> = {
   words: "Words",
   phrases: "Phrases",
-  forms: "Forms",
+  forms: "Rules",
 };
 
 /** Which tab a study session was started from. */
@@ -27,6 +27,8 @@ export interface StudyConfig {
   pos: string;
   /** Rule kind filter — forms tab only ("" = every rule). */
   ruleKind: StudyRuleKind;
+  /** Drill only the cards starred as important — all three tabs. */
+  important: boolean;
   limit: number;
 }
 
@@ -35,6 +37,7 @@ export const DEFAULT_STUDY_CONFIG: StudyConfig = {
   tags: [],
   pos: "",
   ruleKind: "",
+  important: false,
   limit: 40,
 };
 
@@ -79,6 +82,7 @@ function normalizeSession(item: unknown): SavedSession | null {
     tags: raw.tags.filter((tag): tag is string => typeof tag === "string"),
     pos: typeof raw.pos === "string" ? raw.pos : "",
     ruleKind: raw.ruleKind === "word" || raw.ruleKind === "sentence" ? raw.ruleKind : "",
+    important: raw.important === true,
     limit: raw.limit,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
   };

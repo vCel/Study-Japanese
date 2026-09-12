@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Form, useActionData, useNavigation } from "react-router";
+import { Form, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 import { Plus, Trash2, X } from "lucide-react";
 
@@ -18,6 +18,7 @@ import { ReorderList, ReorderRow } from "~/components/lightswind/reorder";
 import { JsonFillAccordion } from "~/components/json-fill-accordion";
 import { FormMessage } from "~/components/form-message";
 import { okMessage, useActionToast } from "~/components/action-toast";
+import { useReturnTo } from "~/lib/return-to";
 import { RulePoint } from "~/components/rule-point";
 import { SelectField } from "~/components/select-field";
 import { toast } from "~/components/lightswind/toast";
@@ -474,6 +475,9 @@ export function RulesCreateForm({
   const token = useAuthToken();
   const configured = isConvexClientConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
+  const navigate = useNavigate();
+  // Creating is the end of the flow: send the reader back where they started.
+  const returnTo = useReturnTo("/rules");
 
   const blank = React.useCallback(
     () => toDraft({ ...EMPTY_RULE_DRAFT, kind: defaultKind }),
@@ -499,6 +503,12 @@ export function RulesCreateForm({
     setDrafts([fresh]);
     setOpenIds([fresh.id]);
   }, [actionData, blank]);
+
+  // …and hand the reader back to the screen they came from.
+  React.useEffect(() => {
+    if (!actionData?.ok) return;
+    navigate(returnTo, { replace: true });
+  }, [actionData, navigate, returnTo]);
 
   const updateDraft = (draftId: string, patch: Partial<Draft>) =>
     setDrafts((prev) =>
@@ -640,8 +650,16 @@ export function RuleForm({
   const token = useAuthToken();
   const configured = isConvexClientConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
+  const navigate = useNavigate();
+  // Saving hands the reader back to the screen they came from.
+  const returnTo = useReturnTo(`/rules/${rule.id}`);
 
   useActionToast(actionData, (data) => (data.deleted ? null : okMessage(data, "Rule updated")));
+
+  React.useEffect(() => {
+    if (!actionData?.ok || actionData.deleted) return;
+    navigate(returnTo, { replace: true });
+  }, [actionData, navigate, returnTo]);
 
   const [draft, setDraft] = React.useState<Draft>(() =>
     toDraft({

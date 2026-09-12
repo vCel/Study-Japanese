@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Form, Link, useActionData, useNavigation } from "react-router";
+import { Form, Link, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 
 import { isConvexClientConfigured } from "~/components/convex-provider";
@@ -11,6 +11,7 @@ import { Input, Label } from "~/components/lightswind/input";
 import { FormMessage } from "~/components/form-message";
 import { JsonFillAccordion } from "~/components/json-fill-accordion";
 import { useActionToast } from "~/components/action-toast";
+import { useReturnTo } from "~/lib/return-to";
 import {
   fromDrafts,
   isDraftComplete,
@@ -42,6 +43,10 @@ export function ListsNewForm() {
   const token = useAuthToken();
   const configured = isConvexClientConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
+  const navigate = useNavigate();
+  // The new list appears on the screen the reader came from, so that is where
+  // they are sent once it is created.
+  const returnTo = useReturnTo("/");
   const [rows, setRows] = React.useState<VocabRowDraft[]>(() => [newRow()]);
 
   useActionToast(actionData, (data) =>
@@ -55,6 +60,11 @@ export function ListsNewForm() {
         ? { title: data.error, variant: "error" }
         : null
   );
+
+  React.useEffect(() => {
+    if (!actionData?.ok) return;
+    navigate(returnTo, { replace: true });
+  }, [actionData, navigate, returnTo]);
 
   if (!configured) {
     return (

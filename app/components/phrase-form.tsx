@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Form, Link, useActionData, useNavigation } from "react-router";
+import { Form, Link, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 
 import { isConvexClientConfigured } from "~/components/convex-provider";
@@ -11,6 +11,7 @@ import { Input, Label } from "~/components/lightswind/input";
 import { FormMessage } from "~/components/form-message";
 import { JsonFillAccordion } from "~/components/json-fill-accordion";
 import { useActionToast } from "~/components/action-toast";
+import { useReturnTo } from "~/lib/return-to";
 import {
   fromDrafts,
   isDraftComplete,
@@ -52,6 +53,10 @@ export function PhraseForm() {
   const token = useAuthToken();
   const configured = isConvexClientConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
+  const navigate = useNavigate();
+  // Creating is the end of the flow: the new phrases show up on the screen the
+  // reader came from, so that is where they are sent.
+  const returnTo = useReturnTo("/phrases");
   const [rows, setRows] = React.useState<VocabRowDraft[]>(() => [newRow()]);
 
   useActionToast(actionData, (data) =>
@@ -65,6 +70,11 @@ export function PhraseForm() {
         ? { title: data.error, variant: "error" }
         : null
   );
+
+  React.useEffect(() => {
+    if (!actionData?.ok) return;
+    navigate(returnTo, { replace: true });
+  }, [actionData, navigate, returnTo]);
 
   if (!configured) {
     return (

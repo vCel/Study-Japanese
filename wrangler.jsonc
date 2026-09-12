@@ -13,11 +13,18 @@
 	//   npx wrangler d1 create japanese-vocab-db
 	// then paste the returned database_id below and run:
 	//   npx wrangler d1 migrations apply japanese-vocab-db --remote
+	//
+	// `remote: true` makes local development talk to *this* (live) database
+	// instead of a throwaway miniflare copy, so `npm run dev` sees exactly the
+	// data the deployed Worker sees — writes included. The Playwright suite
+	// opts out again with CLOUDFLARE_VITE_FORCE_LOCAL=true (see
+	// playwright.config.ts) so it never mutates production data.
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "japanese-vocab-db",
-			"database_id": "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
+			"database_id": "0f7fb945-17bf-48bf-ae03-d165f2315993",
+			"remote": true
 		}
 	],
 	// Workers Rate Limiting (native binding). Namespaces are arbitrary ids unique

@@ -100,6 +100,7 @@ export default function RuleEdit() {
             redirectTo="/rules"
             deleted={actionData?.deleted}
             description="Its examples and tags are removed too."
+            size="lg"
           />
         }
       />

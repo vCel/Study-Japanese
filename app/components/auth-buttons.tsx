@@ -5,6 +5,7 @@ import { Settings } from "lucide-react";
 import { useQuery } from "convex/react";
 
 import { isConvexClientConfigured } from "~/components/convex-provider";
+import { Tooltip } from "~/components/lightswind/tooltip";
 import { api } from "../../convex/_generated/api";
 
 /** Neutral placeholder used while the Convex session is still unknown. */
@@ -54,38 +55,38 @@ function AuthButtonsLive({ layout = "sidebar" }: { layout?: AuthLayout }) {
   if (isAuthenticated) {
     const displayName = user?.username ?? user?.name ?? user?.email ?? "Account";
     const cog = (
-      <Link
-        to="/settings"
-        title="Settings"
-        aria-label="Settings"
-        className="shrink-0 rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <Settings className="h-5 w-5" />
-      </Link>
+      <Tooltip content="Settings">
+        <Link
+          to="/settings"
+          aria-label="Settings"
+          className="shrink-0 rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <Settings className="h-5 w-5" />
+        </Link>
+      </Tooltip>
     );
 
     if (layout === "header") {
       return (
         <div className="flex shrink-0 items-center gap-1">
-          <span
-            className="max-w-[6rem] truncate text-sm font-medium text-foreground"
-            title={user?.email ?? displayName}
-          >
-            {displayName}
-          </span>
+          <Tooltip content={user?.email ?? displayName}>
+            <span className="max-w-[6rem] truncate text-sm font-medium text-foreground">
+              {displayName}
+            </span>
+          </Tooltip>
           {cog}
         </div>
       );
     }
 
+    // Sidebar, signed in: the name and cog share a pill at the foot of the nav.
     return (
-      <div className="flex w-full items-center justify-between gap-2">
-        <span
-          className="min-w-0 truncate text-sm font-medium text-foreground"
-          title={user?.email ?? undefined}
-        >
-          {displayName}
-        </span>
+      <div className="flex w-full items-center justify-between gap-2 rounded-full border border-border/60 bg-card p-1.5">
+        <Tooltip content={user?.email ?? displayName}>
+          <span className="min-w-0 truncate pl-2 text-sm font-medium text-foreground">
+            {displayName}
+          </span>
+        </Tooltip>
         {cog}
       </div>
     );
@@ -110,17 +111,19 @@ function AuthButtonsLive({ layout = "sidebar" }: { layout?: AuthLayout }) {
     );
   }
 
+  // Sidebar: the two buttons share one row of equal halves, so they sit inside
+  // the nav column instead of overflowing the pill container when stacked.
   return (
-    <div className="flex w-full flex-col items-stretch gap-2">
+    <div className="flex w-full items-center gap-2">
       <Link
         to="/login"
-        className="rounded-full px-4 py-2 text-center text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="inline-flex h-10 flex-1 items-center justify-center rounded-full border border-border px-3 text-sm font-medium whitespace-nowrap text-muted-foreground transition-colors hover:border-primarylw/40 hover:bg-muted hover:text-foreground"
       >
         Sign in
       </Link>
       <Link
         to="/signup"
-        className="inline-flex h-10 items-center justify-center rounded-full bg-primarylw px-6 text-sm font-medium text-white shadow transition-colors hover:bg-primarylw-2"
+        className="inline-flex h-10 flex-1 items-center justify-center rounded-full bg-primarylw px-3 text-sm font-medium whitespace-nowrap text-white shadow transition-colors hover:bg-primarylw-2"
       >
         Sign up
       </Link>

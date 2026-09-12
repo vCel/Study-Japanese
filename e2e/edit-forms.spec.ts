@@ -16,7 +16,8 @@ test.describe("word edit page", () => {
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByLabel("Word *")).toBeVisible();
     await expect(page.getByText("Meanings *")).toBeVisible();
-    await expect(page.getByText("Example sentences")).toBeVisible();
+    // Anchored: the site footer also mentions "example sentences".
+    await expect(page.getByText(/^Example sentences/)).toBeVisible();
 
     // One handle per reorderable row (meanings + examples).
     await expect(page.locator(DRAG_HANDLE).first()).toBeVisible();

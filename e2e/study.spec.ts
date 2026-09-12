@@ -20,7 +20,7 @@ type StudyTab = "words" | "phrases" | "forms";
 const TAB_LABELS: Record<StudyTab, string> = {
   words: "Words",
   phrases: "Phrases",
-  forms: "Forms",
+  forms: "Rules",
 };
 
 async function saveSession(page: Page, kind: StudyTab, name: string) {
@@ -33,11 +33,11 @@ async function saveSession(page: Page, kind: StudyTab, name: string) {
 }
 
 test.describe("study sections", () => {
-  test("offers a words, phrases and forms tab", async ({ page }) => {
+  test("offers a words, phrases and rules tab", async ({ page }) => {
     await page.goto("/study");
 
     const tabs = page.getByRole("tablist");
-    await expect(tabs.getByRole("tab")).toHaveText(["Words", "Phrases", "Forms"]);
+    await expect(tabs.getByRole("tab")).toHaveText(["Words", "Phrases", "Rules"]);
 
     // Words is the default section, and only its panel is mounted.
     await expect(page.getByRole("tab", { name: "Words" })).toHaveAttribute(
@@ -75,8 +75,8 @@ test.describe("study sections", () => {
       "true"
     );
 
-    // …and forms swaps the source picker for a rule-kind picker.
-    await page.getByRole("tab", { name: "Forms" }).click();
+    // …and rules swaps the source picker for a rule-kind picker.
+    await page.getByRole("tab", { name: "Rules" }).click();
     const forms = panelFor(page, "forms");
     await expect(forms.getByText("Rule type")).toBeVisible();
     await expect(forms.getByRole("button", { name: /Sentence rules/ })).toBeVisible();
@@ -107,12 +107,12 @@ test.describe("starting a session", () => {
     await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
   });
 
-  test("starts a forms session with grammar cards", async ({ page }) => {
+  test("starts a rules session with grammar cards", async ({ page }) => {
     await page.goto("/study?kind=forms");
     await waitForHydration(page);
 
-    // The deep link opens straight on the forms tab.
-    await expect(page.getByRole("tab", { name: "Forms" })).toHaveAttribute(
+    // The deep link opens straight on the rules tab.
+    await expect(page.getByRole("tab", { name: "Rules" })).toHaveAttribute(
       "aria-selected",
       "true"
     );
@@ -120,7 +120,7 @@ test.describe("starting a session", () => {
     await panelFor(page, "forms").getByRole("button", { name: "Start studying" }).click();
 
     await expect(page).toHaveURL(/kind=forms/);
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Forms");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Rules");
     await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
   });
 
@@ -157,6 +157,57 @@ test.describe("starting a session", () => {
     // no replayed flip (which used to show the next answer mid-animation).
     await page.getByRole("button", { name: /Got it/ }).click();
     await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+  });
+});
+
+test.describe("starting from a word list", () => {
+  test("one Study button opens a menu with the deck choices", async ({ page }) => {
+    await page.goto("/lists/1");
+    await waitForHydration(page);
+
+    // A single button — "all cards" and "starred only" are choices inside it,
+    // not two buttons competing for the same corner.
+    await expect(page.getByRole("link", { name: "Study this list" })).toHaveCount(0);
+    const trigger = page.getByRole("button", { name: "Study this list" });
+    await expect(trigger).toBeVisible();
+
+    await trigger.click();
+    const menu = page.locator("[data-slot='popover']");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("menuitem")).toHaveCount(1);
+    await expect(menu).toContainText("Every card in this list");
+
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  });
+
+  test("the menu's all-cards entry starts a session for that list", async ({ page }) => {
+    await page.goto("/lists/1");
+    await waitForHydration(page);
+
+    await page.getByRole("button", { name: "Study this list" }).click();
+    await page.locator("[data-slot='popover']").getByRole("menuitem").first().click();
+
+    await expect(page).toHaveURL(/\/study\/session\?lists=1/);
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+  });
+});
+
+test.describe("session rendering", () => {
+  test("hydrates without a server/client mismatch", async ({ page }) => {
+    const problems: string[] = [];
+    page.on("pageerror", (error) => problems.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") problems.push(message.text());
+    });
+
+    await page.goto("/study/session?kind=words&limit=4");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+
+    // Both the deck's leading sides and its order are dealt by the loader, so
+    // React must never have to throw the server markup away and rebuild it.
+    expect(problems.filter((text) => /hydration/i.test(text))).toEqual([]);
   });
 });
 
@@ -230,8 +281,8 @@ test.describe("saved study sessions", () => {
     await page.getByRole("tab", { name: "Phrases" }).click();
     await expect(panelFor(page, "phrases").getByRole("button", { name: "Load" })).toBeDisabled();
 
-    // …while forms only lists the session saved on the forms tab.
-    await page.getByRole("tab", { name: "Forms" }).click();
+    // …while rules only lists the session saved on the rules tab.
+    await page.getByRole("tab", { name: "Rules" }).click();
     await panelFor(page, "forms").getByRole("button", { name: "Load" }).click();
 
     const drawer = page.getByRole("dialog");

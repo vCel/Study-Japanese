@@ -1,10 +1,13 @@
 import * as React from "react";
+import { Link } from "react-router";
 import { motion } from "framer-motion";
-import { Check, RotateCcw, Shuffle, X } from "lucide-react";
+import { Check, ExternalLink, RotateCcw, Shuffle, X } from "lucide-react";
 
-import type { StudyCard } from "~/lib/study-cards";
+import type { CardSide, StudyCard } from "~/lib/study-cards";
+import { studyCardSource } from "~/lib/study-cards";
 import { Button } from "~/components/lightswind/button";
 import { Badge } from "~/components/lightswind/badge";
+import { Tooltip } from "~/components/lightswind/tooltip";
 import {
   loadPreference,
   REPETITION_KEY,
@@ -44,9 +47,6 @@ const STATS_KEY = "jv:study:stats";
  */
 const INTERVALS_MS = [0, 1, 3, 7, 14, 30].map((days) => days * 24 * 60 * 60 * 1000);
 const MAX_BOX = INTERVALS_MS.length - 1;
-
-/** Which side of the card is shown first. */
-export type SideMode = "title" | "meaning";
 
 function loadStats(): StatsMap {
   if (typeof window === "undefined") return {};
@@ -105,10 +105,16 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
    * Build the session queue (deck indexes). In spaced repetition mode the
    * queue contains only words that are DUE for review (nextDue <= now) plus
    * never-studied words; words scheduled for later are held back.
+   *
+   * `shuffleOrder` is only set for rebuilds the user asked for. The very first
+   * queue is built during render, where a random order would desync the server
+   * markup from the hydrated client — and the deck already arrives in random
+   * order from the loader, so there is nothing to shuffle anyway.
    */
   const buildQueue = React.useCallback(
-    (withRepetition: boolean): number[] => {
-      if (!withRepetition) return shuffle(deck.map((_, i) => i));
+    (withRepetition: boolean, shuffleOrder: boolean): number[] => {
+      const order = (items: number[]) => (shuffleOrder ? shuffle(items) : items);
+      if (!withRepetition) return order(deck.map((_, i) => i));
       const now = Date.now();
       const due: number[] = [];
       const fresh: number[] = [];
@@ -118,25 +124,23 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
         else if (stat.dueAt <= now) due.push(i);
         // else: scheduled for later — skip this session
       });
-      return [...shuffle(due), ...shuffle(fresh)];
+      return [...order(due), ...order(fresh)];
     },
     [deck]
   );
 
-  const [queue, setQueue] = React.useState<number[]>(() => buildQueue(true));
+  const [queue, setQueue] = React.useState<number[]>(() => buildQueue(true, false));
   const [pos, setPos] = React.useState(0);
   const [flipped, setFlipped] = React.useState(false);
   const [knownCount, setKnownCount] = React.useState(0);
   const [againCount, setAgainCount] = React.useState(0);
 
-  // Each card randomly shows the Japanese word or the meaning first. The side
-  // is chosen when the card changes (not in an effect) so the new card paints
-  // right the first time instead of swapping sides after mount.
-  const randomSide = () => (Math.random() < 0.5 ? "title" : "meaning");
-  const [cardSide, setCardSide] = React.useState<SideMode>(randomSide);
-
   const current = pos < queue.length ? deck[queue[pos]] : undefined;
   const done = !current;
+
+  // Each card leads with a side dealt by the loader, so the first paint after
+  // hydration shows exactly what the server rendered — no swap, no mismatch.
+  const cardSide: CardSide = current?.side ?? "title";
 
   /** Cards scheduled for later (not due yet) — only tracked in repetition mode. */
   const scheduledLater =
@@ -148,10 +152,9 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
       : 0;
 
   const resetSession = (withRepetition: boolean) => {
-    setQueue(buildQueue(withRepetition));
+    setQueue(buildQueue(withRepetition, true));
     setPos(0);
     setFlipped(false);
-    setCardSide(randomSide());
     setKnownCount(0);
     setAgainCount(0);
   };
@@ -203,9 +206,8 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
         });
         return;
       }
-      // Next card: choose its side now, in the same update, so it never shows
+      // Next card: it brings its own leading side, so advancing cannot show
       // the previous card's side even for a frame.
-      setCardSide(randomSide());
       setPos((p) => p + 1);
     },
     [deck, pos, queue, repetition]
@@ -264,12 +266,11 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
         </span>
         <div className="flex shrink-0 items-center gap-2">
           {scheduledLater > 0 && (
-            <span
-              title="They'll return when due"
-              className="hidden text-xs whitespace-nowrap text-muted-foreground/80 md:inline"
-            >
-              {scheduledLater} scheduled for later review
-            </span>
+            <Tooltip content="They'll return when due">
+              <span className="hidden text-xs whitespace-nowrap text-muted-foreground/80 md:inline">
+                {scheduledLater} scheduled for later review
+              </span>
+            </Tooltip>
           )}
           <Badge variant="success">{knownCount} known</Badge>
           <Badge variant="outline" className="text-red-500">
@@ -322,7 +323,7 @@ function Flashcard({
   onFlip,
 }: {
   card: StudyCard;
-  side: SideMode;
+  side: CardSide;
   flipped: boolean;
   missedBefore: number;
   onFlip: () => void;
@@ -345,33 +346,18 @@ function Flashcard({
     <div className="flex flex-col items-center justify-center gap-3 text-center">
       {side === "title" ? (
         <>
-          <ul className="list-disc space-y-1 pl-5 text-left">
-            {card.meanings.map((meaning) => (
-              <li key={meaning} className="text-lg">
-                {meaning}
-              </li>
-            ))}
-          </ul>
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {card.badges.map((badge) => (
-              <Badge key={badge} variant="secondary">
-                {badge}
-              </Badge>
-            ))}
-            {card.reading && (
-              <Badge variant="kana" className="text-lg">
-                {card.reading}
-              </Badge>
-            )}
-          </div>
+          <p className="max-w-md text-center text-lg leading-relaxed">
+            {card.meanings.join(", ")}
+          </p>
+          {card.reading && (
+            <p className="text-lg text-muted-foreground">{card.reading}</p>
+          )}
         </>
       ) : (
         <>
           <p className="text-4xl font-bold break-words md:text-5xl">{card.title}</p>
           {card.reading && (
-            <Badge variant="kana" className="text-lg">
-              {card.reading}
-            </Badge>
+            <p className="text-lg text-muted-foreground">{card.reading}</p>
           )}
         </>
       )}
@@ -388,6 +374,13 @@ function Flashcard({
       )}
     </div>
   );
+
+  // A link to the full word/rule page, opened in a new tab so the session keeps
+  // its place. This is where the part of speech (and rule context) now lives.
+  const source = studyCardSource(card);
+  const sourceHref =
+    source === null ? null : source.kind === "rule" ? `/rules/${source.id}` : `/words/${source.id}`;
+  const sourceLabel = source?.kind === "rule" ? "Open rule page" : "Open word page";
 
   return (
     <div className="perspective-1000 mx-auto w-full max-w-xl">
@@ -412,6 +405,18 @@ function Flashcard({
           {back}
         </div>
       </motion.button>
+      {sourceHref ? (
+        <div className="mt-3 text-center">
+          <Link
+            to={sourceHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-primarylw"
+          >
+            <ExternalLink className="h-3.5 w-3.5" /> {sourceLabel}
+          </Link>
+        </div>
+      ) : null}
     </div>
   );
 }

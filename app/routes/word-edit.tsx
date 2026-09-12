@@ -150,6 +150,7 @@ export default function WordEdit() {
             redirectTo="/words"
             deleted={actionData?.deleted}
             description="Its meanings and examples are removed too."
+            size="lg"
           />
         }
       />

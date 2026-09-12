@@ -13,6 +13,12 @@ import { E2E_BASE_URL, E2E_PORT } from "./e2e/test-config";
  *
  * The suite boots its own dev server on a dedicated port so it never clashes
  * with a dev server you already have open.
+ *
+ * `npm run dev` normally uses the *live* Cloudflare D1 database
+ * (`"remote": true` on the binding in `wrangler.jsonc`), but these specs
+ * create, edit and delete rows — so the web server below is started with
+ * `CLOUDFLARE_VITE_FORCE_LOCAL=true`, which forces every binding back to the
+ * local miniflare copy and keeps production data untouched.
  */
 const PORT = E2E_PORT;
 const baseURL = E2E_BASE_URL;
@@ -42,5 +48,8 @@ export default defineConfig({
     timeout: 120_000,
     stdout: "pipe",
     stderr: "pipe",
+    // Keep the specs off the live D1 database: this forces every Cloudflare
+    // binding back to the local miniflare copy for this dev server only.
+    env: { CLOUDFLARE_VITE_FORCE_LOCAL: "true" },
   },
 });

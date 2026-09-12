@@ -7,6 +7,7 @@ import {
 export default [
   index("routes/index.tsx"),
   route("words", "routes/words.tsx"),
+  route("words/examples", "routes/examples.tsx"),
   route("words/:id", "routes/word-detail.tsx"),
   route("words/:id/edit", "routes/word-edit.tsx"),
   route("phrases", "routes/phrases.tsx"),
@@ -25,11 +26,14 @@ export default [
   route("study", "routes/study.tsx"),
   route("study/session", "routes/study-session.tsx"),
   route("settings", "routes/settings.tsx"),
-  route("examples", "routes/examples.tsx"),
+  // Legacy URL — redirects to /words/examples.
+  route("examples", "routes/examples-redirect.tsx"),
   route("upload", "routes/upload.tsx"),
   route("login", "routes/login.tsx"),
   route("signup", "routes/signup.tsx"),
   route("logout", "routes/logout.tsx"),
+  // Auth token store (httpOnly cookies)
+  route("api/auth-token", "routes/api.auth-token.ts"),
   // JSON API (restricted to registered users, rate limited)
   route("api", "routes/api.docs.ts"),
   route("api/lists", "routes/api.lists.ts"),

@@ -40,19 +40,7 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
       <PageHeader
         title={word.word}
         breadcrumbs={[{ label: "Words", to: "/words" }]}
-        description="Kana reading, meanings and example sentences"
-        badge={
-          <>
-            {word.pos && (
-              <Badge variant="secondary" className="text-sm">
-                {word.pos}
-              </Badge>
-            )}
-            <Badge variant="kana" className="text-base">
-              {word.kana}
-            </Badge>
-          </>
-        }
+        description={<span className="font-medium text-foreground">{word.kana}</span>}
         actions={
           <>
             {isConvexClientConfigured() && (
@@ -69,50 +57,62 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
         }
       />
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="text-lg">Meanings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {word.meanings.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No meanings yet.</p>
-          ) : (
-            <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed">
-              {word.meanings.map((meaning) => (
-                <li key={meaning}>{meaning}</li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      {/*
+        Meanings and example sentences share the width on large screens: a
+        one-line meanings list no longer floats in a card stretched the whole
+        way across the page.
+      */}
+      <div className="grid items-start gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-1">
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-lg">Meanings</CardTitle>
+            {word.pos && (
+              <Badge variant="secondary" className="text-sm">
+                {word.pos}
+              </Badge>
+            )}
+          </CardHeader>
+          <CardContent>
+            {word.meanings.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No meanings yet.</p>
+            ) : (
+              <ol className="list-decimal space-y-2 pl-5 text-base leading-relaxed">
+                {word.meanings.map((meaning) => (
+                  <li key={meaning}>{meaning}</li>
+                ))}
+              </ol>
+            )}
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">
-            Example sentences{" "}
-            <span className="text-sm font-normal text-muted-foreground">
-              ({word.examples.length})
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {word.examples.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No examples yet for this word.</p>
-          ) : (
-            word.examples.map((example) => (
-              <div
-                key={example.id}
-                className="rounded-[var(--radius)] border border-border p-4"
-              >
-                <p className="text-lg">{example.japanese}</p>
-                {example.translation && (
-                  <p className="mt-1 text-sm text-muted-foreground">{example.translation}</p>
-                )}
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-lg">
+              Example sentences{" "}
+              <span className="text-sm font-normal text-muted-foreground">
+                ({word.examples.length})
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 xl:grid-cols-2">
+            {word.examples.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No examples yet for this word.</p>
+            ) : (
+              word.examples.map((example) => (
+                <div
+                  key={example.id}
+                  className="rounded-[var(--radius)] border border-border p-4"
+                >
+                  <p className="text-lg">{example.japanese}</p>
+                  {example.translation && (
+                    <p className="mt-1 text-sm text-muted-foreground">{example.translation}</p>
+                  )}
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {word.listId && word.listTitle && (
         <p className="mt-6 text-sm text-muted-foreground">

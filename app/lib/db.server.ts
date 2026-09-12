@@ -47,6 +47,13 @@ export interface WordDetail extends WordSummary {
   listAuthor: string | null;
 }
 
+/**
+ * An explicit set of card ids to draw from — the signed-in user's starred ids
+ * (see `convex/stars.ts`). `null`/`undefined` means "no id filter"; an empty
+ * array means "filter to nothing" (the user has starred no cards).
+ */
+export type CardIdFilter = number[] | null | undefined;
+
 export interface ExampleItem {
   id: number;
   japanese: string;
@@ -300,6 +307,9 @@ export interface StudyLibrary {
 /**
  * The word and phrase libraries used by the study tabs. A list can appear in
  * both, with `wordCount` reflecting only the words relevant to that tab.
+ *
+ * Nothing here knows about stars: starring is per-user and lives in Convex, so
+ * the study UI layers it on client-side.
  */
 export async function listStudyLists(): Promise<StudyLibrary> {
   const db = getDb();
@@ -330,11 +340,39 @@ export async function listStudyLists(): Promise<StudyLibrary> {
   return { wordLists, phraseLists };
 }
 
+/**
+ * `id IN (…)` for an explicit card-id filter (the signed-in user's starred
+ * ids). Returns null when there is no filter, and `0` when the filter is empty
+ * — a clause that deliberately matches nothing.
+ */
+function cardIdClause(ids: CardIdFilter, params: (string | number)[]): string | null {
+  if (ids == null) return null;
+  const clean = ids.filter((id) => Number.isInteger(id));
+  if (clean.length === 0) return "0";
+  params.push(...clean);
+  return `id IN (${clean.map(() => "?").join(", ")})`;
+}
+
+/**
+ * `EXISTS (…)` narrowing rules to those carrying any of the given tags. Returns
+ * null when no tags are selected, and a clause that deliberately matches
+ * nothing when the tag list is non-empty but contains no usable names.
+ */
+function ruleTagClause(tags: string[] | null | undefined, params: (string | number)[]): string | null {
+  if (tags == null) return null;
+  const clean = tags.map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0);
+  // No tags selected = no tag filter at all.
+  if (clean.length === 0) return null;
+  params.push(...clean);
+  return `EXISTS (SELECT 1 FROM rule_tags rt JOIN tags t ON t.id = rt.tag_id WHERE rt.rule_id = rules.id AND t.name IN (${clean.map(() => "?").join(", ")}))`;
+}
+
 /** How many cards of the given kind exist across the given lists. */
 export async function countWordsInLists(
   listIds: number[],
   pos?: string | null,
-  kind: StudyListKind = "words"
+  kind: StudyListKind = "words",
+  starredIds?: CardIdFilter
 ): Promise<number> {
   if (listIds.length === 0) return 0;
   const db = getDb();
@@ -345,8 +383,10 @@ export async function countWordsInLists(
     clause += " AND pos = ?";
     params.push(pos);
   }
-  // Parameters are the list ids (for the IN clause) followed by the optional
-  // part-of-speech filter.
+  const idClause = cardIdClause(starredIds, params);
+  if (idClause) clause += ` AND ${idClause}`;
+  // Parameters are the list ids (for the IN clause), then the optional
+  // part-of-speech filter, then the optional starred-id filter.
   const row = await db
     .prepare(`SELECT COUNT(*) AS n FROM words WHERE list_id IN (${placeholders}) AND ${clause}`)
     .bind(...params)
@@ -357,7 +397,8 @@ export async function getStudyDeck(
   listIds: number[],
   limit = 40,
   pos?: string | null,
-  kind: StudyListKind = "words"
+  kind: StudyListKind = "words",
+  starredIds?: CardIdFilter
 ): Promise<WordDetail[]> {
   const db = getDb();
   if (listIds.length === 0) return [];
@@ -369,6 +410,8 @@ export async function getStudyDeck(
     clause += " AND pos = ?";
     params.push(pos);
   }
+  const idClause = cardIdClause(starredIds, params);
+  if (idClause) clause += ` AND ${idClause}`;
   const { results } = await db
     .prepare(
       `SELECT id FROM words WHERE list_id IN (${placeholders}) AND ${clause} ORDER BY RANDOM() LIMIT ?`
@@ -675,6 +718,26 @@ export async function updateWordList(
     }
   }
   return true;
+}
+
+/**
+ * Detach entries from a list without deleting them: the word keeps its meanings
+ * and examples, it just stops belonging to the list (`words.list_id` → NULL) —
+ * the same outcome as deleting the whole list. Scoped to `listId` so a stray id
+ * can't pull a word out of a different list. Returns how many rows were removed.
+ */
+export async function removeWordsFromList(
+  listId: number,
+  wordIds: number[]
+): Promise<number> {
+  if (wordIds.length === 0) return 0;
+  const db = getDb();
+  const placeholders = wordIds.map((_, index) => `?${index + 2}`).join(", ");
+  const result = await db
+    .prepare(`UPDATE words SET list_id = NULL WHERE list_id = ?1 AND id IN (${placeholders})`)
+    .bind(listId, ...wordIds)
+    .run();
+  return result.meta.changes ?? 0;
 }
 
 /**
@@ -1097,30 +1160,57 @@ export async function deleteRule(id: number): Promise<boolean> {
   return result.meta.changes > 0;
 }
 
-/** How many rules (grammar/forms cards) exist, optionally by rule kind. */
-export async function countRules(kind?: RuleKind | null): Promise<number> {
+/**
+ * How many rules (grammar/forms cards) exist, optionally by rule kind and
+ * optionally limited to an explicit set of ids (the user's starred rules).
+ */
+export async function countRules(
+  kind?: RuleKind | null,
+  starredIds?: CardIdFilter,
+  tags?: string[] | null
+): Promise<number> {
   const db = getDb();
-  const row = kind
-    ? await db.prepare("SELECT COUNT(*) AS n FROM rules WHERE kind = ?1").bind(kind).first<{ n: number }>()
-    : await db.prepare("SELECT COUNT(*) AS n FROM rules").first<{ n: number }>();
+  const params: (string | number)[] = [];
+  const clauses: string[] = [];
+  if (kind) {
+    clauses.push("kind = ?");
+    params.push(kind);
+  }
+  const idClause = cardIdClause(starredIds, params);
+  if (idClause) clauses.push(idClause);
+  const tagClause = ruleTagClause(tags, params);
+  if (tagClause) clauses.push(tagClause);
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM rules ${where}`)
+    .bind(...params)
+    .first<{ n: number }>();
   return row?.n ?? 0;
 }
 
 /** A random deck of rules (with their examples) for the forms study tab. */
 export async function getRuleStudyDeck(
   limit = 40,
-  kind?: RuleKind | null
+  kind?: RuleKind | null,
+  starredIds?: CardIdFilter,
+  tags?: string[] | null
 ): Promise<RuleDetail[]> {
   const db = getDb();
-  const { results } = kind
-    ? await db
-        .prepare("SELECT id FROM rules WHERE kind = ?1 ORDER BY RANDOM() LIMIT ?2")
-        .bind(kind, limit)
-        .all<{ id: number }>()
-    : await db
-        .prepare("SELECT id FROM rules ORDER BY RANDOM() LIMIT ?1")
-        .bind(limit)
-        .all<{ id: number }>();
+  const params: (string | number)[] = [];
+  const clauses: string[] = [];
+  if (kind) {
+    clauses.push("kind = ?");
+    params.push(kind);
+  }
+  const idClause = cardIdClause(starredIds, params);
+  if (idClause) clauses.push(idClause);
+  const tagClause = ruleTagClause(tags, params);
+  if (tagClause) clauses.push(tagClause);
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const { results } = await db
+    .prepare(`SELECT id FROM rules ${where} ORDER BY RANDOM() LIMIT ?`)
+    .bind(...params, limit)
+    .all<{ id: number }>();
 
   const ids = (results ?? []).map((row) => row.id);
   const details = await Promise.all(ids.map((id) => getRule(id)));

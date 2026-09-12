@@ -15,9 +15,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "~/components/lightswind/alert-dialog";
-import { Button } from "~/components/lightswind/button";
+import { Button, type ButtonProps } from "~/components/lightswind/button";
 import { toast } from "~/components/lightswind/toast";
+import { Tooltip } from "~/components/lightswind/tooltip";
 import { cn } from "~/lib/utils";
+import { useReturnTo } from "~/lib/return-to";
 
 /**
  * Destructive "Delete" control for the edit pages. It sits next to the form's
@@ -36,40 +38,48 @@ export function DeleteButton({
   redirectTo,
   deleted,
   description,
+  size = "default",
   className,
 }: {
   /** `id` of the edit form this button submits. */
   formId: string;
   /** Lower-case noun, e.g. "word", "word list", "rule". */
   label: string;
-  /** Where to go once the delete succeeds. */
+  /** Fallback destination when there is no remembered previous screen. */
   redirectTo: string;
   /** Pass `actionData?.deleted` from the owning route. */
   deleted?: boolean;
   description?: string;
+  /** Match the submit button it sits beside, so the pair lines up exactly. */
+  size?: ButtonProps["size"];
   className?: string;
 }) {
   const navigate = useNavigate();
   const title = label.charAt(0).toUpperCase() + label.slice(1);
+  // Deleting then behaves like saving: the reader lands back on the screen they
+  // came from (`redirectTo` is only the fallback).
+  const returnTo = useReturnTo(redirectTo);
 
   React.useEffect(() => {
     if (!deleted) return;
     toast({ title: `${title} deleted`, description, variant: "success" });
-    navigate(redirectTo, { replace: true });
-  }, [deleted, description, navigate, redirectTo, title]);
+    navigate(returnTo, { replace: true });
+  }, [deleted, description, navigate, returnTo, title]);
 
   return (
     <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button
-          type="button"
-          variant="destructive"
-          className={cn("cursor-pointer", className)}
-          title={`Delete this ${label}`}
-        >
-          <Trash2 /> Delete {label}
-        </Button>
-      </AlertDialogTrigger>
+      <Tooltip content={`Delete this ${label}`}>
+        <AlertDialogTrigger asChild>
+          <Button
+            type="button"
+            variant="destructive"
+            size={size}
+            className={cn("cursor-pointer", className)}
+          >
+            <Trash2 /> Delete {label}
+          </Button>
+        </AlertDialogTrigger>
+      </Tooltip>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this {label}?</AlertDialogTitle>

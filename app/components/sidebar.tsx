@@ -22,7 +22,7 @@ import { Dock } from "~/components/lightswind/dock";
 const WORD_LIBRARY_LINKS = [
   { to: "/", label: "Word lists", icon: ListTree },
   { to: "/words", label: "Words", icon: Layers },
-  { to: "/examples", label: "Examples", icon: BookOpenText },
+  { to: "/words/examples", label: "Examples", icon: BookOpenText },
 ];
 
 /** Phrases: phrase lists and the phrases they contain. */
@@ -124,7 +124,7 @@ function Logo() {
         あ
       </span>
       <span className="text-lg font-semibold tracking-tight whitespace-nowrap">
-        日本語<span className="text-primarylw">Vocab</span>
+        あああ<span className="text-primarylw">！</span>
       </span>
     </Link>
   );
@@ -157,7 +157,9 @@ export function Sidebar() {
         <Logo />
       </div>
       <NavSections />
-      <div className="mt-6 border-t border-border/60 px-5 pt-5">
+      {/* Signed in, the account row brings its own pill (see AuthButtons); signed
+          out, the two buttons stay flush so neither gets squeezed. */}
+      <div className="mt-6 px-3">
         <AuthButtons />
       </div>
     </aside>

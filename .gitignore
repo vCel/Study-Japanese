@@ -34,3 +34,7 @@ signin-*.json
 
 .freebuff
 .agents
+
+# AI agent scratch/handoff directories — never part of the app
+.reasonix/
+.workbuddy-ai/

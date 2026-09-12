@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Search, Tags, X } from "lucide-react";
 
 import type { TagInfo } from "~/lib/db.server";
@@ -24,8 +24,7 @@ export function SearchBar({
   placeholder: string;
   /**
    * The value shown in the text input. Leave it `null` on a page that filters
-   * by tag: the tag is shown as a chip by `ActiveTagFilter` instead of being
-   * dumped into the search box.
+   * by tag: the tag is shown as a chip inside the input instead.
    */
   activeValue: string | null;
   /** Where the ✕ (clear) link points. */
@@ -34,10 +33,11 @@ export function SearchBar({
   tags?: TagInfo[];
   /** Builds a tag chip's href; defaults to the word-lists home page. */
   tagHref?: (tag: string) => string;
-  /** The tag currently filtering the list, if any — shown as the active chip. */
+  /** The tag currently filtering the list, if any — shown as a chip in the input. */
   selectedTag?: string | null;
 }) {
   const [open, setOpen] = React.useState(false);
+  const navigate = useNavigate();
   const popoverRef = React.useRef<HTMLDivElement>(null);
   /** The active filter shown in the popover, whichever kind it is. */
   const chip = selectedTag ?? activeValue;
@@ -54,16 +54,35 @@ export function SearchBar({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  // Backspace on an empty input clears the whole tag filter at once.
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Backspace" && selectedTag && event.currentTarget.value === "") {
+      event.preventDefault();
+      navigate(clearTo);
+    }
+  };
+
   return (
     <div className="relative mb-4 flex w-full items-center gap-2">
       <form method="get" className="relative flex w-full items-center">
-        <input
-          name={paramName}
-          defaultValue={activeValue ?? ""}
-          placeholder={placeholder}
-          aria-label={placeholder}
-          className="h-11 w-full rounded-full border border-border bg-card py-2 pl-5 pr-32 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primarylw/50"
-        />
+        <div className="flex h-11 w-full items-center gap-2 overflow-hidden rounded-full border border-border bg-card pl-5 pr-32 focus-within:ring-2 focus-within:ring-primarylw/50">
+          {selectedTag && (
+            <Link
+              to={clearTo}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primarylw px-3 py-1 text-xs font-semibold text-white"
+            >
+              #{selectedTag} ✕
+            </Link>
+          )}
+          <input
+            name={paramName}
+            defaultValue={activeValue ?? ""}
+            placeholder={placeholder}
+            aria-label={placeholder}
+            onKeyDown={handleKeyDown}
+            className="h-full w-full flex-1 bg-transparent text-sm placeholder:text-muted-foreground focus-visible:outline-none"
+          />
+        </div>
         {activeValue && (
           <Link
             to={clearTo}
@@ -149,23 +168,6 @@ export function SearchBar({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/**
- * The chip shown under a search bar while a tag filter is applied — every list
- * page uses it, so the active tag never lands in the search input itself.
- */
-export function ActiveTagFilter({ tag, clearTo }: { tag: string; clearTo: string }) {
-  return (
-    <div className="mb-4">
-      <Link
-        to={clearTo}
-        className="inline-flex items-center gap-1 rounded-full bg-primarylw px-3 py-1 text-xs font-semibold text-white"
-      >
-        #{tag} ✕
-      </Link>
     </div>
   );
 }

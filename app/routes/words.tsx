@@ -1,7 +1,6 @@
 import { Link, useSearchParams } from "react-router";
 
 import type { Route } from "./+types/words";
-import { isConvexClientConfigured } from "~/components/convex-provider";
 import { SignedInOnlyClient } from "~/components/signed-in-only";
 import { listWords } from "~/lib/db.server";
 import { isValidPos, PosFilter } from "~/components/pos-filter";
@@ -58,50 +57,66 @@ export default function Words({ loaderData }: Route.ComponentProps) {
       {loaderData.items.length === 0 ? (
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
-            No words found{search ? ` for “${search}”` : ""}. Try a different search or{" "}
+            No words found{search ? ` for “${search}”` : ""}. Try a different search.{" "}
             <SignedInOnlyClient>
               <Link to="/lists/new" className="text-primarylw underline">
-                add some
+                Add some words
               </Link>
             </SignedInOnlyClient>
-            .
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {loaderData.items.map((word) => (
             // The card itself is not a link: the word link is stretched over it
-            // with `after:` so the list link inside doesn't nest inside an <a>.
+            // with `after:` so the list link in the footer stays clickable.
             <Card
               key={word.id}
-              className="relative h-full transition-transform hover:-translate-y-0.5"
+              data-slot="word-card"
+              className="relative flex h-full flex-col transition-transform hover:-translate-y-0.5"
             >
-              <CardContent className="p-5">
-                <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                  {word.pos && <Badge variant="outline" className="text-xs">{word.pos}</Badge>}
-                  <Badge variant="kana">{word.kana}</Badge>
+              <CardContent className="flex flex-1 flex-col p-5">
+                <div className="min-w-0">
+                  <h2 className="break-words text-2xl font-semibold">
+                    <Link
+                      to={`/words/${word.id}`}
+                      className="after:absolute after:inset-0 after:content-['']"
+                    >
+                      {word.word}
+                    </Link>
+                  </h2>
+                  {/* Kana reading directly under the word, same size as before, no badge. */}
+                  <p className="mt-0.5 text-sm text-muted-foreground">{word.kana}</p>
                 </div>
-                <h2 className="break-words text-2xl font-semibold">
-                  <Link
-                    to={`/words/${word.id}`}
-                    className="after:absolute after:inset-0 after:content-['']"
-                  >
-                    {word.word}
-                  </Link>
-                </h2>
-                <p className="line-clamp-2 text-sm text-muted-foreground">
-                  {word.meaning ?? "-"}
-                </p>
-                {word.listId && word.listTitle && (
-                  <p className="mt-2 text-xs">
+
+                {/*
+                  The definition is muted and one step smaller than the word, so
+                  a long English meaning no longer competes with the headword.
+                */}
+                {word.meaning && (
+                  <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+                    {word.meaning}
+                  </p>
+                )}
+
+                {/* Footer: source list on the left, word type pinned bottom-right. */}
+                <div className="mt-auto flex items-end justify-between gap-2 pt-4">
+                  {word.listId && word.listTitle ? (
                     <Link
                       to={`/lists/${word.listId}`}
-                      className="relative text-primarylw hover:underline"
+                      className="min-w-0 truncate text-xs text-muted-foreground transition-colors hover:text-primarylw hover:underline"
                     >
                       {word.listTitle}
                     </Link>
-                  </p>
-                )}
+                  ) : (
+                    <span />
+                  )}
+                  {word.pos && (
+                    <Badge variant="outline" className="shrink-0 text-xs">
+                      {word.pos}
+                    </Badge>
+                  )}
+                </div>
               </CardContent>
             </Card>
           ))}

@@ -79,7 +79,8 @@ test.describe("rules & forms list", () => {
     // The third tag is hidden behind the counter…
     await expect(card.getByRole("link", { name: "#n5" })).toHaveCount(0);
     // …but is still discoverable via the counter's tooltip.
-    await expect(card.getByText("+1")).toHaveAttribute("title", "#n5");
+    await card.getByText("+1").hover();
+    await expect(page.locator("[data-slot='tooltip']")).toContainText("#n5");
   });
 
   test("filters by tag", async ({ page }) => {
@@ -103,7 +104,9 @@ test.describe("rules & forms list", () => {
 test.describe("rule detail", () => {
   test("has an English equivalents section", async ({ page }) => {
     await page.goto("/rules/1");
-    await expect(page.getByText("English equivalents")).toBeVisible();
+    // Anchored: the section heading carries a count, and the site footer also
+    // mentions "English equivalents".
+    await expect(page.getByText(/^English equivalents/)).toBeVisible();
     await expect(page.locator("main ul li").first()).toBeVisible();
   });
 
@@ -170,8 +173,9 @@ test.describe("rule detail", () => {
     await expect(page.getByText("Related rules", { exact: true })).toBeVisible();
     await expect(page.getByText("No related rules yet.", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Add a related rule" }).click();
+    // The picker lists the other rules in the collection.
     await expect(
-      page.getByRole("listbox").getByRole("option", { name: /Polite て-form/ })
+      page.getByRole("listbox").getByRole("option", { name: /Adjective conjugation/ })
     ).toBeVisible();
     // …and the rule being edited is not offered as its own relation.
     await expect(
@@ -195,7 +199,7 @@ test.describe("rule examples page", () => {
     await expect(page.getByText(ruleExample)).toBeVisible();
 
     // …and is not mixed into the word-list examples page.
-    await page.goto("/examples");
+    await page.goto("/words/examples");
     await expect(page.getByRole("heading", { level: 1, name: "Example sentences" })).toBeVisible();
     await expect(page.getByText(ruleExample)).toHaveCount(0);
   });

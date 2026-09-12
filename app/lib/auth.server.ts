@@ -216,3 +216,69 @@ export async function guardAdminRequest(
 
   return { ok: true, user: session.user };
 }
+
+/**
+ * Guard for operations any *registered* user may perform (starring a card as
+ * important): rate limit, then token verification. Unlike
+ * `guardAdminRequest` there is no admin allow-list check.
+ */
+export async function guardUserRequest(
+  request: Request,
+  token?: string | null
+): Promise<{ ok: true; user: ConvexUser } | { ok: false; response: Response }> {
+  const limited: RateLimitResult = await enforceRateLimit(
+    "API_LIMITER",
+    getClientIp(request),
+    "api"
+  );
+  if (!limited.allowed) {
+    return {
+      ok: false,
+      response: jsonResponse(
+        { error: "Rate limit exceeded. Please slow down." },
+        429,
+        { "Retry-After": String(limited.retryAfterSeconds ?? 60) }
+      ),
+    };
+  }
+
+  if (!isConvexConfigured()) {
+    return {
+      ok: false,
+      response: jsonResponse(
+        { error: "Not configured yet. Set VITE_CONVEX_URL to enable signing in." },
+        503
+      ),
+    };
+  }
+
+  const session = await getConvexSession(token ?? extractBearerToken(request));
+  if (!session) {
+    return {
+      ok: false,
+      response: jsonResponse({ error: "Please sign in to do that." }, 401, {
+        "WWW-Authenticate": "Bearer",
+      }),
+    };
+  }
+
+  return { ok: true, user: session.user };
+}
+
+/** Message-shaped variant of `guardUserRequest`, for React Router form actions. */
+export async function guardUserAction(
+  request: Request,
+  token?: string | null
+): Promise<{ ok: true; user: ConvexUser } | { ok: false; status: number; message: string }> {
+  const result = await guardUserRequest(request, token);
+  if (result.ok) return result;
+
+  let message = "You are not allowed to do that.";
+  try {
+    const body = (await result.response.json()) as { error?: string };
+    if (body.error) message = body.error;
+  } catch {
+    // keep the default message
+  }
+  return { ok: false, status: result.response.status, message };
+}

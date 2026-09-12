@@ -7,12 +7,17 @@ import {
   getStudyDeck,
   listAllListIds,
   listIdsByTags,
+  type CardIdFilter,
   type RuleKind,
 } from "~/lib/db.server";
 import { isValidPos } from "~/components/pos-filter";
-import { ruleToStudyCard, wordToStudyCard, type StudyCard } from "~/lib/study-cards";
+import {
+  randomCardSide,
+  ruleToStudyCard,
+  wordToStudyCard,
+  type StudyCard,
+} from "~/lib/study-cards";
 import { STUDY_KIND_LABELS, type StudyKind } from "~/lib/study-prefs";
-import { Button } from "~/components/lightswind/button";
 import { Flashcards } from "~/components/flashcards";
 import { PageHeader } from "~/components/page-header";
 
@@ -31,6 +36,16 @@ export async function loader({ request }: Route.LoaderArgs) {
     ruleKindParam === "word" || ruleKindParam === "sentence" ? ruleKindParam : null;
   const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "40", 10);
   const limit = Number.isNaN(limitParam) ? 40 : Math.min(Math.max(limitParam, 5), 100);
+
+  // Stars are per-user and live in Convex, so the browser passes the signed-in
+  // user's starred ids along; the deck is then narrowed to whichever of them
+  // fall inside the scope below. No ids = study everything.
+  const starredIds = (url.searchParams.get("starredIds") ?? "")
+    .split(",")
+    .map((part) => Number.parseInt(part.trim(), 10))
+    .filter((id) => !Number.isNaN(id));
+  const starredOnly = starredIds.length > 0;
+  const filter: CardIdFilter = starredOnly ? starredIds : undefined;
 
   const explicitLists = listsParam
     .split(",")
@@ -58,25 +73,26 @@ export async function loader({ request }: Route.LoaderArgs) {
     // Deep links (`/study/session?lists=N`) don't say which tab they came from,
     // so pick whichever the selected lists actually contain.
     const [wordCount, phraseCount] = await Promise.all([
-      countWordsInLists(listIds, null, "words"),
-      countWordsInLists(listIds, null, "phrases"),
+      countWordsInLists(listIds, null, "words", filter),
+      countWordsInLists(listIds, null, "phrases", filter),
     ]);
     kind = phraseCount > wordCount ? "phrases" : "words";
   }
 
   if (kind === "forms") {
     const [totalAvailable, rules] = await Promise.all([
-      countRules(ruleKind),
-      getRuleStudyDeck(limit, ruleKind),
+      countRules(ruleKind, filter, tagNames),
+      getRuleStudyDeck(limit, ruleKind, filter, tagNames),
     ]);
     return {
       kind,
-      deck: rules.map(ruleToStudyCard),
+      deck: rules.map((rule) => ruleToStudyCard(rule, randomCardSide())),
       listIds: [],
       pos: null,
       ruleKind,
       limit,
       totalAvailable,
+      starredOnly,
     };
   }
 
@@ -84,28 +100,30 @@ export async function loader({ request }: Route.LoaderArgs) {
   // to the words tab.
   const pos = kind === "words" && isValidPos(posParam) ? posParam : null;
   const [totalAvailable, words] = await Promise.all([
-    countWordsInLists(listIds, pos, kind),
-    getStudyDeck(listIds, limit, pos, kind),
+    countWordsInLists(listIds, pos, kind, filter),
+    getStudyDeck(listIds, limit, pos, kind, filter),
   ]);
 
   return {
     kind,
-    deck: words.map(wordToStudyCard) as StudyCard[],
+    deck: words.map((word) => wordToStudyCard(word, randomCardSide())) as StudyCard[],
     listIds,
     pos,
     ruleKind: null,
     limit,
     totalAvailable,
+    starredOnly,
   };
 }
 
 export default function StudySession({ loaderData }: Route.ComponentProps) {
-  const { deck, kind, listIds, pos, ruleKind, limit, totalAvailable } = loaderData;
+  const { deck, kind, listIds, pos, ruleKind, limit, totalAvailable, starredOnly } =
+    loaderData;
 
   const scope =
     kind === "forms"
-      ? `${totalAvailable} ${ruleKind ? `${ruleKind} ` : ""}rules`
-      : `${listIds.length} list${listIds.length === 1 ? "" : "s"}${pos ? ` · ${pos} only` : ""} · ${totalAvailable} available`;
+      ? `${starredOnly ? "★ " : ""}${totalAvailable} ${ruleKind ? `${ruleKind} ` : ""}rules`
+      : `${listIds.length} list${listIds.length === 1 ? "" : "s"}${pos ? ` · ${pos} only` : ""} · ${starredOnly ? "★ " : ""}${totalAvailable} available`;
 
   return (
     <div className="w-full">
@@ -117,7 +135,8 @@ export default function StudySession({ loaderData }: Route.ComponentProps) {
 
       {deck.length === 0 ? (
         <div className="rounded-[var(--radius)] border border-border p-10 text-center text-muted-foreground">
-          No {pos ? `${pos} ` : ""}cards available for this session.{" "}
+          No {starredOnly ? "starred " : ""}
+          {pos ? `${pos} ` : ""}cards available for this session.{" "}
           <Link to={`/study?kind=${kind}`} className="text-primarylw hover:underline">
             Adjust your session settings
           </Link>

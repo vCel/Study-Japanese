@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Form, useActionData, useNavigation } from "react-router";
+import { Form, useActionData, useNavigate, useNavigation } from "react-router";
 import { useAuthToken } from "@convex-dev/auth/react";
 import { Plus, Pencil } from "lucide-react";
 
@@ -11,6 +11,7 @@ import { ReorderList, ReorderRow } from "~/components/lightswind/reorder";
 import { FormMessage } from "~/components/form-message";
 import { okMessage, useActionToast } from "~/components/action-toast";
 import { SelectField } from "~/components/select-field";
+import { useReturnTo } from "~/lib/return-to";
 import type { WordDetail } from "~/lib/db.server";
 import type { WordEditActionData } from "~/routes/word-edit";
 
@@ -56,10 +57,19 @@ export function WordEditForm({
   const token = useAuthToken();
   const configured = isConvexClientConfigured();
   const busy = navigation.state === "submitting" || navigation.state === "loading";
+  const navigate = useNavigate();
+  // Saving is the end of this flow: hand the reader back to the screen they came
+  // from instead of leaving them sitting on the form.
+  const returnTo = useReturnTo(`/words/${word.id}`);
 
   useActionToast(actionData, (data) =>
     data.deleted ? null : okMessage(data, "Word saved")
   );
+
+  React.useEffect(() => {
+    if (!actionData?.ok || actionData.deleted) return;
+    navigate(returnTo, { replace: true });
+  }, [actionData, navigate, returnTo]);
 
   // Deterministic ids keep SSR and hydration in sync. New rows are only added
   // on the client, so the counters can safely start past the initial list.

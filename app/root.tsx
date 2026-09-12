@@ -11,6 +11,7 @@ import type { Route } from "./+types/root";
 import { ConvexClientProvider } from "~/components/convex-provider";
 import { MobileNav, Sidebar } from "~/components/sidebar";
 import { Toaster } from "~/components/lightswind/toast";
+import { useBrowsingPageRecorder } from "~/lib/return-to";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
@@ -45,6 +46,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // Remembers where the reader was browsing, so the create / edit screens can
+  // return there once they are saved (see `~/lib/return-to`).
+  useBrowsingPageRecorder();
+
   return (
     <ConvexClientProvider>
       <div className="flex min-h-dvh">
