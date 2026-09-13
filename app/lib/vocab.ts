@@ -163,6 +163,15 @@ export const POS_SUBTYPES: Record<string, { value: string; label: string }[]> = 
     { value: "common", label: "Common noun" },
     { value: "proper", label: "Proper noun" },
   ],
+  // Adverb classes (日本語の副詞の分類): time, frequency, manner, degree and
+  // statement/illocutionary adverbs.
+  adverb: [
+    { value: "temporal", label: "Temporal (時間)" },
+    { value: "frequency", label: "Frequency (頻度)" },
+    { value: "manner", label: "Manner (様態)" },
+    { value: "degree", label: "Degree (程度)" },
+    { value: "statement", label: "Statement (陳述)" },
+  ],
 };
 
 /** The subtype options for a canonical pos (empty when it has none). */
@@ -365,6 +374,35 @@ const SUBTYPE_ALIASES: Record<string, string> = {
   "proper name": "proper",
   "固有名詞": "proper",
   "固有名": "proper",
+  // Adverbs: temporal / frequency / manner / degree / statement classes
+  temporal: "temporal",
+  "time adverb": "temporal",
+  "time adverbs": "temporal",
+  "time": "temporal",
+  "時間": "temporal",
+  "時間副詞": "temporal",
+  "時の副詞": "temporal",
+  frequency: "frequency",
+  "frequency adverb": "frequency",
+  "頻度": "frequency",
+  "頻度副詞": "frequency",
+  manner: "manner",
+  "manner adverb": "manner",
+  "様態": "manner",
+  "様態副詞": "manner",
+  "方式": "manner",
+  degree: "degree",
+  "degree adverb": "degree",
+  "intensity": "degree",
+  "程度": "degree",
+  "程度副詞": "degree",
+  statement: "statement",
+  "statement adverb": "statement",
+  "sentential": "statement",
+  "illocutionary": "statement",
+  "assertive": "statement",
+  "陳述": "statement",
+  "陳述副詞": "statement",
 };
 
 const SUBTYPE_KEYS = [
