@@ -18,6 +18,8 @@ export interface VocabEntry {
   word: string;
   kana: string;
   pos: string | null;
+  /** Refines `pos` — e.g. verb → "group1"/"group2"/"group3", adjective → "i-adjective"/"na-adjective". */
+  subtype: string | null;
   meanings: string[];
   examples: VocabExample[];
   /** Free-text notes about this entry (null = none). */
@@ -143,6 +145,94 @@ function normalizePos(value: unknown): string | null {
   return POS_SYNONYMS[trimmed] ?? trimmed.slice(0, 24);
 }
 
+/**
+ * The subtypes offered per part of speech. The value stored is the key
+ * ("group1", "i-adjective", …); the label is what the UI shows.
+ */
+export const POS_SUBTYPES: Record<string, { value: string; label: string }[]> = {
+  verb: [
+    { value: "group1", label: "Group 1 (Godan 五段)" },
+    { value: "group2", label: "Group 2 (Ichidan 一段)" },
+    { value: "group3", label: "Group 3 (Irregular)" },
+  ],
+  adjective: [
+    { value: "i-adjective", label: "i-adjective (い形容詞)" },
+    { value: "na-adjective", label: "na-adjective (な形容詞)" },
+  ],
+  noun: [
+    { value: "common", label: "Common noun" },
+    { value: "proper", label: "Proper noun" },
+  ],
+};
+
+/** The subtype options for a canonical pos (empty when it has none). */
+export function subtypeOptionsFor(pos: string | null): { value: string; label: string }[] {
+  return pos ? POS_SUBTYPES[pos] ?? [] : [];
+}
+
+/** Human label for a stored subtype value (falls back to the value itself). */
+export function subtypeLabel(value: string | null): string | null {
+  if (!value) return null;
+  for (const options of Object.values(POS_SUBTYPES)) {
+    const option = options.find((o) => o.value === value);
+    if (option) return option.label;
+  }
+  return value;
+}
+
+/** Aliases accepted on import, mapped to the canonical stored value. */
+const SUBTYPE_ALIASES: Record<string, string> = {
+  // Verb groups
+  group1: "group1",
+  "group 1": "group1",
+  godan: "group1",
+  "godan verb": "group1",
+  "五段": "group1",
+  group2: "group2",
+  "group 2": "group2",
+  ichidan: "group2",
+  "ichidan verb": "group2",
+  "一段": "group2",
+  group3: "group3",
+  "group 3": "group3",
+  irregular: "group3",
+  "irregular verb": "group3",
+  "変格": "group3",
+  // Adjectives
+  "i-adjective": "i-adjective",
+  "i adjective": "i-adjective",
+  "い形容詞": "i-adjective",
+  "na-adjective": "na-adjective",
+  "na adjective": "na-adjective",
+  "な形容詞": "na-adjective",
+  // Nouns
+  common: "common",
+  "common noun": "common",
+  proper: "proper",
+  "proper noun": "proper",
+};
+
+const SUBTYPE_KEYS = ["subtype", "subType", "sub_type", "subclass", "type2", "class2"] as const;
+
+/**
+ * Normalize a subtype value against the pos's catalog. Values outside the
+ * catalog are dropped for pos with a catalog (keeps the data clean); other pos
+ * accept short free text.
+ */
+function normalizeSubtype(value: unknown, pos: string | null): string | null {
+  if (typeof value !== "string" || !pos) return null;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  const aliased = SUBTYPE_ALIASES[trimmed];
+  const options = subtypeOptionsFor(pos);
+  if (options.length > 0) {
+    const canonical = aliased ?? trimmed;
+    return options.some((option) => option.value === canonical) ? canonical : null;
+  }
+  return trimmed.slice(0, 24);
+}
+
 const NOTE_KEYS = ["notes", "note", "comment", "comments"] as const;
 const FORM_KEYS = ["forms", "conjugations", "form"] as const;
 /** At most this many forms per entry (kept in step with db.server). */
@@ -204,10 +294,11 @@ function normalizeEntry(raw: unknown, index: number): VocabEntry | { error: stri
 
   const examples = normalizeExamples(pick(obj, EXAMPLE_KEYS));
   const pos = normalizePos(pick(obj, POS_KEYS));
+  const subtype = normalizeSubtype(pick(obj, SUBTYPE_KEYS), pos);
   const notes = normalizeNotes(pick(obj, NOTE_KEYS));
   const forms = normalizeForms(pick(obj, FORM_KEYS));
 
-  return { word, kana, pos, meanings, examples, notes, forms };
+  return { word, kana, pos, subtype, meanings, examples, notes, forms };
 }
 
 export function parseVocabJson(text: string): ParseSuccess | ParseFailure {
@@ -241,6 +332,7 @@ export const SAMPLE_JSON = `[
     "word": "図書館",
     "kana": "としょかん",
     "pos": "noun",
+    "subtype": "common",
     "meanings": ["library"],
     "examples": [
       { "japanese": "図書館で本を借りました。", "translation": "I borrowed a book at the library." }
@@ -254,6 +346,7 @@ export const SAMPLE_JSON = `[
     "word": "食べる",
     "kana": "たべる",
     "pos": "verb",
+    "subtype": "group2",
     "meanings": ["to eat"],
     "notes": "Ichidan (る-verb).",
     "forms": [

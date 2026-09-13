@@ -10,6 +10,8 @@ export interface WordRow {
   created_by: string | null;
   created_at: number;
   pos: string | null;
+  /** Refines pos (verb → "group1", adjective → "i-adjective", …). */
+  subtype: string | null;
 }
 
 /**
@@ -29,6 +31,7 @@ export interface WordSummary {
   word: string;
   kana: string;
   pos: string | null;
+  subtype: string | null;
   meaning: string | null;
   createdAt: number;
   listId: number | null;
@@ -213,7 +216,7 @@ export async function copyStarterPack(ownerId: string): Promise<{
   // 2. Copy words (owner NULL), then their meanings and examples.
   const templateWords = await db
     .prepare(
-      "SELECT id, word, kana, created_at, pos, list_id, important, notes, forms FROM words WHERE owner_id IS NULL"
+      "SELECT id, word, kana, created_at, pos, subtype, list_id, important, notes, forms FROM words WHERE owner_id IS NULL"
     )
     .all<{
       id: number;
@@ -221,6 +224,7 @@ export async function copyStarterPack(ownerId: string): Promise<{
       kana: string;
       created_at: number;
       pos: string | null;
+      subtype: string | null;
       list_id: number | null;
       important: number;
       notes: string | null;
@@ -233,7 +237,7 @@ export async function copyStarterPack(ownerId: string): Promise<{
     wordStatements.push(
       db
         .prepare(
-          "INSERT INTO words (word, kana, created_by, created_at, pos, list_id, important, notes, forms, owner_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+          "INSERT INTO words (word, kana, created_by, created_at, pos, subtype, list_id, important, notes, forms, owner_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
         )
         .bind(
           word.word,
@@ -241,6 +245,7 @@ export async function copyStarterPack(ownerId: string): Promise<{
           ownerId,
           word.created_at || now,
           word.pos,
+          word.subtype ?? null,
           newListId,
           word.important ?? 0,
           word.notes ?? null,
@@ -455,7 +460,7 @@ export async function listWords(
   const offset = (safePage - 1) * PAGE_SIZE;
 
   const listStmt = db.prepare(
-    `SELECT w.id, w.word, w.kana, w.created_at, w.pos,
+    `SELECT w.id, w.word, w.kana, w.created_at, w.pos, w.subtype,
             (SELECT m.meaning FROM meanings m WHERE m.word_id = w.id LIMIT 1) AS meaning,
             w.list_id, l.title AS list_title
      FROM words w
@@ -474,6 +479,7 @@ export async function listWords(
       word: row.word,
       kana: row.kana,
       pos: row.pos,
+      subtype: row.subtype,
       meaning: row.meaning,
       createdAt: row.created_at,
       listId: row.list_id,
@@ -524,7 +530,7 @@ export async function getWord(ownerId: string, id: number): Promise<WordDetail |
   const db = getDb();
   const row = await db
     .prepare(
-      `SELECT w.id, w.word, w.kana, w.created_by, w.created_at, w.pos, w.list_id,
+      `SELECT w.id, w.word, w.kana, w.created_by, w.created_at, w.pos, w.subtype, w.list_id,
               w.notes, w.forms,
               l.title AS list_title, l.created_by AS list_author
        FROM words w
@@ -559,6 +565,7 @@ export async function getWord(ownerId: string, id: number): Promise<WordDetail |
     word: row.word,
     kana: row.kana,
     pos: row.pos,
+    subtype: row.subtype,
     meaning: meanings.results?.[0]?.meaning ?? null,
     meanings: (meanings.results ?? []).map((m) => m.meaning),
     examples: examples.results ?? [],
@@ -997,7 +1004,7 @@ export async function getWordList(ownerId: string, id: number): Promise<WordList
       .first<{ id: number; title: string; description: string | null; created_by: string | null; created_at: number }>(),
     db
       .prepare(
-        `SELECT w.id, w.word, w.kana, w.created_at, w.pos,
+        `SELECT w.id, w.word, w.kana, w.created_at, w.pos, w.subtype,
                 (SELECT m.meaning FROM meanings m WHERE m.word_id = w.id LIMIT 1) AS meaning,
                 w.list_id, l.title AS list_title
          FROM words w
@@ -1025,6 +1032,7 @@ export async function getWordList(ownerId: string, id: number): Promise<WordList
       word: row.word,
       kana: row.kana,
       pos: row.pos,
+      subtype: row.subtype,
       meaning: row.meaning,
       createdAt: row.created_at,
       listId: row.list_id,
@@ -1040,7 +1048,7 @@ export async function insertVocabEntries(
 ): Promise<InsertResult> {
   const db = getDb();
   const insertWord = db.prepare(
-    "INSERT INTO words (word, kana, pos, created_by, list_id, owner_id, notes, forms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+    "INSERT INTO words (word, kana, pos, subtype, created_by, list_id, owner_id, notes, forms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
   );
   const insertMeaning = db.prepare("INSERT INTO meanings (word_id, meaning) VALUES (?1, ?2)");
   const insertExample = db.prepare("INSERT INTO examples (word_id, japanese, translation) VALUES (?1, ?2, ?3)");
@@ -1052,6 +1060,7 @@ export async function insertVocabEntries(
         entry.word,
         entry.kana,
         entry.pos,
+        entry.subtype ?? null,
         ownerId,
         listId,
         ownerId,
@@ -1174,6 +1183,8 @@ export interface WordUpdateInput {
   word: string;
   kana: string;
   pos: string | null;
+  /** Refines pos; null = clear. */
+  subtype: string | null;
   meanings: string[];
   examples: { japanese: string; translation: string | null }[];
   /** Free-text notes (null = clear). */
@@ -1191,9 +1202,18 @@ export async function updateWord(
   const db = getDb();
   const result = await db
     .prepare(
-      "UPDATE words SET word = ?1, kana = ?2, pos = ?3, notes = ?4, forms = ?5 WHERE id = ?6 AND owner_id = ?7"
+      "UPDATE words SET word = ?1, kana = ?2, pos = ?3, subtype = ?4, notes = ?5, forms = ?6 WHERE id = ?7 AND owner_id = ?8"
     )
-    .bind(data.word, data.kana, data.pos, data.notes ?? null, serializeWordForms(data.forms), wordId, ownerId)
+    .bind(
+      data.word,
+      data.kana,
+      data.pos,
+      data.subtype ?? null,
+      data.notes ?? null,
+      serializeWordForms(data.forms),
+      wordId,
+      ownerId
+    )
     .run();
   if (result.meta.changes === 0) return false;
 

@@ -11,6 +11,7 @@ import { ReorderList, ReorderRow } from "~/components/lightswind/reorder";
 import { FormMessage } from "~/components/form-message";
 import { okMessage, useActionToast } from "~/components/action-toast";
 import { SelectField } from "~/components/select-field";
+import { subtypeOptionsFor } from "~/lib/vocab";
 import { useReturnTo } from "~/lib/return-to";
 import type { WordDetail } from "~/lib/db.server";
 import type { WordEditActionData } from "~/routes/word-edit";
@@ -137,7 +138,11 @@ export function WordEditForm({
         <input type="hidden" name="formsJson" value={formsJson} />
 
         <Card>
-          <CardContent className="grid gap-4 p-6 md:grid-cols-3">
+          <CardContent
+            className={`grid gap-4 p-6 ${
+              subtypeOptionsFor(word.pos).length > 0 ? "md:grid-cols-4" : "md:grid-cols-3"
+            }`}
+          >
             <div>
               <Label htmlFor="word">Word *</Label>
               <Input
@@ -171,6 +176,19 @@ export function WordEditForm({
                 options={POS_OPTIONS}
               />
             </div>
+            {subtypeOptionsFor(word.pos).length > 0 && (
+              <div>
+                <Label htmlFor="subtype">Subtype</Label>
+                <SelectField
+                  id="subtype"
+                  name="subtype"
+                  ariaLabel="Subtype"
+                  defaultValue={word.subtype ?? ""}
+                  className="mt-2"
+                  options={[{ value: "", label: "—" }, ...subtypeOptionsFor(word.pos)]}
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
 

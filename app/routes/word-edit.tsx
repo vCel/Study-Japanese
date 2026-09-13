@@ -85,6 +85,12 @@ export async function action({ request, params, context }: Route.ActionArgs): Pr
       ? posRaw
       : null;
 
+  const subtypeRaw = form.get("subtype");
+  const subtype =
+    typeof subtypeRaw === "string" && subtypeRaw.trim().length > 0
+      ? subtypeRaw.trim().slice(0, 24)
+      : null;
+
   const meaningsRaw = form.get("meanings");
   const meanings =
     typeof meaningsRaw === "string"
@@ -149,6 +155,7 @@ export async function action({ request, params, context }: Route.ActionArgs): Pr
     word,
     kana,
     pos,
+    subtype,
     meanings,
     examples,
     notes,

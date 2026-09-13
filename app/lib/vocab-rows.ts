@@ -23,6 +23,8 @@ export interface VocabRow {
   kana: string;
   /** "" = unset (always "phrase" for the phrases page). */
   pos: string;
+  /** Refines pos (verb → "group1", adjective → "i-adjective", …). "" = unset. */
+  subtype: string;
   meanings: string[];
   examples: VocabRowExample[];
   /** Free-text notes ("" = none). */
@@ -51,6 +53,7 @@ export function emptyRow(overrides: Partial<VocabRow> = {}): VocabRow {
     word: "",
     kana: "",
     pos: "",
+    subtype: "",
     meanings: [""],
     examples: [],
     notes: "",
@@ -84,6 +87,7 @@ export function parseVocabRows(
     word: entry.word,
     kana: entry.kana,
     pos: forcePos ?? entry.pos ?? "",
+    subtype: forcePos ? "" : entry.subtype ?? "",
     meanings: entry.meanings.length > 0 ? entry.meanings : [""],
     examples: entry.examples.map((example) => ({
       japanese: example.japanese,
@@ -158,6 +162,7 @@ export function readVocabRows(
       word,
       kana,
       pos: forcePos ?? asString(obj.pos).trim(),
+      subtype: forcePos ? "" : asString(obj.subtype).trim(),
       meanings,
       examples,
       notes,
@@ -174,6 +179,7 @@ export function toEntries(rows: VocabRow[], { forcePos }: { forcePos?: string } 
     word: row.word.trim().slice(0, 64),
     kana: row.kana.trim().slice(0, 64),
     pos: forcePos ?? (row.pos.trim() ? row.pos.trim() : null),
+    subtype: forcePos ? null : (row.subtype.trim() ? row.subtype.trim().slice(0, 24) : null),
     meanings: row.meanings
       .map((meaning) => meaning.trim())
       .filter((meaning) => meaning.length > 0)

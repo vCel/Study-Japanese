@@ -3,6 +3,7 @@ import { Pencil } from "lucide-react";
 
 import type { Route } from "./+types/word-detail";
 import { getWord } from "~/lib/db.server";
+import { subtypeLabel } from "~/lib/vocab";
 import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
 import { Badge } from "~/components/lightswind/badge";
@@ -66,6 +67,7 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
             {word.pos && (
               <Badge variant="secondary" className="text-sm">
                 {word.pos}
+                {word.subtype ? ` · ${subtypeLabel(word.subtype)}` : ""}
               </Badge>
             )}
           </CardHeader>
