@@ -17,6 +17,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showReset, setShowReset] = useState(false);
 
   if (!isConvexClientConfigured()) {
     return (
@@ -68,7 +69,7 @@ export default function Login() {
                 autoComplete="username"
                 value={identifier}
                 onChange={(event) => setIdentifier(event.target.value)}
-                placeholder="you@example.com or peter01"
+                placeholder="you@example.com or username"
               />
             </div>
             <div className="space-y-2">
@@ -83,6 +84,21 @@ export default function Login() {
                 placeholder="••••••••"
               />
             </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="cursor-pointer text-xs font-medium text-primarylw hover:underline"
+                onClick={() => setShowReset((visible) => !visible)}
+              >
+                {showReset ? "Hide password help" : "Forgot password?"}
+              </button>
+            </div>
+            {showReset && (
+              <div className="rounded-[var(--radius)] border border-border bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
+                Password reset isn&apos;t set up on this site yet. Please contact the site owner
+                if you&apos;ve forgotten your password.
+              </div>
+            )}
             {error && (
               <p className="rounded-[var(--radius)] border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
                 {error}

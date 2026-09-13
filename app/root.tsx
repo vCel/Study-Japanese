@@ -5,6 +5,7 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
   useNavigation,
 } from "react-router";
 import * as React from "react";
@@ -21,6 +22,7 @@ import {
   ownerContext,
   resolveOwnerFromRequest,
 } from "~/lib/owner.server";
+import { cn } from "~/lib/utils";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
@@ -106,19 +108,34 @@ export default function App() {
   const loading = navigation.state === "loading";
   const showSkeleton = useDelayedFlag(loading);
 
+  // Sign-in / sign-up get a distraction-free screen: no sidebar, mobile nav or
+  // footer, and the card is centred in the viewport instead of flowing in the
+  // content column.
+  const { pathname } = useLocation();
+  const isAuthPage = pathname === "/login" || pathname === "/signup";
+
   return (
     <ConvexClientProvider>
       <DeviceSyncPrompt />
       <div className="flex min-h-dvh">
-        <Sidebar />
+        {!isAuthPage && <Sidebar />}
         <div className="flex min-h-dvh w-full min-w-0 flex-col">
-          <MobileNav />
-          <main className="w-full flex-1 px-6 pb-28 pt-8 md:pb-8">
+          {!isAuthPage && <MobileNav />}
+          <main
+            className={cn(
+              "w-full flex-1",
+              isAuthPage
+                ? "flex items-center justify-center px-6 py-10"
+                : "px-6 pb-28 pt-8 md:pb-8"
+            )}
+          >
             {showSkeleton ? <PageSkeleton /> : <Outlet />}
           </main>
-          <footer className="border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
-            あああ！ - An open-source Japanese grammar reference with example sentences and English equivalents.
-          </footer>
+          {!isAuthPage && (
+            <footer className="border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
+              あああ！ - An open-source Japanese grammar reference with example sentences and English equivalents.
+            </footer>
+          )}
         </div>
         <Toaster />
       </div>

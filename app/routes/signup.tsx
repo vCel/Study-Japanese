@@ -72,7 +72,7 @@ export default function Signup() {
                 autoComplete="username"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                placeholder="e.g. peter01 (used to sign in)"
+                placeholder="e.g. your username (used to sign in)"
               />
             </div>
             <div className="space-y-2">
