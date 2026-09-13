@@ -25,6 +25,13 @@ export default {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
       if (!headers.has(name)) headers.set(name, value);
     }
+    // Hash-named assets (JS/CSS) are immutable and cache well, but *documents*
+    // change on every deploy — caching them is what made the previous release
+    // keep serving after a new one went live. Pages are never stored.
+    const contentType = headers.get("Content-Type") ?? "";
+    if (contentType.includes("text/html")) {
+      headers.set("Cache-Control", "no-store");
+    }
     // Only over HTTPS (never on http://localhost).
     if (new URL(request.url).protocol === "https:") {
       headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
