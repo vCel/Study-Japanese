@@ -138,11 +138,7 @@ export function WordEditForm({
         <input type="hidden" name="formsJson" value={formsJson} />
 
         <Card>
-          <CardContent
-            className={`grid gap-4 p-6 ${
-              subtypeOptionsFor(word.pos).length > 0 ? "md:grid-cols-4" : "md:grid-cols-3"
-            }`}
-          >
+          <CardContent className="grid gap-4 p-6 md:grid-cols-4">
             <div>
               <Label htmlFor="word">Word *</Label>
               <Input
@@ -176,19 +172,23 @@ export function WordEditForm({
                 options={POS_OPTIONS}
               />
             </div>
-            {subtypeOptionsFor(word.pos).length > 0 && (
-              <div>
-                <Label htmlFor="subtype">Subtype</Label>
-                <SelectField
-                  id="subtype"
-                  name="subtype"
-                  ariaLabel="Subtype"
-                  defaultValue={word.subtype ?? ""}
-                  className="mt-2"
-                  options={[{ value: "", label: "—" }, ...subtypeOptionsFor(word.pos)]}
-                />
-              </div>
-            )}
+            <div>
+              <Label htmlFor="subtype">Subtype</Label>
+              <SelectField
+                id="subtype"
+                name="subtype"
+                ariaLabel="Subtype"
+                defaultValue={word.subtype ?? ""}
+                className="mt-2"
+                placeholder={subtypeOptionsFor(word.pos).length === 0 ? "—" : "Select"}
+                disabled={subtypeOptionsFor(word.pos).length === 0}
+                options={
+                  subtypeOptionsFor(word.pos).length === 0
+                    ? [{ value: "", label: "—" }]
+                    : [{ value: "", label: "—" }, ...subtypeOptionsFor(word.pos)]
+                }
+              />
+            </div>
           </CardContent>
         </Card>
 

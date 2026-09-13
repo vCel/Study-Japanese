@@ -161,7 +161,9 @@ export function VocabRowsEditor({
       <ReorderList values={drafts} onReorder={onChange}>
         {drafts.map((draft, index) => {
           const subtypeOptions = subtypeOptionsFor(draft.pos);
-          const showSubtype = showPos && subtypeOptions.length > 0;
+          // The subtype column is always there for words; it greys out when the
+          // chosen part of speech has no subtypes to offer.
+          const showSubtype = showPos;
           return (
             <ReorderRow
               key={draft.id}
@@ -174,9 +176,7 @@ export function VocabRowsEditor({
                   className={
                     showSubtype
                       ? "grid gap-2 md:grid-cols-[1.2fr_1.2fr_9rem_9rem]"
-                      : showPos
-                        ? "grid gap-2 md:grid-cols-[1.2fr_1.2fr_9rem]"
-                        : "grid gap-2 md:grid-cols-2"
+                      : "grid gap-2 md:grid-cols-2"
                   }
                 >
                   <Input
@@ -204,7 +204,13 @@ export function VocabRowsEditor({
                       ariaLabel={`Word ${index + 1} subtype`}
                       value={draft.subtype}
                       onValueChange={(subtype) => patch(draft.id, { subtype })}
-                      options={[{ value: "", label: "—" }, ...subtypeOptions]}
+                      placeholder={subtypeOptions.length === 0 ? "—" : "Select"}
+                      disabled={subtypeOptions.length === 0}
+                      options={
+                        subtypeOptions.length === 0
+                          ? [{ value: "", label: "—" }]
+                          : [{ value: "", label: "—" }, ...subtypeOptions]
+                      }
                     />
                   )}
                 </div>

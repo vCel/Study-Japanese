@@ -31,6 +31,7 @@ export function SelectField({
   id,
   className,
   triggerClassName,
+  disabled = false,
 }: {
   /** Omit to use the select purely as a controlled input (no hidden field). */
   name?: string;
@@ -43,6 +44,7 @@ export function SelectField({
   id?: string;
   className?: string;
   triggerClassName?: string;
+  disabled?: boolean;
 }) {
   const [uncontrolled, setUncontrolled] = React.useState(defaultValue);
   const value = controlledValue ?? uncontrolled;
@@ -56,11 +58,12 @@ export function SelectField({
   return (
     <div className={className}>
       {name ? <input type="hidden" name={name} value={value} /> : null}
-      <Select value={value} onValueChange={handleValueChange}>
+      <Select value={value} onValueChange={handleValueChange} disabled={disabled}>
         <SelectTrigger
           id={id}
           aria-label={ariaLabel ?? placeholder}
           className={triggerClassName}
+          disabled={disabled}
         >
           <SelectValue placeholder={placeholder}>{label}</SelectValue>
         </SelectTrigger>
