@@ -1,8 +1,8 @@
 import { Link, useSearchParams } from "react-router";
 
 import type { Route } from "./+types/words";
-import { SignedInOnlyClient } from "~/components/signed-in-only";
 import { listWords } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { isValidPos, PosFilter } from "~/components/pos-filter";
 import { SearchBar } from "~/components/search-bar";
 import { PageHeader } from "~/components/page-header";
@@ -14,14 +14,16 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Words · 日本語Vocab" }];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const search = url.searchParams.get("q")?.trim() || null;
   const posParam = url.searchParams.get("pos");
   const pos = isValidPos(posParam) ? posParam : null;
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
   // Phrases live on their own page, so exclude them from the vocabulary list.
-  return await listWords(search, Number.isNaN(page) ? 1 : page, pos, "phrase");
+  return await listWords(ownerId, search, Number.isNaN(page) ? 1 : page, pos, "phrase");
 }
 
 export default function Words({ loaderData }: Route.ComponentProps) {
@@ -58,11 +60,9 @@ export default function Words({ loaderData }: Route.ComponentProps) {
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
             No words found{search ? ` for “${search}”` : ""}. Try a different search.{" "}
-            <SignedInOnlyClient>
-              <Link to="/lists/new" className="text-primarylw underline">
-                Add some words
-              </Link>
-            </SignedInOnlyClient>
+            <Link to="/lists/new" className="text-primarylw underline">
+              Add some words
+            </Link>
           </CardContent>
         </Card>
       ) : (

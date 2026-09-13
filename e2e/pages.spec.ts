@@ -24,11 +24,11 @@ test.describe("word lists vs phrase lists", () => {
     expect(overlap(homeLists, phraseLists)).toEqual([]);
   });
 
-  test("home header hides the add button until you're signed in", async ({ page }) => {
+  test("home header offers the add button to everyone", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1, name: "Word lists" })).toBeVisible();
-    // The e2e browser is anonymous, so the create button must not be offered.
-    await expect(page.getByRole("link", { name: "Add word list" })).toHaveCount(0);
+    // Anyone can create a word list — signed in or not.
+    await expect(page.getByRole("link", { name: "Add word list" })).toHaveCount(1);
   });
 
   test("phrase lists page counts phrases and tags link back to itself", async ({ page }) => {
@@ -171,7 +171,8 @@ test.describe("page header", () => {
     "/words/examples",
     "/rules",
     "/rules/examples",
-    "/study",
+    "/study/flashcards",
+    "/study/quizzes",
     "/words/1",
     "/lists/1",
     "/rules/1",

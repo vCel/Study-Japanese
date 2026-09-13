@@ -3,17 +3,18 @@ import { expect, test } from "@playwright/test";
 import { gotoHydrated } from "./helpers";
 
 /**
- * Exercises the server actions end-to-end without signing in. Every request is
- * rejected before any write, so the seeded data is never mutated.
+ * Exercises the server actions without signing in. Signed-out users can now
+ * create content — it is scoped to their device (a `jv_device` cookie) and is
+ * private to them, so the writes below must succeed.
  */
-test.describe("signed-out guards", () => {
-  test("adding phrases is rejected", async ({ page }) => {
+test.describe("signed-out creation", () => {
+  test("adding phrases works signed out", async ({ page }) => {
     await gotoHydrated(page, "/phrases/new");
     await page.getByRole("button", { name: "Add phrases", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText(/signed in/i);
+    await expect(page.getByRole("alert")).toContainText(/added/i);
   });
 
-  test("creating a word list is rejected", async ({ page }) => {
+  test("creating a word list works signed out", async ({ page }) => {
     await gotoHydrated(page, "/lists/new");
     // Filling from JSON never writes — the write only happens on submit.
     await page.locator("#title").fill("e2e temporary list");
@@ -25,6 +26,6 @@ test.describe("signed-out guards", () => {
     await expect(page).toHaveURL(/\/lists\/new$/);
 
     await page.getByRole("button", { name: "Create word list", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText(/signed in/i);
+    await expect(page.getByRole("alert")).toContainText(/created/i);
   });
 });

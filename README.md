@@ -3,9 +3,10 @@
 A full-stack Japanese vocabulary site with a **dark-first UI** and **side navigation**:
 browse **tagged word lists** (the home page), study flashcards from one or several combined
 lists, read example sentences, browse **phrases**, and learn word/sentence grammar rules.
-Signed-in users can **create word lists by hand** or **paste JSON to fill the form in** on the
-same page; list authors can edit their lists and words; **admins** manage the grammar rules
-and can fill their panels from JSON the same way.
+Anyone can **create word lists, phrase lists and grammar rules** — by hand or by pasting
+JSON to fill the form in. Everything is **private to its owner**: signed-out users' content
+is scoped to their device, and signing in syncs it to their account so it follows them to
+any device (an onboarding prompt offers a starter pack of common words, phrases and rules).
 
 **Stack:** React Router v8 (Remix successor, framework mode, TypeScript) · Cloudflare Workers ·
 Cloudflare D1 (SQLite) · Convex Auth (email + password) · Tailwind CSS v4 + Lightswind UI ·
@@ -21,12 +22,14 @@ Framer Motion.
   - **Words** — pick **tags**, narrow to specific **word lists**, choose **types of words**
     (nouns / verbs / adjectives / adverbs / all) and a **deck size** (10–100).
   - **Phrases** — the same, but over **phrase lists** (no part-of-speech step).
-  - **Rules** — drill admin-managed grammar rules, filtered by **rule type** and **tags**.
+  - **Rules** — drill your grammar rules, filtered by **rule type** and **tags**.
+  - **Quizzes** (`/study/quizzes`) sits next to it as a placeholder — the page renders its
+    header and nothing else for now.
 - **Saving a session:** the **Save session** button opens a Lightswind **Drawer** with a form
   (session name + save). **Load** opens a drawer containing a Lightswind **Scroll Area** with a
   **draggable reorder list** — drag the grip to reorder, tap a session to load it, ✕ to delete.
 - Every "Study" button on the word/phrase-list pages pre-fills the matching tab
-  (`/study/session?...` runs the flashcards; a deep link without a `kind` infers the section
+  (`/study/flashcards/session?...` runs the flashcards; a deep link without a `kind` infers
   from what the selected lists contain).
 - **Spaced repetition mode (on by default):** the app tracks which cards you answer "Again"
   on (persisted per browser via localStorage). Due cards are prioritized, "Again" cards
@@ -41,31 +44,31 @@ Framer Motion.
 
 - **Side navigation** (desktop) / top bar (mobile) is grouped into four sections —
   **Word library** (Word lists, Words, Examples), **Phrases** (Phrase lists, Phrases),
-  **文法 · Grammar** (Rules & forms, Rule examples) and **Study**. The bottom of the sidebar
-  shows your **sign-in state** — signed-in users see their name and a cog button linking to
-  `/settings` (there is no upload link there; adding and importing all happen on the
-  dedicated create pages).
+  **文法 · Grammar** (Rules & forms, Rule examples) and **Study** (Flashcards, Quizzes). The
+  bottom of the sidebar shows your **sign-in state** — signed-in users see their name and a
+  cog button linking to `/settings` (there is no upload link there; adding and importing all
+  happen on the dedicated create pages).
 - **Home (`/`) = Word lists**: filter by tag (input + a **Tags** popover of clickable
   chips), per-list **Study** buttons, and multi-select checkboxes — pick several lists and
   hit **Study** in the action bar to combine them into one flashcard session
-  (`/study?lists=1,2,3`). The header holds a single **Add word list** button (`/lists/new`).
-  Phrase lists are excluded here.
+  (`/study/flashcards?lists=1,2,3`). The header holds a single **Add word list** button
+  (`/lists/new`). Phrase lists are excluded here.
 - **`/words`, `/words/:id`** — searchable vocabulary with meanings, examples and list links
   (phrases are excluded here; they live in the Phrases section).
 - **`/phrases/lists`** — **phrase lists** (word lists whose entries are phrases), with the
   same tag filter, per-list study buttons and multi-select. The seeded *Everyday Phrases*
   list lives here.
-- **`/phrases`, `/phrases/new`** — every phrase and its detail page; signed-in users add
-  phrases by hand or bulk-import them from JSON on the same page. Giving a phrase list
+- **`/phrases`, `/phrases/new`** — every phrase and its detail page; anyone adds
+  phrases by hand or bulk-imports them from JSON on the same page. Giving a phrase list
   title groups the phrases into a new list; leaving it blank adds standalone phrases.
 - **`/words/examples`** — all word example sentences in reading mode (`/examples` redirects here).
-- **`/lists/:id`** — list detail with a *Study this list* button; authors can edit the list.
-- **`/lists/new`** — signed-in users create a word list: title, description, tags and
+- **`/lists/:id`** — list detail with a *Study this list* button; the owner can edit the list.
+- **`/lists/new`** — anyone creates a word list: title, description, tags and
   draggable word rows (each with word, kana, part of speech, every meaning and example
   sentences), **or** expand the *Bulk import from JSON* accordion and press *Fill form from
   JSON* to populate those rows — the JSON is never submitted itself.
-- **`/rules`** — admin-managed word/sentence grammar rules with bilingual examples; admins
-  see an **Add rule** button (`/rules/new`). One submission can hold **many rules**: the create
+- **`/rules`** — private word/sentence grammar rules with bilingual examples; the *Add rule*
+  button (`/rules/new`) is available to everyone. One submission can hold **many rules**: the create
   page keeps one editable panel per rule (collapsible, with *Add rule* / *Remove*), and the
   *Bulk import from JSON* accordion **fills those panels** rather than writing rows straight to
   the database. The panel is the only surface — the fields inside it are separated by dividers
@@ -79,12 +82,12 @@ Framer Motion.
   to its rule. Kept separate from `/words/examples`, which only lists **word-list** examples.
 - **`/rules/:id`** — rule detail: the explanation card holds the explanation *and* its
   ポイント callouts, then examples, an **English equivalents** section, and a **Related
-  rules** section (only the rules an admin linked by hand, see below).
+  rules** section (only the rules you linked by hand, see below).
 - **Edit pages** (`/lists/:id/edit`, `/words/:id/edit`, `/rules/:id/edit`) keep the same
   structure as their detail page with the text swapped for inputs, and are as wide as their
   *Add* counterpart (no narrow column). Repeatable lists — word meanings, word examples and
   rule examples — use the Lightswind **draggable reorder list** (made drag-only from a grip
-  handle so the inputs stay usable). Authors and admins also get a **Delete** button in the
+  handle so the inputs stay usable). Owners also get a **Delete** button in the
   page header that asks to confirm before removing the record.
 - **Forms** use the Lightswind **Select** (`app/components/select-field.tsx` wraps it for
   `Form` usage by mirroring the value into a hidden input), the Lightswind **Textarea** for
@@ -93,10 +96,11 @@ Framer Motion.
 - **Mobile navigation** is a bottom Lightswind **Dock** (`/components/lightswind/dock.tsx`)
   split into five **categories** — Words, Phrases, Grammar, Study and Profile — so nothing is
   squeezed off a phone screen. Tapping a category opens a popover **anchored to that button**
-  (clamped so the outer ones stay on screen) listing its pages; one-page categories such as
-  Study link straight through. The active category is marked with `aria-current`, and `Escape`
-  / an outside tap dismisses the menu. The **Profile** menu is auth-aware — a visitor gets
-  *Sign in* / *Sign up* and never a sign-out link, a signed-in user gets *Settings* / *Sign out*.
+  (clamped so the outer ones stay on screen) listing its pages — a category with a single
+  page links straight through instead. The active category is marked with `aria-current`, and
+  `Escape` / an outside tap dismisses the menu. The **Profile** menu is auth-aware — a visitor
+  gets *Sign in* / *Sign up* and never a sign-out link, a signed-in user gets *Settings* /
+  *Sign out*.
   The top bar keeps the logo on one line and shows the
   account name next to the settings cog (`<AuthButtons layout="header" />`). The desktop
   sidebar is unchanged.
@@ -114,7 +118,9 @@ file picker and an **animated copy button** that copies the example JSON — and
 button row with **Fill form from JSON** (outline) next to the primary *Create …*. Because it is
 a single form, importing reuses the page's own title/tags/description instead of asking for
 them twice. Fields use the Lightswind **Select** and **Textarea**, the primary button sits at
-the right edge, and submitting raises a success (or error) **toast**.
+the right edge, and submitting raises a success (or error) **toast**. Anyone can create —
+signed in or not; signed-out content is scoped to the device, signed-in content to the
+account.
 
 **Importing never writes.** On every page *Fill form from JSON* parses the pasted JSON on the
 client and populates the form's own fields, so you can review and edit what you imported before
@@ -168,7 +174,8 @@ app/
   root.tsx                     # layout: side navigation (desktop) + mobile top bar
   routes.ts                    # route config
   routes/                      # index (word lists home), words, phrases (+ phrases/lists),
-                               # study, examples, lists/:id, lists/new, rules/*
+                               # study/flashcards (+ /session) and study/quizzes,
+                               # examples, lists/:id, lists/new, rules/*
                                # (+ rules/examples), settings, upload (redirect),
                                # login, signup, logout, api/*
   components/
@@ -189,7 +196,7 @@ app/
     convex-provider.tsx        # ConvexReactClient + ConvexAuthProvider (no-op until configured)
     lists-new-form.tsx         # word-list creation (row editor + JSON fill accordion)
     phrase-form.tsx            # phrase creation (row editor + JSON fill accordion)
-    rule-form.tsx              # admin rule editor (one panel per rule, flat fields inside)
+    rule-form.tsx              # rule editor (one panel per rule, flat fields inside)
     auth-buttons.tsx           # sidebar sign-in area (name + settings cog when signed in)
     lightswind/                # Lightswind UI components (accordion, alert dialog, breadcrumb,
                                # dock, drawer, reorder, tabs, scroll area, animated copy button,
@@ -294,8 +301,10 @@ or `npx convex deploy` for the Convex backend). Also enable the Convex site URL:
 
 ## JSON API (restricted + rate limited)
 
-The HTML pages are public, but the **JSON API is limited to registered users** and every
-endpoint is rate limited with Cloudflare's native Workers Rate Limiting bindings.
+The HTML pages work for everyone (each owner sees only their own rows), but the **JSON API
+is limited to registered users** and every endpoint is rate limited with Cloudflare's native
+Workers Rate Limiting bindings. The data endpoints return only the requesting user's own
+content.
 
 | Endpoint | Auth | Rate limit |
 |---|---|---|
@@ -304,9 +313,9 @@ endpoint is rate limited with Cloudflare's native Workers Rate Limiting bindings
 | `GET /api/words?q=<search>&page=<n>` | **registered users** | 60 req/min per IP |
 | `GET /api/words/:id` | **registered users** | 60 req/min per IP |
 | `GET /api/examples?page=<n>` | **registered users** | 60 req/min per IP |
-| `POST /upload` (form action) | **registered users** | 10 req/min per IP **and** per user |
-| `POST /lists/new` (form action) | **registered users** | 10 req/min per IP |
-| `POST /rules/upload` (form action) | **admins** | 10 req/min per IP |
+| `POST /upload` (form action) | **owner-scoped** | 10 req/min per IP |
+| `POST /lists/new` (form action) | **owner-scoped** | 10 req/min per IP |
+| `POST /rules/new` (form action) | **owner-scoped** | 10 req/min per IP |
 
 Authenticated calls pass the signed-in user's Convex token as a header:
 
@@ -344,22 +353,23 @@ but keeps the part-of-speech filter, and the popover's chips keep you on the pag
 browsing: `/phrases/lists` links to `/phrases/lists?tag=…`, not back to the word lists, and
 a phrase list's own tag links on `/lists/:id` do the same. `/rules` uses the identical chip.
 
-## Rules & forms (admin-only, separate nav section)
+## Rules & forms (private, separate nav section)
 
 The **"Rules & forms"** section in the navigation (visually separated, labelled 文法)
 covers **word rules/forms** and **sentence rules** — each with a title, up to four
 **points** (ポイント lines describing the pattern), an explanation, and examples that pair a
-**Japanese sentence with its English equivalent**.
+**Japanese sentence with its English equivalent**. Rules are private to their owner, just
+like word lists and phrases.
 
-- `/rules` — browse all rules, filterable by kind (All / Word rules / Sentence rules)
+- `/rules` — browse your rules, filterable by kind (All / Word rules / Sentence rules)
 - `/rules/:id` — rule detail with examples + English equivalents
-- `/rules/new`, `/rules/:id/edit` — **admin-only** create/edit forms. A rule shows one
+- `/rules/new`, `/rules/:id/edit` — create/edit forms. A rule shows one
   dashed ポイント callout per point (start with one, then *Add point* up to four; each has
   its own remove control once there is more than one), plus a **Related rules** picker:
   related rules are **curated by hand** (chosen from a dropdown of the other rules, shown as
   removable chips) and stored in the `rule_related` join table — nothing is ever inferred
   from tags or wording. Only linked rules appear in the detail page's *Related rules* card.
-- `/rules/upload` — **admin-only** bulk import: paste an array of rule objects (same shape
+- `/rules/upload` — bulk import: paste an array of rule objects (same shape
   as the create form). Each item needs `kind` (`"word"` or `"sentence"`), `title` and
   `explanation`; `points` (up to four strings) and `examples` are optional. A legacy
   single `pattern` string is still accepted and becomes the first point:
@@ -376,37 +386,27 @@ covers **word rules/forms** and **sentence rules** — each with a title, up to 
   ]
   ```
 
-**Admin setup:** admins are allow-listed by email through a Convex deployment env var:
+Every rule write is scoped to the submitting owner (a signed-in account or a device) and
+shares the upload rate limit (10 req/min per IP). The old admin allow-list
+(`ADMIN_EMAILS` / `guardAdminAction`) is no longer used for rules — anyone can manage their
+own rules.
 
-```bash
-npx convex env set ADMIN_EMAILS "you@example.com,second-admin@example.com"
-```
+## Editing (owner only)
 
-The `isCurrentUserAdmin` Convex query is the single source of truth: the UI (via
-`AdminOnly`) hides the *Add rule* / *Edit rule* buttons from everyone else, and the
-server actions (`guardAdminAction`) re-verify the Convex token + admin allow-list before
-touching D1 — returning 401/403/429/503 as appropriate. Rules management also shares the
-write rate limit (10 req/min per IP). Form posts don't set an `Authorization` header, so the
-actions pass the Convex token from the form body (`readFormToken(form)`) into the guard; the
-header is still honoured for the JSON API.
-
-## Editing (author only)
-
-- The **author of a word list** can edit its title, description and tags at
-  `/lists/:id/edit` (the list detail page shows an *Edit list* button only to them).
-- The **list author** (or the original creator of a standalone word) can edit word
-  information — word, kana, meanings, and add/remove/edit example sentences — at
-  `/words/:id/edit` (*Edit word* button on the word detail page).
-- Every edit action verifies the Convex token server-side and checks authorship before
-  touching D1; everyone else gets a 403-style message. Edit actions share the upload
-  rate limit (10 req/min).
+- The **owner of a word list** can edit its title, description and tags at
+  `/lists/:id/edit` (the list detail page shows an *Edit list* button).
+- The **owner** can edit word information — word, kana, meanings, and
+  add/remove/edit example sentences — at `/words/:id/edit` (*Edit word* button on the word
+  detail page).
+- Every edit action resolves the owner server-side (middleware) and scopes the D1 write to
+  it, so you can only ever touch your own content; a mismatched id gets a 403-style message.
+  Edit actions share the upload rate limit (10 req/min).
 - **Delete** sits next to *Save changes* in the action row and asks for confirmation in a
   Lightswind **Alert Dialog** before anything happens. The confirm button submits the same
   edit form with `action=delete` (via the HTML `form` attribute, so no nested forms), and the
-  route action re-checks permissions before deleting.
-- Nobody who is signed out sees a create or edit control: the *Add* buttons, the per-page
-  empty-state links and the edit buttons are all behind an auth gate (`SignedInOnly` /
-  `SignedInOnlyClient`, `AdminOnly`, `CanEdit`).
+  route action re-checks ownership before deleting.
+- Create and edit controls are shown to everyone — signed-in or not — because whatever you
+  can see is yours to edit.
 
 > Navigation between levels is by **breadcrumb** (Lightswind `Breadcrumb`, rendered by
 > `PageHeader`) rather than back buttons, so the trail is the same wherever you are.
@@ -425,7 +425,7 @@ Nothing is conditional about the shell around those rows, so the top of the cont
 same height (and the same shape) on every page: moving from `/words` into a word, a phrase
 or `/rules/new` never shifts the layout. The subtitle is clamped to one line, and pages with
 neither a subtitle nor a trail still reserve both rows. Playwright guards this —
-`e2e/pages.spec.ts` measures the header across fourteen pages, asserts a single height and
+`e2e/pages.spec.ts` measures the header across fifteen pages, asserts a single height and
 checks the order (title above subtitle above trail), and `e2e/create-pages.spec.ts` does the
 same for the three create pages.
 
@@ -465,12 +465,15 @@ scope with `getByRole("navigation", { name: … })` rather than a bare `getByRol
   `Cross-Origin-Opener-Policy: same-origin`, a restrictive `Permissions-Policy`, and
   `Strict-Transport-Security` over HTTPS. Nothing in the app uses
   `dangerouslySetInnerHTML`, so there is no HTML-injection sink for stealing the token.
-- **Access control.** Browsing vocabulary, examples and rules is public by design. Writing
-  is not: `guardAdminAction` (rules) and the ownership checks on words/lists verify the
-  Convex token *and* the owner/admin allow-list **server-side** — the UI gates
-  (`AdminOnly`, `CanEdit`, `SignedInOnly`) are cosmetic. Every `/api/*` endpoint sits behind
-  `guardApiRequest` (per-IP rate limit, then a verified token), and the four data endpoints
-  return the same public catalogue the site already shows. On the Convex side only
+- **Access control.** Everything in the library — vocabulary, examples, lists, phrases and
+  rules — is **private to its owner**. The root middleware (`app/root.tsx`) resolves the
+  owner for every request from the Convex JWT cookie (signed-in user) or the `jv_device`
+  cookie (signed-out device, created on first visit), and every D1 query is scoped by that
+  owner id, so nobody can ever see another owner's content. Writes are scoped the same way:
+  there is no shared, public catalogue, and sharing is a future feature. On sign-in, the
+  client can offer to move device-scoped content into the account (`/api/sync`). Every
+  `/api/*` endpoint sits behind `guardApiRequest` (per-IP rate limit, then a verified token),
+  and the four data endpoints return only the caller's own rows. On the Convex side only
   `getAuthenticatedUser` (your own account) and `isCurrentUserAdmin` (a boolean) are public
   queries; the username/email lookups are `internal*`.
 - **Secrets.** `.env.local`, `admin-token.txt`, `signin-*.json` and `*.pem` are git-ignored.
@@ -483,7 +486,9 @@ Both a **file upload** and **pasted text** are accepted on `/upload` (each impor
 new titled word list). A single object or an array works, and common key aliases are
 tolerated (`kanji`→`word`, `reading`→`kana`, `definitions`, `sentences`, …). An optional
 **`pos`** field tags the part of speech — noun, verb, adjective, adverb, expression,
-particle (synonyms like `n`, `v`, `adj` are normalized):
+particle (synonyms like `n`, `v`, `adj` are normalized). **`notes`** is a free-text note
+for the entry, and **`forms`** lists conjugation forms (each `{ name, value }` — e.g.
+`ます` → `食べます`; a `{ "ます": "食べます" }` map is also accepted):
 
 ```json
 [
@@ -492,8 +497,22 @@ particle (synonyms like `n`, `v`, `adj` are normalized):
     "kana": "としょかん",
     "pos": "noun",
     "meanings": ["library"],
+    "notes": "図書館 = としょかん.",
+    "forms": [{ "name": "ます-form", "value": "図書館に行きます" }],
     "examples": [
       { "japanese": "図書館で本を借りました。", "translation": "I borrowed a book at the library." }
+    ]
+  },
+  {
+    "word": "食べる",
+    "kana": "たべる",
+    "pos": "verb",
+    "meanings": ["to eat"],
+    "forms": [
+      { "name": "ます", "value": "食べます" },
+      { "name": "te", "value": "食べて" },
+      { "name": "ta", "value": "食べた" },
+      { "name": "nai", "value": "食べない" }
     ]
   }
 ]
@@ -517,6 +536,9 @@ particle (synonyms like `n`, `v`, `adj` are normalized):
   `lightswind.css` theme variables, cva variants). You can pull official versions any time
   with `npx lightswind@latest add <component>`.
 - Auth lives in Convex (users + sessions are Convex tables). Vocabulary content lives in
-  D1; every upload is authorized by verifying the client's Convex token server-side before
-  writing to D1 (`app/lib/auth.server.ts` → `convex/users.ts`).
-- `created_by` stores the Convex user id as a plain string (no cross-database FK).
+  D1; every read and write is scoped to the request's owner, resolved by the root
+  middleware from the Convex token (signed-in account) or the device cookie
+  (`app/lib/owner.server.ts`).
+- `owner_id` stores the Convex user id (signed-in) or device id (signed-out) as a plain
+  string (no cross-database FK); `created_by` mirrors it. Seeded template rows (`owner_id`
+  NULL) form the onboarding starter pack, copied into an owner's namespace when chosen.

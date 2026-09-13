@@ -358,7 +358,7 @@ function StudyPanel({
       if (config.tags.length > 0) qs.set("tags", config.tags.join(","));
       if (kind === "words" && config.pos) qs.set("pos", config.pos);
     }
-    navigate(`/study/session?${qs.toString()}`);
+    navigate(`/study/flashcards/session?${qs.toString()}`);
   };
 
   // Tag chips are shared by every section (rules have their own tag set, so

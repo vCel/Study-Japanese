@@ -16,7 +16,7 @@ export async function loader({ request, params }: Route.LoaderArgs): Promise<Res
     return Response.json({ error: "Invalid word id." }, { status: 400 });
   }
 
-  const word = await getWord(id);
+  const word = await getWord(guard.user.id, id);
   if (!word) {
     return Response.json({ error: "Word not found." }, { status: 404 });
   }

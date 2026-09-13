@@ -21,8 +21,10 @@ export interface RuleDraft {
   /** Comma-separated in the UI, split with `parseTags` before saving. */
   tags: string;
   examples: RuleDraftExample[];
-  /** Ids of rules an admin linked by hand — never inferred from the content. */
+  /** Ids of rules linked by hand — never inferred from the content. */
   relatedIds: number[];
+  /** Free-text notes ("" = none). */
+  notes: string;
 }
 
 /** Validated rule, ready for `createRule`/`updateRule`. */
@@ -34,6 +36,7 @@ export interface RulePayload {
   tags: string[];
   examples: RuleDraftExample[];
   relatedIds: number[];
+  notes: string | null;
 }
 
 export const MAX_RULES = 100;
@@ -49,6 +52,7 @@ export const EMPTY_RULE_DRAFT: RuleDraft = {
   tags: "",
   examples: [],
   relatedIds: [],
+  notes: "",
 };
 
 /** Rules arrive as a single object or an array — treat both the same. */
@@ -113,6 +117,12 @@ function objectToDraft(obj: Record<string, unknown>): RuleDraft {
     tags,
     examples: readExamples(obj.examples ?? obj.example),
     relatedIds: readRelatedIds(obj.relatedIds ?? obj.related),
+    notes:
+      typeof obj.notes === "string"
+        ? obj.notes.trim()
+        : typeof obj.note === "string"
+          ? obj.note.trim()
+          : "",
   };
 }
 
@@ -173,6 +183,7 @@ export function draftToRulePayload(
           english: example.english.trim().slice(0, 500),
         })),
       relatedIds: readRelatedIds(draft.relatedIds),
+      notes: draft.notes.trim() ? draft.notes.trim().slice(0, 2000) : null,
     },
   };
 }

@@ -8,12 +8,22 @@ export interface VocabExample {
   translation: string | null;
 }
 
+/** One conjugation form pair, e.g. { name: "ます", value: "食べます" }. */
+export interface VocabForm {
+  name: string;
+  value: string;
+}
+
 export interface VocabEntry {
   word: string;
   kana: string;
   pos: string | null;
   meanings: string[];
   examples: VocabExample[];
+  /** Free-text notes about this entry (null = none). */
+  notes: string | null;
+  /** Conjugation forms, in display order (empty = none). */
+  forms: VocabForm[];
 }
 
 export interface ParseSuccess {
@@ -133,6 +143,48 @@ function normalizePos(value: unknown): string | null {
   return POS_SYNONYMS[trimmed] ?? trimmed.slice(0, 24);
 }
 
+const NOTE_KEYS = ["notes", "note", "comment", "comments"] as const;
+const FORM_KEYS = ["forms", "conjugations", "form"] as const;
+/** At most this many forms per entry (kept in step with db.server). */
+const MAX_FORMS = 12;
+
+function normalizeNotes(value: unknown): string | null {
+  return asTrimmedString(value)?.slice(0, 2000) ?? null;
+}
+
+/** Forms arrive as [{name, value}], a {name: value} map, or a bare string. */
+function normalizeForms(value: unknown): VocabForm[] {
+  if (Array.isArray(value)) {
+    const out: VocabForm[] = [];
+    for (const item of value.slice(0, MAX_FORMS)) {
+      if (typeof item === "string") {
+        const text = item.trim();
+        if (text) out.push({ name: "", value: text });
+        continue;
+      }
+      if (item && typeof item === "object") {
+        const obj = item as Record<string, unknown>;
+        const name = asTrimmedString(pick(obj, ["name", "form", "type", "label"])) ?? "";
+        const formValue =
+          asTrimmedString(pick(obj, ["value", "word", "japanese", "conjugation", "text"])) ?? "";
+        if (name || formValue) out.push({ name, value: formValue });
+      }
+    }
+    return out;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    // { "ます": "食べます", "te-form": "食べて" } — keys are the names.
+    const out: VocabForm[] = [];
+    for (const [name, raw] of Object.entries(value as Record<string, unknown>).slice(0, MAX_FORMS)) {
+      const formValue = asTrimmedString(raw) ?? "";
+      if (name.trim() || formValue) out.push({ name: name.trim(), value: formValue });
+    }
+    return out;
+  }
+  const single = asTrimmedString(value);
+  return single ? [{ name: "", value: single }] : [];
+}
+
 function normalizeEntry(raw: unknown, index: number): VocabEntry | { error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { error: `Entry ${index + 1} must be a JSON object.` };
@@ -152,8 +204,10 @@ function normalizeEntry(raw: unknown, index: number): VocabEntry | { error: stri
 
   const examples = normalizeExamples(pick(obj, EXAMPLE_KEYS));
   const pos = normalizePos(pick(obj, POS_KEYS));
+  const notes = normalizeNotes(pick(obj, NOTE_KEYS));
+  const forms = normalizeForms(pick(obj, FORM_KEYS));
 
-  return { word, kana, pos, meanings, examples };
+  return { word, kana, pos, meanings, examples, notes, forms };
 }
 
 export function parseVocabJson(text: string): ParseSuccess | ParseFailure {
@@ -190,6 +244,27 @@ export const SAMPLE_JSON = `[
     "meanings": ["library"],
     "examples": [
       { "japanese": "図書館で本を借りました。", "translation": "I borrowed a book at the library." }
+    ],
+    "notes": "図書館 = としょかん. Closed on Mondays in many towns.",
+    "forms": [
+      { "name": "ます-form", "value": "図書館に行きます" }
+    ]
+  },
+  {
+    "word": "食べる",
+    "kana": "たべる",
+    "pos": "verb",
+    "meanings": ["to eat"],
+    "notes": "Ichidan (る-verb).",
+    "forms": [
+      { "name": "Dictionary", "value": "食べる" },
+      { "name": "ます", "value": "食べます" },
+      { "name": "te", "value": "食べて" },
+      { "name": "ta", "value": "食べた" },
+      { "name": "nai", "value": "食べない" }
+    ],
+    "examples": [
+      { "japanese": "朝ごはんを食べました。", "translation": "I ate breakfast." }
     ]
   }
 ]`;

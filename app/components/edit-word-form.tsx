@@ -36,6 +36,12 @@ interface ExampleRow {
   translation: string;
 }
 
+interface FormRow {
+  id: string;
+  name: string;
+  value: string;
+}
+
 /** Lets the route's delete button submit this form from outside it. */
 export const WORD_EDIT_FORM_ID = "word-edit-form";
 
@@ -83,8 +89,17 @@ export function WordEditForm({
       translation: example.translation ?? "",
     }))
   );
+  const [notes, setNotes] = React.useState<string>(word.notes ?? "");
+  const [forms, setForms] = React.useState<FormRow[]>(() =>
+    word.forms.map((form, index) => ({
+      id: `f${index}`,
+      name: form.name,
+      value: form.value,
+    }))
+  );
   const nextMeaningId = React.useRef(meanings.length);
   const nextExampleId = React.useRef(examples.length);
+  const nextFormId = React.useRef(forms.length);
 
   if (!configured) {
     return (
@@ -106,6 +121,11 @@ export function WordEditForm({
       .filter((row) => row.japanese.trim().length > 0)
       .map((row) => ({ japanese: row.japanese, translation: row.translation }))
   );
+  const formsJson = JSON.stringify(
+    forms
+      .filter((row) => row.name.trim().length > 0 || row.value.trim().length > 0)
+      .map((row) => ({ name: row.name, value: row.value }))
+  );
 
   return (
     <div className="space-y-5">
@@ -113,6 +133,8 @@ export function WordEditForm({
         <input type="hidden" name="convexToken" value={token ?? ""} />
         <input type="hidden" name="meanings" value={meaningsValue} />
         <input type="hidden" name="examplesJson" value={examplesJson} />
+        <input type="hidden" name="notes" value={notes} />
+        <input type="hidden" name="formsJson" value={formsJson} />
 
         <Card>
           <CardContent className="grid gap-4 p-6 md:grid-cols-3">
@@ -259,6 +281,90 @@ export function WordEditForm({
                         }
                         placeholder="English translation (optional)"
                         aria-label={`Example ${index + 1} (translation)`}
+                      />
+                    </div>
+                  </ReorderRow>
+                ))}
+              </ReorderList>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Notes */}
+        <Card>
+          <CardContent className="space-y-3 p-6">
+            <p className="text-sm font-semibold">Notes</p>
+            <textarea
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Clarify readings, usage, mnemonics…"
+              name="notesInput"
+              aria-label="Notes"
+              rows={3}
+              maxLength={2000}
+              className="w-full resize-y rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primarylw/40"
+            />
+          </CardContent>
+        </Card>
+
+        {/* Conjugation forms */}
+        <Card>
+          <CardContent className="space-y-3 p-6">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">
+                Forms{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  (dictionary / masu / te / ta / nai …)
+                </span>
+              </p>
+              <button
+                type="button"
+                className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-primarylw hover:underline"
+                onClick={() =>
+                  setForms((prev) => [
+                    ...prev,
+                    { id: `f${nextFormId.current++}`, name: "", value: "" },
+                  ])
+                }
+              >
+                <Plus className="h-3.5 w-3.5" /> Add form
+              </button>
+            </div>
+            {forms.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No forms yet. e.g. ます-form → 食べます</p>
+            ) : (
+              <ReorderList values={forms} onReorder={setForms}>
+                {forms.map((row, index) => (
+                  <ReorderRow
+                    key={row.id}
+                    value={row}
+                    removeLabel={`Remove form ${index + 1}`}
+                    onRemove={() => setForms((prev) => prev.filter((item) => item.id !== row.id))}
+                  >
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Input
+                        value={row.name}
+                        onChange={(event) =>
+                          setForms((prev) =>
+                            prev.map((item) =>
+                              item.id === row.id ? { ...item, name: event.target.value } : item
+                            )
+                          )
+                        }
+                        placeholder="Form name (ます, te, …)"
+                        aria-label={`Form ${index + 1} (name)`}
+                      />
+                      <Input
+                        value={row.value}
+                        onChange={(event) =>
+                          setForms((prev) =>
+                            prev.map((item) =>
+                              item.id === row.id ? { ...item, value: event.target.value } : item
+                            )
+                          )
+                        }
+                        placeholder="Form (食べます)"
+                        aria-label={`Form ${index + 1} (value)`}
                       />
                     </div>
                   </ReorderRow>

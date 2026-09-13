@@ -3,10 +3,10 @@ import { BookMarked, BookOpenText, Plus, Sparkles } from "lucide-react";
 
 import type { Route } from "./+types/rules";
 import { listAllRuleTags, listRules } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { isConvexClientConfigured } from "~/components/convex-provider";
 import { ImportantStar } from "~/components/important-star";
 import { SignedInOnly } from "~/components/signed-in-only";
-import { AdminOnly } from "~/components/admin-only";
 import { PageHeader } from "~/components/page-header";
 import { SearchBar } from "~/components/search-bar";
 import { Badge } from "~/components/lightswind/badge";
@@ -40,17 +40,19 @@ function rulesHref({ kind, q, tag, page }: RuleFilters): string {
   return s ? `/rules?${s}` : "/rules";
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const kindParam = url.searchParams.get("kind");
   const kind = kindParam === "word" || kindParam === "sentence" ? kindParam : null;
   const search = url.searchParams.get("q")?.trim() || null;
   const tag = url.searchParams.get("tag")?.trim() || null;
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
 
   const [rules, tags] = await Promise.all([
-    listRules(kind, Number.isNaN(page) ? 1 : page, search, tag),
-    listAllRuleTags(),
+    listRules(ownerId, kind, Number.isNaN(page) ? 1 : page, search, tag),
+    listAllRuleTags(ownerId),
   ]);
   return { rules, tags, kind, search, tag };
 }
@@ -76,16 +78,12 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
         description={`${loaderData.rules.total} grammar rule${loaderData.rules.total === 1 ? "" : "s"} with example sentences and their English equivalents`}
         actions={
           <>
-            {configured && (
-              <AdminOnly>
-                <Link
-                  to="/rules/new"
-                  className="inline-flex h-10 items-center gap-2 rounded-full bg-primarylw px-6 text-sm font-medium text-white shadow transition-colors hover:bg-primarylw-2"
-                >
-                  <Plus className="h-4 w-4" /> Add rule
-                </Link>
-              </AdminOnly>
-            )}
+            <Link
+              to="/rules/new"
+              className="inline-flex h-10 items-center gap-2 rounded-full bg-primarylw px-6 text-sm font-medium text-white shadow transition-colors hover:bg-primarylw-2"
+            >
+              <Plus className="h-4 w-4" /> Add rule
+            </Link>
           </>
         }
       />
@@ -124,7 +122,7 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
             No rules found{q ? ` for “${q}”` : ""}
-            {tag ? ` tagged #${tag}` : ""}. Admins can add the first one.
+            {tag ? ` tagged #${tag}` : ""}. Add the first one.
           </CardContent>
         </Card>
       ) : (

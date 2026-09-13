@@ -1,7 +1,7 @@
 import type { Route } from "./+types/rule-new";
-import { guardAdminAction, readFormToken } from "~/lib/auth.server";
 import { createRule, listRuleOptions } from "~/lib/db.server";
 import { draftToRulePayload, readRuleDrafts } from "~/lib/rule-draft";
+import { ownerContext } from "~/lib/owner.server";
 import { RulesCreateForm, type RuleFormActionData } from "~/components/rule-form";
 import { PageHeader } from "~/components/page-header";
 
@@ -10,22 +10,24 @@ export function meta({}: Route.MetaArgs) {
 }
 
 /** The existing rules, so the form can offer them as "related rules". */
-export async function loader() {
-  return { ruleOptions: await listRuleOptions() };
+export async function loader({ context }: Route.LoaderArgs) {
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  return { ruleOptions: await listRuleOptions(ownerId) };
 }
 
 /**
  * Creates every rule the form holds — the create page keeps one rule per
  * accordion panel, so a single submission can add several. The JSON importer
  * fills those panels client-side; whatever ends up in `rulesJson` is what gets
- * validated and written here.
+ * validated and written here. Rules are private to the submitting owner.
  */
-export async function action({ request }: Route.ActionArgs): Promise<RuleFormActionData> {
+export async function action({ request, context }: Route.ActionArgs): Promise<RuleFormActionData> {
   const form = await request.formData();
 
-  const guard = await guardAdminAction(request, readFormToken(form));
-  if (!guard.ok) {
-    return { ok: false, error: guard.message };
+  const owner = context.get(ownerContext);
+  if (!owner) {
+    return { ok: false, error: "Could not identify your library." };
   }
 
   const raw = typeof form.get("rulesJson") === "string" ? (form.get("rulesJson") as string) : "";
@@ -44,7 +46,7 @@ export async function action({ request }: Route.ActionArgs): Promise<RuleFormAct
       continue;
     }
     try {
-      await createRule(payload.payload, guard.user.id);
+      await createRule(owner.ownerId, payload.payload);
       created += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown database error";

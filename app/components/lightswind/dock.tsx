@@ -17,7 +17,8 @@ import { cn } from "~/lib/utils";
  * macOS-style dock whose items grow as the pointer approaches. Adapted so each
  * item is a *category*: tapping it opens a popover listing that category's
  * pages, which keeps the dock to five readable buttons on a phone instead of
- * squeezing every route in. Categories with a single page link straight to it.
+ * squeezing every route in. A category with a single page links straight to it
+ * rather than opening a one-item popover.
  */
 
 export interface DockCategoryLink {
@@ -105,8 +106,9 @@ function DockEntry({
   const Icon = category.icon;
   const single = category.links.length === 1;
 
-  // A one-page category (Study) is a plain link — a popover for a single item
-  // would just be an extra tap.
+  // A one-page category is a plain link — a popover for a single item would
+  // just be an extra tap. No category is that small today (Study gained
+  // Flashcards + Quizzes), but the shorthand stays for any that becomes one.
   const highlight = active || (open && !single);
   const className = cn(
     itemClasses,

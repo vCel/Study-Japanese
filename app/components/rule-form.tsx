@@ -60,6 +60,7 @@ export const RULES_SAMPLE_JSON = `[
     "title": "Polite て-form",
     "points": ["Verb て-form", "Drop ます and add て"],
     "explanation": "The て-form connects clauses and forms requests.",
+    "notes": "The て-form has several uses — this rule covers the request usage only.",
     "examples": [
       { "japanese": "食べてください。", "english": "Please eat." }
     ]
@@ -133,6 +134,7 @@ function toRuleDraft(draft: Draft): RuleDraft {
       english: example.english,
     })),
     relatedIds: draft.relatedIds,
+    notes: draft.notes,
   };
 }
 
@@ -327,6 +329,8 @@ function RuleFields({
         ))}
       </RuleGroup>
 
+      {/* Explanation + notes share one group — both are free-text, so keeping
+          them apart added a divider without separating anything real. */}
       <RuleGroup flat={flat} className="space-y-3">
         <Label htmlFor={id("explanation")}>Explanation *</Label>
         <Textarea
@@ -336,6 +340,17 @@ function RuleFields({
           required
           maxLength={2000}
           placeholder="Explain the rule in plain English…"
+          className="resize-y font-sans text-sm"
+        />
+        <Label htmlFor={id("notes")} className="pt-1">
+          Notes (optional)
+        </Label>
+        <Textarea
+          id={id("notes")}
+          value={draft.notes}
+          onChange={(event) => onChange({ notes: event.target.value })}
+          maxLength={2000}
+          placeholder="Add clarifications, exceptions, mnemonics…"
           className="resize-y font-sans text-sm"
         />
       </RuleGroup>
@@ -675,6 +690,7 @@ export function RuleForm({
       tags: rule.tags.join(", "),
       examples: rule.examples,
       relatedIds: rule.related.map((related) => related.id),
+      notes: rule.notes ?? "",
     })
   );
 

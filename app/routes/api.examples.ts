@@ -14,6 +14,6 @@ export async function loader({ request }: Route.LoaderArgs): Promise<Response> {
   const url = new URL(request.url);
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
 
-  const result = await listExamples(Number.isNaN(page) ? 1 : page);
+  const result = await listExamples(guard.user.id, Number.isNaN(page) ? 1 : page);
   return Response.json({ requestedBy: guard.user.id, ...result });
 }

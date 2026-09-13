@@ -3,9 +3,8 @@ import { BookOpen, Languages, Pencil } from "lucide-react";
 
 import type { Route } from "./+types/rule-detail";
 import { getRule } from "~/lib/db.server";
-import { isConvexClientConfigured } from "~/components/convex-provider";
+import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
-import { AdminOnly } from "~/components/admin-only";
 import { Badge } from "~/components/lightswind/badge";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/lightswind/card";
@@ -15,12 +14,14 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Rule · 日本語Vocab" }];
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, context }: Route.LoaderArgs) {
   const id = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(id)) {
     throw new Response("Invalid rule id", { status: 400 });
   }
-  const rule = await getRule(id);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  const rule = await getRule(ownerId, id);
   if (!rule) {
     throw new Response("Rule not found", { status: 404 });
   }
@@ -29,7 +30,6 @@ export async function loader({ params }: Route.LoaderArgs) {
 
 export default function RuleDetail({ loaderData }: Route.ComponentProps) {
   const { rule } = loaderData;
-  const configured = isConvexClientConfigured();
   const englishExamples = rule.examples.filter((example) => example.english.trim().length > 0);
 
   return (
@@ -60,16 +60,12 @@ export default function RuleDetail({ loaderData }: Route.ComponentProps) {
         }
         actions={
           <>
-            {configured && (
-              <AdminOnly>
-                <Link
-                  to={`/rules/${rule.id}/edit`}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border px-5 text-sm font-medium transition-colors hover:border-primarylw/40 hover:bg-muted"
-                >
-                  <Pencil className="h-4 w-4" /> Edit rule
-                </Link>
-              </AdminOnly>
-            )}
+            <Link
+              to={`/rules/${rule.id}/edit`}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border px-5 text-sm font-medium transition-colors hover:border-primarylw/40 hover:bg-muted"
+            >
+              <Pencil className="h-4 w-4" /> Edit rule
+            </Link>
           </>
         }
       />
@@ -85,6 +81,19 @@ export default function RuleDetail({ loaderData }: Route.ComponentProps) {
           ))}
         </CardContent>
       </Card>
+
+      {rule.notes && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-lg">Notes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+              {rule.notes}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

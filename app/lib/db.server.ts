@@ -12,6 +12,17 @@ export interface WordRow {
   pos: string | null;
 }
 
+/**
+ * One conjugation form of a word, e.g. dictionary / ます / て / た / ない.
+ * Stored as a JSON array in `words.forms`, in display order.
+ */
+export interface WordForm {
+  /** The form name, e.g. "ます" / "te-form" / "negative". */
+  name: string;
+  /** The form itself, e.g. "食べます". */
+  value: string;
+}
+
 /** Word as exposed to the UI. */
 export interface WordSummary {
   id: number;
@@ -45,6 +56,10 @@ export interface WordDetail extends WordSummary {
   createdBy: string | null;
   /** Convex user id of the author of the list this word belongs to (if any). */
   listAuthor: string | null;
+  /** Free-text notes about this word (null = none). */
+  notes: string | null;
+  /** Conjugation forms, in display order (empty = none). */
+  forms: WordForm[];
 }
 
 /**
@@ -79,16 +94,32 @@ export interface Stats {
 
 const PAGE_SIZE = 24;
 
+/** A word can carry at most this many conjugation forms. */
+const MAX_WORD_FORMS = 12;
+
 function getDb(): D1Database {
   return env.DB;
 }
 
-export async function getStats(): Promise<Stats> {
+export async function getStats(ownerId: string): Promise<Stats> {
   const db = getDb();
   const [words, examples, lists] = await Promise.all([
-    db.prepare("SELECT COUNT(*) AS n FROM words").first<{ n: number }>(),
-    db.prepare("SELECT COUNT(*) AS n FROM examples").first<{ n: number }>(),
-    db.prepare("SELECT COUNT(*) AS n FROM word_lists").first<{ n: number }>(),
+    db
+      .prepare("SELECT COUNT(*) AS n FROM words WHERE owner_id = ?1")
+      .bind(ownerId)
+      .first<{ n: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM examples e
+         JOIN words w ON w.id = e.word_id
+         WHERE w.owner_id = ?1`
+      )
+      .bind(ownerId)
+      .first<{ n: number }>(),
+    db
+      .prepare("SELECT COUNT(*) AS n FROM word_lists WHERE owner_id = ?1")
+      .bind(ownerId)
+      .first<{ n: number }>(),
   ]);
   return {
     words: words?.n ?? 0,
@@ -97,28 +128,322 @@ export async function getStats(): Promise<Stats> {
   };
 }
 
+/**
+ * Whether the owner has any content at all (words, lists or rules). Used by
+ * onboarding to decide whether to offer the starter pack.
+ */
+export async function hasContent(ownerId: string): Promise<boolean> {
+  const db = getDb();
+  const [words, lists, rules] = await Promise.all([
+    db
+      .prepare("SELECT 1 FROM words WHERE owner_id = ?1 LIMIT 1")
+      .bind(ownerId)
+      .first(),
+    db
+      .prepare("SELECT 1 FROM word_lists WHERE owner_id = ?1 LIMIT 1")
+      .bind(ownerId)
+      .first(),
+    db
+      .prepare("SELECT 1 FROM rules WHERE owner_id = ?1 LIMIT 1")
+      .bind(ownerId)
+      .first(),
+  ]);
+  return Boolean(words || lists || rules);
+}
+
+/** The owner's onboarding choice (null = not chosen yet). */
+export async function getStarterChoice(ownerId: string): Promise<boolean | null> {
+  const db = getDb();
+  const row = await db
+    .prepare("SELECT starter_chosen FROM owner_prefs WHERE owner_id = ?1")
+    .bind(ownerId)
+    .first<{ starter_chosen: number }>();
+  if (!row) return null;
+  return row.starter_chosen === 1;
+}
+
+/** Record the owner's onboarding choice so the prompt never returns. */
+export async function setStarterChoice(ownerId: string, choseStarter: boolean): Promise<void> {
+  const db = getDb();
+  await db
+    .prepare(
+      `INSERT INTO owner_prefs (owner_id, starter_chosen, updated_at)
+       VALUES (?1, ?2, unixepoch())
+       ON CONFLICT(owner_id) DO UPDATE SET starter_chosen = ?2, updated_at = unixepoch()`
+    )
+    .bind(ownerId, choseStarter ? 1 : 0)
+    .run();
+}
+
+/**
+ * Copy the template (owner_id NULL) rows — the seeded starter pack — into the
+ * given owner's namespace. New ids are minted for the copied rows; children
+ * (meanings, examples, tags, related rules) follow their parent.
+ */
+export async function copyStarterPack(ownerId: string): Promise<{
+  lists: number;
+  words: number;
+  rules: number;
+}> {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+
+  // 1. Copy word lists, keeping a map old id -> new id.
+  const templateLists = await db
+    .prepare("SELECT id, title, description, created_at FROM word_lists WHERE owner_id IS NULL")
+    .all<{ id: number; title: string; description: string | null; created_at: number }>();
+  const listIdMap = new Map<number, number>();
+  const listStatements: D1PreparedStatement[] = [];
+  for (const list of templateLists.results ?? []) {
+    listStatements.push(
+      db
+        .prepare(
+          "INSERT INTO word_lists (title, description, created_by, created_at, owner_id) VALUES (?1, ?2, ?3, ?4, ?5)"
+        )
+        .bind(list.title, list.description, ownerId, list.created_at || now, ownerId)
+    );
+  }
+  if (listStatements.length > 0) {
+    const inserted = await db.batch(listStatements);
+    templateLists.results?.forEach((list, index) => {
+      listIdMap.set(list.id, inserted[index]?.meta.last_row_id ?? 0);
+    });
+  }
+
+  // 2. Copy words (owner NULL), then their meanings and examples.
+  const templateWords = await db
+    .prepare(
+      "SELECT id, word, kana, created_at, pos, list_id, important, notes, forms FROM words WHERE owner_id IS NULL"
+    )
+    .all<{
+      id: number;
+      word: string;
+      kana: string;
+      created_at: number;
+      pos: string | null;
+      list_id: number | null;
+      important: number;
+      notes: string | null;
+      forms: string | null;
+    }>();
+  const wordIdMap = new Map<number, number>();
+  const wordStatements: D1PreparedStatement[] = [];
+  for (const word of templateWords.results ?? []) {
+    const newListId = word.list_id === null ? null : (listIdMap.get(word.list_id) ?? null);
+    wordStatements.push(
+      db
+        .prepare(
+          "INSERT INTO words (word, kana, created_by, created_at, pos, list_id, important, notes, forms, owner_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+        )
+        .bind(
+          word.word,
+          word.kana,
+          ownerId,
+          word.created_at || now,
+          word.pos,
+          newListId,
+          word.important ?? 0,
+          word.notes ?? null,
+          word.forms ?? null,
+          ownerId
+        )
+    );
+  }
+  if (wordStatements.length > 0) {
+    const inserted = await db.batch(wordStatements);
+    templateWords.results?.forEach((word, index) => {
+      wordIdMap.set(word.id, inserted[index]?.meta.last_row_id ?? 0);
+    });
+  }
+
+  // 3. Copy meanings + examples for the copied words.
+  const childStatements: D1PreparedStatement[] = [];
+  for (const [oldWordId, newWordId] of wordIdMap) {
+    if (!newWordId) continue;
+    const meanings = await db
+      .prepare("SELECT meaning FROM meanings WHERE word_id = ?1")
+      .bind(oldWordId)
+      .all<{ meaning: string }>();
+    for (const row of meanings.results ?? []) {
+      childStatements.push(
+        db
+          .prepare("INSERT INTO meanings (word_id, meaning) VALUES (?1, ?2)")
+          .bind(newWordId, row.meaning)
+      );
+    }
+    const examples = await db
+      .prepare("SELECT japanese, translation FROM examples WHERE word_id = ?1")
+      .bind(oldWordId)
+      .all<{ japanese: string; translation: string | null }>();
+    for (const row of examples.results ?? []) {
+      childStatements.push(
+        db
+          .prepare("INSERT INTO examples (word_id, japanese, translation) VALUES (?1, ?2, ?3)")
+          .bind(newWordId, row.japanese, row.translation)
+      );
+    }
+  }
+
+  // 4. Copy word-list tags (tags names are global; links point to the new list).
+  for (const [oldListId, newListId] of listIdMap) {
+    if (!newListId) continue;
+    const links = await db
+      .prepare("SELECT tag_id FROM word_list_tags WHERE list_id = ?1")
+      .bind(oldListId)
+      .all<{ tag_id: number }>();
+    for (const row of links.results ?? []) {
+      childStatements.push(
+        db
+          .prepare("INSERT OR IGNORE INTO word_list_tags (list_id, tag_id) VALUES (?1, ?2)")
+          .bind(newListId, row.tag_id)
+      );
+    }
+  }
+
+  // 5. Copy rules, then their examples, tags and related-rule links.
+  const templateRules = await db
+    .prepare(
+      "SELECT id, kind, title, explanation, pattern, points, notes, created_at, important FROM rules WHERE owner_id IS NULL"
+    )
+    .all<{
+      id: number;
+      kind: "word" | "sentence";
+      title: string;
+      explanation: string;
+      pattern: string | null;
+      points: string | null;
+      notes: string | null;
+      created_at: number;
+      important: number;
+    }>();
+  const ruleIdMap = new Map<number, number>();
+  const ruleStatements: D1PreparedStatement[] = [];
+  for (const rule of templateRules.results ?? []) {
+    ruleStatements.push(
+      db
+        .prepare(
+          "INSERT INTO rules (kind, title, explanation, pattern, points, notes, created_by, created_at, important, owner_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+        )
+        .bind(
+          rule.kind,
+          rule.title,
+          rule.explanation,
+          rule.pattern,
+          rule.points,
+          rule.notes ?? null,
+          ownerId,
+          rule.created_at || now,
+          rule.important ?? 0,
+          ownerId
+        )
+    );
+  }
+  if (ruleStatements.length > 0) {
+    const inserted = await db.batch(ruleStatements);
+    templateRules.results?.forEach((rule, index) => {
+      ruleIdMap.set(rule.id, inserted[index]?.meta.last_row_id ?? 0);
+    });
+  }
+
+  for (const [oldRuleId, newRuleId] of ruleIdMap) {
+    if (!newRuleId) continue;
+    const examples = await db
+      .prepare("SELECT japanese, english FROM rule_examples WHERE rule_id = ?1")
+      .bind(oldRuleId)
+      .all<{ japanese: string; english: string }>();
+    for (const row of examples.results ?? []) {
+      childStatements.push(
+        db
+          .prepare("INSERT INTO rule_examples (rule_id, japanese, english) VALUES (?1, ?2, ?3)")
+          .bind(newRuleId, row.japanese, row.english)
+      );
+    }
+    const tagLinks = await db
+      .prepare("SELECT tag_id FROM rule_tags WHERE rule_id = ?1")
+      .bind(oldRuleId)
+      .all<{ tag_id: number }>();
+    for (const row of tagLinks.results ?? []) {
+      childStatements.push(
+        db
+          .prepare("INSERT OR IGNORE INTO rule_tags (rule_id, tag_id) VALUES (?1, ?2)")
+          .bind(newRuleId, row.tag_id)
+      );
+    }
+    const related = await db
+      .prepare("SELECT related_rule_id FROM rule_related WHERE rule_id = ?1")
+      .bind(oldRuleId)
+      .all<{ related_rule_id: number }>();
+    for (const row of related.results ?? []) {
+      const newRelatedId = ruleIdMap.get(row.related_rule_id);
+      if (newRelatedId && newRelatedId !== newRuleId) {
+        childStatements.push(
+          db
+            .prepare("INSERT OR IGNORE INTO rule_related (rule_id, related_rule_id) VALUES (?1, ?2)")
+            .bind(newRuleId, newRelatedId)
+        );
+      }
+    }
+  }
+
+  if (childStatements.length > 0) {
+    await db.batch(childStatements);
+  }
+
+  await setStarterChoice(ownerId, true);
+  return {
+    lists: listIdMap.size,
+    words: wordIdMap.size,
+    rules: ruleIdMap.size,
+  };
+}
+
+/**
+ * Move every content row owned by `fromOwner` (a signed-out device id) to
+ * `toOwner` (the account that just signed in). Children follow their parent
+ * rows. Returns the number of moved top-level rows.
+ */
+export async function reownerContent(fromOwner: string, toOwner: string): Promise<number> {
+  const db = getDb();
+  const [words, lists, rules] = await Promise.all([
+    db
+      .prepare("UPDATE words SET owner_id = ?1, created_by = ?1 WHERE owner_id = ?2")
+      .bind(toOwner, fromOwner)
+      .run(),
+    db
+      .prepare("UPDATE word_lists SET owner_id = ?1, created_by = ?1 WHERE owner_id = ?2")
+      .bind(toOwner, fromOwner)
+      .run(),
+    db
+      .prepare("UPDATE rules SET owner_id = ?1, created_by = ?1 WHERE owner_id = ?2")
+      .bind(toOwner, fromOwner)
+      .run(),
+  ]);
+  return (
+    (words.meta.changes ?? 0) + (lists.meta.changes ?? 0) + (rules.meta.changes ?? 0)
+  );
+}
+
 export async function listWords(
+  ownerId: string,
   search: string | null,
   page: number,
   pos?: string | null,
   excludePos?: string | null
 ): Promise<Paginated<WordSummary>> {
   const db = getDb();
-  const params: (string | number)[] = [];
-  let clause = "";
+  const params: (string | number)[] = [ownerId];
+  let clause = "WHERE w.owner_id = ?";
   if (search) {
     const like = `%${search}%`;
     params.push(like, like);
-    clause = "WHERE (w.word LIKE ? OR w.kana LIKE ?)";
+    clause += " AND (w.word LIKE ? OR w.kana LIKE ?)";
   }
   if (pos) {
-    clause += clause ? " AND w.pos = ?" : "WHERE w.pos = ?";
+    clause += " AND w.pos = ?";
     params.push(pos);
   }
   if (excludePos) {
-    clause += clause
-      ? " AND (w.pos IS NULL OR w.pos <> ?)"
-      : "WHERE (w.pos IS NULL OR w.pos <> ?)";
+    clause += " AND (w.pos IS NULL OR w.pos <> ?)";
     params.push(excludePos);
   }
 
@@ -161,19 +486,60 @@ export async function listWords(
   };
 }
 
-export async function getWord(id: number): Promise<WordDetail | null> {
+/** Parse the `words.forms` JSON column, tolerating a null/empty value. */
+function parseWordForms(raw: string | null): WordForm[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is { name?: unknown; value?: unknown } =>
+          !!item && typeof item === "object"
+      )
+      .map((item) => ({
+        name: typeof item.name === "string" ? item.name.trim() : "",
+        value: typeof item.value === "string" ? item.value.trim() : "",
+      }))
+      .filter((form) => form.name.length > 0 || form.value.length > 0)
+      .slice(0, MAX_WORD_FORMS);
+  } catch {
+    return [];
+  }
+}
+
+/** Serialize forms back into the `words.forms` JSON column (null when empty). */
+function serializeWordForms(forms: WordForm[]): string | null {
+  const list = forms
+    .map((form) => ({
+      name: form.name.trim(),
+      value: form.value.trim(),
+    }))
+    .filter((form) => form.name.length > 0 || form.value.length > 0)
+    .slice(0, MAX_WORD_FORMS);
+  return list.length > 0 ? JSON.stringify(list) : null;
+}
+
+export async function getWord(ownerId: string, id: number): Promise<WordDetail | null> {
   const db = getDb();
   const row = await db
     .prepare(
       `SELECT w.id, w.word, w.kana, w.created_by, w.created_at, w.pos, w.list_id,
+              w.notes, w.forms,
               l.title AS list_title, l.created_by AS list_author
        FROM words w
        LEFT JOIN word_lists l ON l.id = w.list_id
-       WHERE w.id = ?1`
+       WHERE w.id = ?1 AND w.owner_id = ?2`
     )
-    .bind(id)
+    .bind(id, ownerId)
     .first<
-      WordRow & { list_id: number | null; list_title: string | null; list_author: string | null }
+      WordRow & {
+        list_id: number | null;
+        list_title: string | null;
+        list_author: string | null;
+        notes: string | null;
+        forms: string | null;
+      }
     >();
   if (!row) return null;
 
@@ -201,14 +567,23 @@ export async function getWord(id: number): Promise<WordDetail | null> {
     listId: row.list_id,
     listTitle: row.list_title,
     listAuthor: row.list_author,
+    notes: row.notes,
+    forms: parseWordForms(row.forms),
   };
 }
 
-export async function listExamples(page: number): Promise<Paginated<ExampleItem>> {
+export async function listExamples(ownerId: string, page: number): Promise<Paginated<ExampleItem>> {
   const db = getDb();
   const PAGE = 20;
 
-  const totalResult = await db.prepare("SELECT COUNT(*) AS n FROM examples").first<{ n: number }>();
+  const totalResult = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM examples e
+       JOIN words w ON w.id = e.word_id
+       WHERE w.owner_id = ?1`
+    )
+    .bind(ownerId)
+    .first<{ n: number }>();
   const total = totalResult?.n ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE));
   const safePage = Math.min(Math.max(1, page), pages);
@@ -219,10 +594,11 @@ export async function listExamples(page: number): Promise<Paginated<ExampleItem>
       `SELECT e.id, e.japanese, e.translation, e.word_id, w.word, w.kana
        FROM examples e
        JOIN words w ON w.id = e.word_id
+       WHERE w.owner_id = ?1
        ORDER BY e.id ASC
-       LIMIT ?1 OFFSET ?2`
+       LIMIT ?2 OFFSET ?3`
     )
-    .bind(PAGE, offset)
+    .bind(ownerId, PAGE, offset)
     .all<ExampleItem>();
 
   return {
@@ -235,15 +611,17 @@ export async function listExamples(page: number): Promise<Paginated<ExampleItem>
 }
 
 /** All word lists with tags and word counts (no pagination — for the study setup page). */
-export async function listAllLists(): Promise<WordListSummary[]> {
+export async function listAllLists(ownerId: string): Promise<WordListSummary[]> {
   const db = getDb();
   const { results } = await db
     .prepare(
       `SELECT wl.id, wl.title, wl.description, wl.created_by, wl.created_at,
               (SELECT COUNT(*) FROM words w WHERE w.list_id = wl.id) AS word_count
        FROM word_lists wl
+       WHERE wl.owner_id = ?1
        ORDER BY wl.created_at DESC, wl.id DESC`
     )
+    .bind(ownerId)
     .all<{ id: number; title: string; description: string | null; created_by: string | null; created_at: number; word_count: number }>();
 
   const lists = results ?? [];
@@ -261,7 +639,7 @@ export async function listAllLists(): Promise<WordListSummary[]> {
 }
 
 /** Ids of lists carrying ANY of the given tag names. */
-export async function listIdsByTags(tagNames: string[]): Promise<number[]> {
+export async function listIdsByTags(ownerId: string, tagNames: string[]): Promise<number[]> {
   if (tagNames.length === 0) return [];
   const db = getDb();
   const placeholders = tagNames.map(() => "?").join(", ");
@@ -270,17 +648,21 @@ export async function listIdsByTags(tagNames: string[]): Promise<number[]> {
       `SELECT DISTINCT wlt.list_id AS id
        FROM word_list_tags wlt
        JOIN tags t ON t.id = wlt.tag_id
-       WHERE t.name IN (${placeholders})`
+       JOIN word_lists wl ON wl.id = wlt.list_id
+       WHERE wl.owner_id = ?1 AND t.name IN (${placeholders})`
     )
-    .bind(...tagNames)
+    .bind(ownerId, ...tagNames)
     .all<{ id: number }>();
   return (results ?? []).map((r) => r.id);
 }
 
-/** Ids of every word list. */
-export async function listAllListIds(): Promise<number[]> {
+/** Ids of every word list belonging to the owner. */
+export async function listAllListIds(ownerId: string): Promise<number[]> {
   const db = getDb();
-  const { results } = await db.prepare("SELECT id FROM word_lists").all<{ id: number }>();
+  const { results } = await db
+    .prepare("SELECT id FROM word_lists WHERE owner_id = ?1")
+    .bind(ownerId)
+    .all<{ id: number }>();
   return (results ?? []).map((r) => r.id);
 }
 
@@ -311,9 +693,9 @@ export interface StudyLibrary {
  * Nothing here knows about stars: starring is per-user and lives in Convex, so
  * the study UI layers it on client-side.
  */
-export async function listStudyLists(): Promise<StudyLibrary> {
+export async function listStudyLists(ownerId: string): Promise<StudyLibrary> {
   const db = getDb();
-  const lists = await listAllLists();
+  const lists = await listAllLists(ownerId);
 
   const { results } = await db
     .prepare(
@@ -321,9 +703,10 @@ export async function listStudyLists(): Promise<StudyLibrary> {
               SUM(CASE WHEN pos = 'phrase' THEN 1 ELSE 0 END) AS phrases,
               SUM(CASE WHEN pos IS NULL OR pos <> 'phrase' THEN 1 ELSE 0 END) AS words
        FROM words
-       WHERE list_id IS NOT NULL
+       WHERE list_id IS NOT NULL AND owner_id = ?1
        GROUP BY list_id`
     )
+    .bind(ownerId)
     .all<{ id: number; phrases: number; words: number }>();
 
   const counts = new Map((results ?? []).map((row) => [row.id, row]));
@@ -369,6 +752,7 @@ function ruleTagClause(tags: string[] | null | undefined, params: (string | numb
 
 /** How many cards of the given kind exist across the given lists. */
 export async function countWordsInLists(
+  ownerId: string,
   listIds: number[],
   pos?: string | null,
   kind: StudyListKind = "words",
@@ -377,23 +761,23 @@ export async function countWordsInLists(
   if (listIds.length === 0) return 0;
   const db = getDb();
   const placeholders = listIds.map(() => "?").join(", ");
-  const params: (string | number)[] = [...listIds];
-  let clause = studyKindClause(kind);
+  const params: (string | number)[] = [ownerId, ...listIds];
+  let clause = `owner_id = ? AND list_id IN (${placeholders}) AND ${studyKindClause(kind)}`;
   if (pos) {
     clause += " AND pos = ?";
     params.push(pos);
   }
   const idClause = cardIdClause(starredIds, params);
   if (idClause) clause += ` AND ${idClause}`;
-  // Parameters are the list ids (for the IN clause), then the optional
-  // part-of-speech filter, then the optional starred-id filter.
   const row = await db
-    .prepare(`SELECT COUNT(*) AS n FROM words WHERE list_id IN (${placeholders}) AND ${clause}`)
+    .prepare(`SELECT COUNT(*) AS n FROM words WHERE ${clause}`)
     .bind(...params)
     .first<{ n: number }>();
   return row?.n ?? 0;
 }
+
 export async function getStudyDeck(
+  ownerId: string,
   listIds: number[],
   limit = 40,
   pos?: string | null,
@@ -404,8 +788,8 @@ export async function getStudyDeck(
   if (listIds.length === 0) return [];
 
   const placeholders = listIds.map(() => "?").join(", ");
-  const params: (string | number)[] = [...listIds];
-  let clause = studyKindClause(kind);
+  const params: (string | number)[] = [ownerId, ...listIds];
+  let clause = `owner_id = ? AND list_id IN (${placeholders}) AND ${studyKindClause(kind)}`;
   if (pos) {
     clause += " AND pos = ?";
     params.push(pos);
@@ -413,13 +797,11 @@ export async function getStudyDeck(
   const idClause = cardIdClause(starredIds, params);
   if (idClause) clause += ` AND ${idClause}`;
   const { results } = await db
-    .prepare(
-      `SELECT id FROM words WHERE list_id IN (${placeholders}) AND ${clause} ORDER BY RANDOM() LIMIT ?`
-    )
+    .prepare(`SELECT id FROM words WHERE ${clause} ORDER BY RANDOM() LIMIT ?`)
     .bind(...params, limit)
     .all<{ id: number }>();
   const ids = (results ?? []).map((r) => r.id);
-  const details = await Promise.all(ids.map((id) => getWord(id)));
+  const details = await Promise.all(ids.map((id) => getWord(ownerId, id)));
   return details.filter((d): d is WordDetail => d !== null);
 }
 
@@ -431,15 +813,17 @@ export interface InsertResult {
 
 /** Create a word list and attach (creating if needed) the given tag names. */
 export async function createWordList(
+  ownerId: string,
   title: string,
   description: string | null,
-  createdBy: string | null,
   tags: string[]
 ): Promise<number> {
   const db = getDb();
   const listResult = await db
-    .prepare("INSERT INTO word_lists (title, description, created_by) VALUES (?1, ?2, ?3)")
-    .bind(title, description, createdBy)
+    .prepare(
+      "INSERT INTO word_lists (title, description, created_by, owner_id) VALUES (?1, ?2, ?3, ?4)"
+    )
+    .bind(title, description, ownerId, ownerId)
     .run();
   const listId = listResult.meta.last_row_id;
 
@@ -489,29 +873,26 @@ async function loadTagsForLists(db: D1Database, listIds: number[]): Promise<Map<
 const LIST_PAGE_SIZE = 12;
 
 export async function listWordLists(
+  ownerId: string,
   page: number,
   tag?: string | null,
   pos?: string | null,
   excludePos?: string | null
 ): Promise<Paginated<WordListSummary>> {
   const db = getDb();
-  const params: (string | number)[] = [];
-  let clause = "";
+  const params: (string | number)[] = [ownerId];
+  let clause = "WHERE wl.owner_id = ?";
   if (tag) {
     params.push(`%${tag.toLowerCase()}%`);
-    clause =
-      "WHERE EXISTS (SELECT 1 FROM word_list_tags wlt JOIN tags t ON t.id = wlt.tag_id WHERE wlt.list_id = wl.id AND t.name LIKE ?)";
+    clause +=
+      " AND EXISTS (SELECT 1 FROM word_list_tags wlt JOIN tags t ON t.id = wlt.tag_id WHERE wlt.list_id = wl.id AND t.name LIKE ?)";
   }
   if (pos) {
-    clause += clause
-      ? " AND EXISTS (SELECT 1 FROM words w WHERE w.list_id = wl.id AND w.pos = ?)"
-      : "WHERE EXISTS (SELECT 1 FROM words w WHERE w.list_id = wl.id AND w.pos = ?)";
+    clause += " AND EXISTS (SELECT 1 FROM words w WHERE w.list_id = wl.id AND w.pos = ?)";
     params.push(pos);
   }
   if (excludePos) {
-    clause += clause
-      ? " AND NOT EXISTS (SELECT 1 FROM words w WHERE w.list_id = wl.id AND w.pos = ?)"
-      : "WHERE NOT EXISTS (SELECT 1 FROM words w WHERE w.list_id = wl.id AND w.pos = ?)";
+    clause += " AND NOT EXISTS (SELECT 1 FROM words w WHERE w.list_id = wl.id AND w.pos = ?)";
     params.push(excludePos);
   }
 
@@ -580,31 +961,39 @@ async function cachedLookup<T>(key: string, load: () => Promise<T>): Promise<T> 
   return value;
 }
 
-/** All tags with how many word lists use them — powers the tag search UI. */
-export async function listAllTags(): Promise<TagInfo[]> {
-  return cachedLookup("listAllTags", async () => {
+/**
+ * All tags used by the owner's word lists, with list counts — powers the tag
+ * search UI. Scoped to the owner so tag usage never leaks across accounts.
+ */
+export async function listAllTags(ownerId: string): Promise<TagInfo[]> {
+  return cachedLookup(`listAllTags:${ownerId}`, async () => {
     const db = getDb();
     const { results } = await db
       .prepare(
         `SELECT t.name, COUNT(wlt.list_id) AS list_count
          FROM tags t
          JOIN word_list_tags wlt ON wlt.tag_id = t.id
+         JOIN word_lists wl ON wl.id = wlt.list_id
+         WHERE wl.owner_id = ?1
          GROUP BY t.id
          ORDER BY list_count DESC, t.name ASC`
       )
+      .bind(ownerId)
       .all<{ name: string; list_count: number }>();
     return (results ?? []).map((row) => ({ name: row.name, listCount: row.list_count }));
   });
 }
 
-export async function getWordList(id: number): Promise<WordListDetail | null> {
+export async function getWordList(ownerId: string, id: number): Promise<WordListDetail | null> {
   const db = getDb();
   // The list row, its words and its tags have no dependency on each other, so
   // they go out together instead of as three sequential round-trips.
   const [list, words, tagMap] = await Promise.all([
     db
-      .prepare("SELECT id, title, description, created_by, created_at FROM word_lists WHERE id = ?1")
-      .bind(id)
+      .prepare(
+        "SELECT id, title, description, created_by, created_at FROM word_lists WHERE id = ?1 AND owner_id = ?2"
+      )
+      .bind(id, ownerId)
       .first<{ id: number; title: string; description: string | null; created_by: string | null; created_at: number }>(),
     db
       .prepare(
@@ -613,10 +1002,10 @@ export async function getWordList(id: number): Promise<WordListDetail | null> {
                 w.list_id, l.title AS list_title
          FROM words w
          LEFT JOIN word_lists l ON l.id = w.list_id
-         WHERE w.list_id = ?1
+         WHERE w.list_id = ?1 AND w.owner_id = ?2
          ORDER BY w.id ASC`
       )
-      .bind(id)
+      .bind(id, ownerId)
       .all<WordRow & { meaning: string | null; list_id: number | null; list_title: string | null }>()
       .then((result) => result.results ?? []),
     loadTagsForLists(db, [id]),
@@ -645,20 +1034,31 @@ export async function getWordList(id: number): Promise<WordListDetail | null> {
 }
 
 export async function insertVocabEntries(
+  ownerId: string,
   entries: VocabEntry[],
-  createdBy: string | null,
   listId: number | null
 ): Promise<InsertResult> {
   const db = getDb();
   const insertWord = db.prepare(
-    "INSERT INTO words (word, kana, pos, created_by, list_id) VALUES (?1, ?2, ?3, ?4, ?5)"
+    "INSERT INTO words (word, kana, pos, created_by, list_id, owner_id, notes, forms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
   );
   const insertMeaning = db.prepare("INSERT INTO meanings (word_id, meaning) VALUES (?1, ?2)");
   const insertExample = db.prepare("INSERT INTO examples (word_id, japanese, translation) VALUES (?1, ?2, ?3)");
 
   // Two-phase: insert words first (to learn their ids), then children.
   const wordResults = await db.batch(
-    entries.map((entry) => insertWord.bind(entry.word, entry.kana, entry.pos, createdBy, listId))
+    entries.map((entry) =>
+      insertWord.bind(
+        entry.word,
+        entry.kana,
+        entry.pos,
+        ownerId,
+        listId,
+        ownerId,
+        entry.notes ?? null,
+        serializeWordForms(entry.forms ?? [])
+      )
+    )
   );
   const wordIds = wordResults.map((r) => r.meta.last_row_id);
 
@@ -685,39 +1085,24 @@ export async function insertVocabEntries(
   return { wordsInserted: entries.length, meaningsInserted, examplesInserted };
 }
 
-/** Returns the Convex user id that owns the list containing this word, plus the word's creator. */
-export async function getWordAuthorContext(
-  wordId: number
-): Promise<{ createdBy: string | null; listAuthor: string | null; listId: number | null } | null> {
+/** The word's owner id, or null when it does not exist. */
+async function getWordOwnerId(wordId: number): Promise<string | null> {
   const db = getDb();
-  return (
-    (await db
-      .prepare(
-        `SELECT w.created_by, w.list_id, l.created_by AS list_author
-         FROM words w
-         LEFT JOIN word_lists l ON l.id = w.list_id
-         WHERE w.id = ?1`
-      )
-      .bind(wordId)
-      .first<{ createdBy: string | null; listId: number | null; listAuthor: string | null }>()) ??
-    null
-  );
+  const row = await db
+    .prepare("SELECT owner_id FROM words WHERE id = ?1")
+    .bind(wordId)
+    .first<{ owner_id: string | null }>();
+  return row?.owner_id ?? null;
 }
 
-/** A user may edit a word if they created it, authored its list, or are an admin. */
-export async function canEditWord(
-  wordId: number,
-  userId: string,
-  isAdmin = false
-): Promise<boolean> {
-  if (isAdmin) return true;
-  const ctx = await getWordAuthorContext(wordId);
-  if (!ctx) return false;
-  return ctx.createdBy === userId || (ctx.listAuthor !== null && ctx.listAuthor === userId);
+/** Whether the given owner may edit this word (they must own it). */
+export async function canEditWord(ownerId: string, wordId: number): Promise<boolean> {
+  return (await getWordOwnerId(wordId)) === ownerId;
 }
 
 /** Update a word list's metadata. Tags are replaced as a whole set. */
 export async function updateWordList(
+  ownerId: string,
   listId: number,
   title: string,
   description: string | null,
@@ -725,8 +1110,8 @@ export async function updateWordList(
 ): Promise<boolean> {
   const db = getDb();
   const result = await db
-    .prepare("UPDATE word_lists SET title = ?1, description = ?2 WHERE id = ?3")
-    .bind(title, description, listId)
+    .prepare("UPDATE word_lists SET title = ?1, description = ?2 WHERE id = ?3 AND owner_id = ?4")
+    .bind(title, description, listId, ownerId)
     .run();
   if (result.meta.changes === 0) return false;
 
@@ -750,19 +1135,23 @@ export async function updateWordList(
 /**
  * Detach entries from a list without deleting them: the word keeps its meanings
  * and examples, it just stops belonging to the list (`words.list_id` → NULL) —
- * the same outcome as deleting the whole list. Scoped to `listId` so a stray id
- * can't pull a word out of a different list. Returns how many rows were removed.
+ * the same outcome as deleting the whole list. Scoped to `listId` and the owner
+ * so a stray id can't pull a word out of a different owner's list. Returns how
+ * many rows were removed.
  */
 export async function removeWordsFromList(
+  ownerId: string,
   listId: number,
   wordIds: number[]
 ): Promise<number> {
   if (wordIds.length === 0) return 0;
   const db = getDb();
-  const placeholders = wordIds.map((_, index) => `?${index + 2}`).join(", ");
+  const placeholders = wordIds.map((_, index) => `?${index + 3}`).join(", ");
   const result = await db
-    .prepare(`UPDATE words SET list_id = NULL WHERE list_id = ?1 AND id IN (${placeholders})`)
-    .bind(listId, ...wordIds)
+    .prepare(
+      `UPDATE words SET list_id = NULL WHERE owner_id = ?1 AND list_id = ?2 AND id IN (${placeholders})`
+    )
+    .bind(ownerId, listId, ...wordIds)
     .run();
   return result.meta.changes ?? 0;
 }
@@ -772,9 +1161,12 @@ export async function removeWordsFromList(
  * (`words.list_id REFERENCES word_lists(id) ON DELETE SET NULL`), and the
  * word_list_tags join rows cascade away.
  */
-export async function deleteWordList(listId: number): Promise<boolean> {
+export async function deleteWordList(ownerId: string, listId: number): Promise<boolean> {
   const db = getDb();
-  const result = await db.prepare("DELETE FROM word_lists WHERE id = ?1").bind(listId).run();
+  const result = await db
+    .prepare("DELETE FROM word_lists WHERE id = ?1 AND owner_id = ?2")
+    .bind(listId, ownerId)
+    .run();
   return result.meta.changes > 0;
 }
 
@@ -784,14 +1176,24 @@ export interface WordUpdateInput {
   pos: string | null;
   meanings: string[];
   examples: { japanese: string; translation: string | null }[];
+  /** Free-text notes (null = clear). */
+  notes: string | null;
+  /** Conjugation forms, in display order (empty = clear). */
+  forms: WordForm[];
 }
 
 /** Update a word's core fields and replace its meanings/examples wholesale. */
-export async function updateWord(wordId: number, data: WordUpdateInput): Promise<boolean> {
+export async function updateWord(
+  ownerId: string,
+  wordId: number,
+  data: WordUpdateInput
+): Promise<boolean> {
   const db = getDb();
   const result = await db
-    .prepare("UPDATE words SET word = ?1, kana = ?2, pos = ?3 WHERE id = ?4")
-    .bind(data.word, data.kana, data.pos, wordId)
+    .prepare(
+      "UPDATE words SET word = ?1, kana = ?2, pos = ?3, notes = ?4, forms = ?5 WHERE id = ?6 AND owner_id = ?7"
+    )
+    .bind(data.word, data.kana, data.pos, data.notes ?? null, serializeWordForms(data.forms), wordId, ownerId)
     .run();
   if (result.meta.changes === 0) return false;
 
@@ -817,14 +1219,17 @@ export async function updateWord(wordId: number, data: WordUpdateInput): Promise
 }
 
 /** Delete a word together with its meanings and examples (cascade). */
-export async function deleteWord(wordId: number): Promise<boolean> {
+export async function deleteWord(ownerId: string, wordId: number): Promise<boolean> {
   const db = getDb();
-  const result = await db.prepare("DELETE FROM words WHERE id = ?1").bind(wordId).run();
+  const result = await db
+    .prepare("DELETE FROM words WHERE id = ?1 AND owner_id = ?2")
+    .bind(wordId, ownerId)
+    .run();
   return result.meta.changes > 0;
 }
 
 // ---------------------------------------------------------------------------
-// Rules (grammar): word rules & sentence rules — admin-managed.
+// Rules (grammar): word rules & sentence rules — private to their owner.
 // ---------------------------------------------------------------------------
 
 export type RuleKind = "word" | "sentence";
@@ -844,9 +1249,11 @@ export interface RuleSummary {
   createdAt: number;
   exampleCount: number;
   tags: string[];
+  /** Free-text notes about this rule (null = none). */
+  notes: string | null;
 }
 
-/** A rule an admin linked to another one. */
+/** A rule linked to another one. */
 export interface RelatedRule {
   id: number;
   kind: RuleKind;
@@ -939,32 +1346,36 @@ async function setRuleTags(db: D1Database, ruleId: number, tags: string[]): Prom
   }
 }
 
-/** Tags actually used by rules — powers the rules page tag filter. */
-export async function listAllRuleTags(): Promise<TagInfo[]> {
-  return cachedLookup("listAllRuleTags", async () => {
+/** Tags actually used by the owner's rules — powers the rules page tag filter. */
+export async function listAllRuleTags(ownerId: string): Promise<TagInfo[]> {
+  return cachedLookup(`listAllRuleTags:${ownerId}`, async () => {
     const db = getDb();
     const { results } = await db
       .prepare(
         `SELECT t.name, COUNT(rt.rule_id) AS list_count
          FROM tags t
          JOIN rule_tags rt ON rt.tag_id = t.id
+         JOIN rules r ON r.id = rt.rule_id
+         WHERE r.owner_id = ?1
          GROUP BY t.id
          ORDER BY list_count DESC, t.name ASC`
       )
+      .bind(ownerId)
       .all<{ name: string; list_count: number }>();
     return (results ?? []).map((row) => ({ name: row.name, listCount: row.list_count }));
   });
 }
 
 export async function listRules(
+  ownerId: string,
   kind: RuleKind | null,
   page: number,
   search: string | null = null,
   tag: string | null = null
 ): Promise<Paginated<RuleSummary>> {
   const db = getDb();
-  const params: (string | number)[] = [];
-  const clauses: string[] = [];
+  const params: (string | number)[] = [ownerId];
+  const clauses: string[] = ["r.owner_id = ?"];
 
   if (kind) {
     clauses.push("r.kind = ?");
@@ -983,7 +1394,7 @@ export async function listRules(
     );
     params.push(tag);
   }
-  const clause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const clause = `WHERE ${clauses.join(" AND ")}`;
 
   const countStmt = db.prepare(`SELECT COUNT(*) AS n FROM rules r ${clause}`);
   const totalResult = await countStmt.bind(...params).first<{ n: number }>();
@@ -993,7 +1404,7 @@ export async function listRules(
   const offset = (safePage - 1) * RULE_PAGE_SIZE;
 
   const listStmt = db.prepare(
-    `SELECT r.id, r.kind, r.title, r.explanation, r.pattern, r.points, r.created_at,
+    `SELECT r.id, r.kind, r.title, r.explanation, r.pattern, r.points, r.notes, r.created_at,
             (SELECT COUNT(*) FROM rule_examples re WHERE re.rule_id = r.id) AS example_count
      FROM rules r ${clause}
      ORDER BY r.created_at DESC, r.id DESC
@@ -1008,6 +1419,7 @@ export async function listRules(
       explanation: string;
       pattern: string | null;
       points: string | null;
+      notes: string | null;
       created_at: number;
       example_count: number;
     }>();
@@ -1025,6 +1437,7 @@ export async function listRules(
       createdAt: row.created_at,
       exampleCount: row.example_count,
       tags: tagMap.get(row.id) ?? [],
+      notes: row.notes,
     })),
     page: safePage,
     pageSize: RULE_PAGE_SIZE,
@@ -1033,13 +1446,13 @@ export async function listRules(
   };
 }
 
-export async function getRule(id: number): Promise<RuleDetail | null> {
+export async function getRule(ownerId: string, id: number): Promise<RuleDetail | null> {
   const db = getDb();
   const row = await db
     .prepare(
-      "SELECT id, kind, title, explanation, pattern, points, created_at FROM rules WHERE id = ?1"
+      "SELECT id, kind, title, explanation, pattern, points, notes, created_at FROM rules WHERE id = ?1 AND owner_id = ?2"
     )
-    .bind(id)
+    .bind(id, ownerId)
     .first<{
       id: number;
       kind: RuleKind;
@@ -1047,6 +1460,7 @@ export async function getRule(id: number): Promise<RuleDetail | null> {
       explanation: string;
       pattern: string | null;
       points: string | null;
+      notes: string | null;
       created_at: number;
     }>();
   if (!row) return null;
@@ -1068,6 +1482,7 @@ export async function getRule(id: number): Promise<RuleDetail | null> {
     examples: results ?? [],
     tags: tagMap.get(id) ?? [],
     related: await loadRelatedRules(db, id),
+    notes: row.notes,
   };
 }
 
@@ -1078,20 +1493,23 @@ export interface RuleInput {
   points: string[];
   examples: RuleExample[];
   tags: string[];
-  /** Ids of the rules an admin linked to this one. */
+  /** Ids of the rules linked to this one. */
   relatedIds: number[];
+  /** Free-text notes (null = none). */
+  notes: string | null;
 }
 
-/** Every rule, as an option for the "related rules" picker on the rule form. */
-export async function listRuleOptions(): Promise<{ id: number; title: string }[]> {
+/** Every rule of the owner, as an option for the "related rules" picker. */
+export async function listRuleOptions(ownerId: string): Promise<{ id: number; title: string }[]> {
   const db = getDb();
   const { results } = await db
-    .prepare("SELECT id, title FROM rules ORDER BY title ASC, id ASC")
+    .prepare("SELECT id, title FROM rules WHERE owner_id = ?1 ORDER BY title ASC, id ASC")
+    .bind(ownerId)
     .all<{ id: number; title: string }>();
   return results ?? [];
 }
 
-/** The rules an admin linked to this one — never inferred, always curated. */
+/** The rules linked to this one — never inferred, always curated. */
 async function loadRelatedRules(db: D1Database, ruleId: number): Promise<RelatedRule[]> {
   const { results } = await db
     .prepare(
@@ -1131,14 +1549,23 @@ async function setRelatedRules(
   );
 }
 
-export async function createRule(input: RuleInput, createdBy: string): Promise<number> {
+export async function createRule(ownerId: string, input: RuleInput): Promise<number> {
   const db = getDb();
   const stored = serializeRulePoints(input.points);
   const result = await db
     .prepare(
-      "INSERT INTO rules (kind, title, explanation, pattern, points, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+      "INSERT INTO rules (kind, title, explanation, pattern, points, notes, created_by, owner_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
     )
-    .bind(input.kind, input.title, input.explanation, stored.pattern, stored.points, createdBy)
+    .bind(
+      input.kind,
+      input.title,
+      input.explanation,
+      stored.pattern,
+      stored.points,
+      input.notes ?? null,
+      ownerId,
+      ownerId
+    )
     .run();
   const ruleId = result.meta.last_row_id;
 
@@ -1156,14 +1583,23 @@ export async function createRule(input: RuleInput, createdBy: string): Promise<n
   return ruleId;
 }
 
-export async function updateRule(id: number, input: RuleInput): Promise<boolean> {
+export async function updateRule(ownerId: string, id: number, input: RuleInput): Promise<boolean> {
   const db = getDb();
   const stored = serializeRulePoints(input.points);
   const result = await db
     .prepare(
-      "UPDATE rules SET kind = ?1, title = ?2, explanation = ?3, pattern = ?4, points = ?5 WHERE id = ?6"
+      "UPDATE rules SET kind = ?1, title = ?2, explanation = ?3, pattern = ?4, points = ?5, notes = ?6 WHERE id = ?7 AND owner_id = ?8"
     )
-    .bind(input.kind, input.title, input.explanation, stored.pattern, stored.points, id)
+    .bind(
+      input.kind,
+      input.title,
+      input.explanation,
+      stored.pattern,
+      stored.points,
+      input.notes ?? null,
+      id,
+      ownerId
+    )
     .run();
   if (result.meta.changes === 0) return false;
 
@@ -1183,9 +1619,12 @@ export async function updateRule(id: number, input: RuleInput): Promise<boolean>
 }
 
 /** Delete a rule together with its examples and tag links (cascade). */
-export async function deleteRule(id: number): Promise<boolean> {
+export async function deleteRule(ownerId: string, id: number): Promise<boolean> {
   const db = getDb();
-  const result = await db.prepare("DELETE FROM rules WHERE id = ?1").bind(id).run();
+  const result = await db
+    .prepare("DELETE FROM rules WHERE id = ?1 AND owner_id = ?2")
+    .bind(id, ownerId)
+    .run();
   return result.meta.changes > 0;
 }
 
@@ -1194,13 +1633,14 @@ export async function deleteRule(id: number): Promise<boolean> {
  * optionally limited to an explicit set of ids (the user's starred rules).
  */
 export async function countRules(
+  ownerId: string,
   kind?: RuleKind | null,
   starredIds?: CardIdFilter,
   tags?: string[] | null
 ): Promise<number> {
   const db = getDb();
-  const params: (string | number)[] = [];
-  const clauses: string[] = [];
+  const params: (string | number)[] = [ownerId];
+  const clauses: string[] = ["owner_id = ?"];
   if (kind) {
     clauses.push("kind = ?");
     params.push(kind);
@@ -1209,7 +1649,7 @@ export async function countRules(
   if (idClause) clauses.push(idClause);
   const tagClause = ruleTagClause(tags, params);
   if (tagClause) clauses.push(tagClause);
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const where = `WHERE ${clauses.join(" AND ")}`;
   const row = await db
     .prepare(`SELECT COUNT(*) AS n FROM rules ${where}`)
     .bind(...params)
@@ -1221,14 +1661,15 @@ export async function countRules(
  * The three rule counts the study builder needs — all, word rules, sentence
  * rules — from a single round-trip instead of three `countRules()` calls.
  */
-export async function countRulesByKind(): Promise<{
+export async function countRulesByKind(ownerId: string): Promise<{
   all: number;
   word: number;
   sentence: number;
 }> {
   const db = getDb();
   const { results } = await db
-    .prepare("SELECT kind, COUNT(*) AS n FROM rules GROUP BY kind")
+    .prepare("SELECT kind, COUNT(*) AS n FROM rules WHERE owner_id = ?1 GROUP BY kind")
+    .bind(ownerId)
     .all<{ kind: RuleKind; n: number }>();
   const counts = { all: 0, word: 0, sentence: 0 };
   for (const row of results ?? []) {
@@ -1240,14 +1681,15 @@ export async function countRulesByKind(): Promise<{
 
 /** A random deck of rules (with their examples) for the forms study tab. */
 export async function getRuleStudyDeck(
+  ownerId: string,
   limit = 40,
   kind?: RuleKind | null,
   starredIds?: CardIdFilter,
   tags?: string[] | null
 ): Promise<RuleDetail[]> {
   const db = getDb();
-  const params: (string | number)[] = [];
-  const clauses: string[] = [];
+  const params: (string | number)[] = [ownerId];
+  const clauses: string[] = ["owner_id = ?"];
   if (kind) {
     clauses.push("kind = ?");
     params.push(kind);
@@ -1256,14 +1698,14 @@ export async function getRuleStudyDeck(
   if (idClause) clauses.push(idClause);
   const tagClause = ruleTagClause(tags, params);
   if (tagClause) clauses.push(tagClause);
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const where = `WHERE ${clauses.join(" AND ")}`;
   const { results } = await db
     .prepare(`SELECT id FROM rules ${where} ORDER BY RANDOM() LIMIT ?`)
     .bind(...params, limit)
     .all<{ id: number }>();
 
   const ids = (results ?? []).map((row) => row.id);
-  const details = await Promise.all(ids.map((id) => getRule(id)));
+  const details = await Promise.all(ids.map((id) => getRule(ownerId, id)));
   return details.filter((detail): detail is RuleDetail => detail !== null);
 }
 
@@ -1279,11 +1721,16 @@ export interface RuleExampleItem {
 
 const RULE_EXAMPLE_PAGE_SIZE = 20;
 
-/** All rule/grammar example sentences — powers the dedicated /rules/examples page. */
-export async function listRuleExamples(page: number): Promise<Paginated<RuleExampleItem>> {
+/** All rule/grammar example sentences of the owner — powers /rules/examples. */
+export async function listRuleExamples(ownerId: string, page: number): Promise<Paginated<RuleExampleItem>> {
   const db = getDb();
   const totalResult = await db
-    .prepare("SELECT COUNT(*) AS n FROM rule_examples")
+    .prepare(
+      `SELECT COUNT(*) AS n FROM rule_examples re
+       JOIN rules r ON r.id = re.rule_id
+       WHERE r.owner_id = ?1`
+    )
+    .bind(ownerId)
     .first<{ n: number }>();
   const total = totalResult?.n ?? 0;
   const pages = Math.max(1, Math.ceil(total / RULE_EXAMPLE_PAGE_SIZE));
@@ -1296,10 +1743,11 @@ export async function listRuleExamples(page: number): Promise<Paginated<RuleExam
               r.title AS rule_title, r.kind AS rule_kind
        FROM rule_examples re
        JOIN rules r ON r.id = re.rule_id
+       WHERE r.owner_id = ?1
        ORDER BY r.created_at DESC, r.id DESC, re.id ASC
-       LIMIT ?1 OFFSET ?2`
+       LIMIT ?2 OFFSET ?3`
     )
-    .bind(RULE_EXAMPLE_PAGE_SIZE, offset)
+    .bind(ownerId, RULE_EXAMPLE_PAGE_SIZE, offset)
     .all<{
       id: number;
       japanese: string;

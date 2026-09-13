@@ -27,6 +27,12 @@ export interface ExampleDraft {
   translation: string;
 }
 
+export interface FormDraft {
+  id: string;
+  name: string;
+  value: string;
+}
+
 export interface VocabRowDraft {
   id: string;
   word: string;
@@ -34,6 +40,8 @@ export interface VocabRowDraft {
   pos: string;
   meanings: MeaningDraft[];
   examples: ExampleDraft[];
+  notes: string;
+  forms: FormDraft[];
 }
 
 let rowCounter = 0;
@@ -53,6 +61,12 @@ export function newRow(overrides: Partial<VocabRow> = {}): VocabRowDraft {
       id: `e-${key}-${index}`,
       japanese: example.japanese,
       translation: example.translation,
+    })),
+    notes: overrides.notes ?? "",
+    forms: (overrides.forms ?? []).map((form, index) => ({
+      id: `f-${key}-${index}`,
+      name: form.name,
+      value: form.value,
     })),
   };
 }
@@ -77,6 +91,12 @@ export function toDrafts(rows: VocabRow[]): VocabRowDraft[] {
         japanese: example.japanese,
         translation: example.translation,
       })),
+      notes: row.notes,
+      forms: row.forms.map((form, index) => ({
+        id: `f-${key}-${index}`,
+        name: form.name,
+        value: form.value,
+      })),
     };
   });
 }
@@ -92,6 +112,8 @@ export function fromDrafts(drafts: VocabRowDraft[]): VocabRow[] {
       japanese: example.japanese,
       translation: example.translation,
     })),
+    notes: draft.notes,
+    forms: draft.forms.map((form) => ({ name: form.name, value: form.value })),
   }));
 }
 
@@ -115,6 +137,8 @@ export function VocabRowsEditor({  kind,
 }) {
   const noun = kind === "phrases" ? "phrase" : "word";
   const showPos = kind === "words";
+  // Conjugation forms only make sense for words (phrases don't conjugate).
+  const showForm = kind === "words";
 
   const patch = (id: string, changes: Partial<VocabRowDraft>) =>
     onChange(drafts.map((draft) => (draft.id === id ? { ...draft, ...changes } : draft)));
@@ -280,6 +304,102 @@ export function VocabRowsEditor({  kind,
                   <Plus className="h-3 w-3" /> Add example
                 </button>
               </div>
+
+              {/* Notes */}
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Notes{" "}
+                  <span className="font-normal normal-case text-muted-foreground/60">
+                    (optional)
+                  </span>
+                </p>
+                <textarea
+                  value={draft.notes}
+                  onChange={(event) => patch(draft.id, { notes: event.target.value })}
+                  placeholder="Clarify readings, usage, mnemonics…"
+                  aria-label={`${kind === "phrases" ? "Phrase" : "Word"} ${index + 1} notes`}
+                  rows={2}
+                  maxLength={2000}
+                  className="w-full resize-y rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm shadow-none transition-colors placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primarylw/40"
+                />
+              </div>
+
+              {/* Conjugation forms — words only (phrases don't conjugate). */}
+              {showForm && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Forms{" "}
+                      <span className="font-normal normal-case text-muted-foreground/60">
+                        (dictionary / masu / te / ta / nai …)
+                      </span>
+                    </p>
+                    <button
+                      type="button"
+                      className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-primarylw hover:underline"
+                      onClick={() => {
+                        partCounter += 1;
+                        patch(draft.id, {
+                          forms: [
+                            ...draft.forms,
+                            { id: `f-${draft.id}-${partCounter}`, name: "", value: "" },
+                          ],
+                        });
+                      }}
+                    >
+                      <Plus className="h-3 w-3" /> Add form
+                    </button>
+                  </div>
+                  {draft.forms.length === 0 ? (
+                    <p className="text-xs text-muted-foreground/60">
+                      No forms yet. e.g. ます-form → 食べます
+                    </p>
+                  ) : (
+                    draft.forms.map((form, formIndex) => (
+                      <div key={form.id} className="flex items-start gap-2">
+                        <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                          <Input
+                            value={form.name}
+                            onChange={(event) =>
+                              patch(draft.id, {
+                                forms: draft.forms.map((row) =>
+                                  row.id === form.id ? { ...row, name: event.target.value } : row
+                                ),
+                              })
+                            }
+                            placeholder="Form name (ます, te, …)"
+                            aria-label={`Word ${index + 1} form ${formIndex + 1} name`}
+                          />
+                          <Input
+                            value={form.value}
+                            onChange={(event) =>
+                              patch(draft.id, {
+                                forms: draft.forms.map((row) =>
+                                  row.id === form.id ? { ...row, value: event.target.value } : row
+                                ),
+                              })
+                            }
+                            placeholder="Form (食べます)"
+                            aria-label={`Word ${index + 1} form ${formIndex + 1} value`}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${noun} ${index + 1} form ${formIndex + 1}`}
+                          className="cursor-pointer rounded p-1.5 text-muted-foreground/50 hover:bg-red-500/10 hover:text-red-500"
+                          onClick={() =>
+                            patch(draft.id, {
+                              forms: draft.forms.filter((row) => row.id !== form.id),
+                            })
+                          }
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </ReorderRow>
         ))}

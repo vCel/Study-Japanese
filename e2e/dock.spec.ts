@@ -5,8 +5,8 @@ import { waitForHydration } from "./helpers";
 /** On small screens the navigation is a bottom dock of categories instead of the sidebar. */
 test.use({ viewport: { width: 390, height: 780 } });
 
-/** Every category except Study expands into a popover. */
-const CATEGORIES_WITH_MENU = ["Words", "Phrases", "Grammar", "Profile"];
+/** Every category expands into a popover of its pages. */
+const CATEGORIES_WITH_MENU = ["Words", "Phrases", "Grammar", "Study", "Profile"];
 
 /** Clicks happen after hydration — pre-hydration clicks are silently dropped. */
 async function openCategory(page: Page, label: string) {
@@ -29,7 +29,8 @@ test.describe("mobile navigation", () => {
     for (const label of CATEGORIES_WITH_MENU) {
       await expect(dock.getByRole("button", { name: label, exact: true })).toBeVisible();
     }
-    await expect(dock.getByRole("link", { name: "Study", exact: true })).toBeVisible();
+    // Every category is a popover now, so nothing links straight through.
+    await expect(dock.getByRole("link")).toHaveCount(0);
 
     // The desktop sidebar is not shown at this width.
     await expect(page.getByRole("navigation")).toBeHidden();
@@ -128,7 +129,33 @@ test.describe("mobile navigation", () => {
     await expect(page.getByRole("menu")).toHaveCount(0);
   });
 
-  test("the active category is marked and single-page categories link straight through", async ({
+  test("the Study category lists Flashcards and Quizzes", async ({ page }) => {
+    await page.goto("/");
+    const { menu } = await openCategory(page, "Study");
+
+    await expect(menu.getByRole("menuitem")).toHaveCount(2);
+    await expect(menu.getByRole("menuitem", { name: "Flashcards" })).toHaveAttribute(
+      "href",
+      "/study/flashcards"
+    );
+    await expect(menu.getByRole("menuitem", { name: "Quizzes" })).toHaveAttribute(
+      "href",
+      "/study/quizzes"
+    );
+
+    // Choosing a page dismisses the menu and leaves Study marked as current.
+    await menu.getByRole("menuitem", { name: "Flashcards" }).click();
+    await expect(page).toHaveURL(/\/study\/flashcards$/);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(
+      page.getByRole("toolbar", { name: "Primary" }).getByRole("button", {
+        name: "Study",
+        exact: true,
+      })
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  test("the active category is marked and no category links straight through", async ({
     page,
   }) => {
     await page.goto("/phrases");
@@ -140,11 +167,13 @@ test.describe("mobile navigation", () => {
     );
     await expect(dock.locator('[aria-current="page"]')).toHaveCount(1);
 
-    // Study has a single page, so it skips the popover entirely.
-    await expect(dock.getByRole("link", { name: "Study", exact: true })).toHaveAttribute(
-      "href",
-      "/study"
+    // The Study category covers both of its pages, and stays highlighted on them.
+    await page.goto("/study/quizzes");
+    await expect(dock.getByRole("button", { name: "Study", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page"
     );
+    await expect(dock.locator('[aria-current="page"]')).toHaveCount(1);
 
     // A page inside the Grammar category keeps Grammar highlighted.
     await page.goto("/rules/examples");

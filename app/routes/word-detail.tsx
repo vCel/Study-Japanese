@@ -3,9 +3,8 @@ import { Pencil } from "lucide-react";
 
 import type { Route } from "./+types/word-detail";
 import { getWord } from "~/lib/db.server";
-import { isConvexClientConfigured } from "~/components/convex-provider";
+import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
-import { CanEdit } from "~/components/author-only";
 import { Badge } from "~/components/lightswind/badge";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/lightswind/card";
@@ -20,12 +19,14 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, context }: Route.LoaderArgs) {
   const id = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(id)) {
     throw new Response("Invalid word id", { status: 400 });
   }
-  const word = await getWord(id);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  const word = await getWord(ownerId, id);
   if (!word) {
     throw new Response("Word not found", { status: 404 });
   }
@@ -43,16 +44,12 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
         description={<span className="font-medium text-foreground">{word.kana}</span>}
         actions={
           <>
-            {isConvexClientConfigured() && (
-              <CanEdit ownerIds={[word.createdBy, word.listAuthor]}>
-                <Link
-                  to={`/words/${word.id}/edit`}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border px-5 text-sm font-medium transition-colors hover:border-primarylw/40 hover:bg-muted"
-                >
-                  <Pencil className="h-4 w-4" /> Edit word
-                </Link>
-              </CanEdit>
-            )}
+            <Link
+              to={`/words/${word.id}/edit`}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border px-5 text-sm font-medium transition-colors hover:border-primarylw/40 hover:bg-muted"
+            >
+              <Pencil className="h-4 w-4" /> Edit word
+            </Link>
           </>
         }
       />
@@ -113,6 +110,47 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Conjugation forms */}
+      {word.forms.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-lg">
+              Forms{" "}
+              <span className="text-sm font-normal text-muted-foreground">
+                ({word.forms.length})
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {word.forms.map((form, index) => (
+              <div
+                key={index}
+                className="flex items-baseline justify-between gap-2 rounded-[var(--radius)] border border-border p-3"
+              >
+                <span className="text-sm font-medium text-muted-foreground">
+                  {form.name || "Form"}
+                </span>
+                <span className="text-lg font-semibold">{form.value}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Notes */}
+      {word.notes && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-lg">Notes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+              {word.notes}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {word.listId && word.listTitle && (
         <p className="mt-6 text-sm text-muted-foreground">

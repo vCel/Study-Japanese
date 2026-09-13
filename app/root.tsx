@@ -11,10 +11,16 @@ import * as React from "react";
 
 import type { Route } from "./+types/root";
 import { ConvexClientProvider } from "~/components/convex-provider";
+import { DeviceSyncPrompt } from "~/components/device-sync-prompt";
 import { MobileNav, Sidebar } from "~/components/sidebar";
 import { PageSkeleton } from "~/components/page-skeleton";
 import { Toaster } from "~/components/lightswind/toast";
 import { useBrowsingPageRecorder } from "~/lib/return-to";
+import {
+  deviceCookieHeader,
+  ownerContext,
+  resolveOwnerFromRequest,
+} from "~/lib/owner.server";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
@@ -27,6 +33,26 @@ export const links: Route.LinksFunction = () => [
   {
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
+  },
+];
+
+/**
+ * Resolves who this request belongs to (account user or device) and persists a
+ * freshly created device cookie. Runs for every page and action so loaders and
+ * actions can read `ownerContext` instead of re-authenticating individually.
+ */
+export const middleware: Route.MiddlewareFunction[] = [
+  async ({ request, context }, next) => {
+    const owner = await resolveOwnerFromRequest(request);
+    context.set(ownerContext, owner);
+
+    const response = await next();
+
+    if (owner.deviceIsNew) {
+      const isHttps = new URL(request.url).protocol === "https:";
+      response.headers.append("Set-Cookie", deviceCookieHeader(owner.deviceId, isHttps));
+    }
+    return response;
   },
 ];
 
@@ -82,6 +108,7 @@ export default function App() {
 
   return (
     <ConvexClientProvider>
+      <DeviceSyncPrompt />
       <div className="flex min-h-dvh">
         <Sidebar />
         <div className="flex min-h-dvh w-full min-w-0 flex-col">

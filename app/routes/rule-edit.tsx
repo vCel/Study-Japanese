@@ -1,9 +1,9 @@
 import { Link, useActionData, useLoaderData } from "react-router";
 
 import type { Route } from "./+types/rule-edit";
-import { guardAdminAction, readFormToken } from "~/lib/auth.server";
 import { deleteRule, getRule, listRuleOptions, updateRule } from "~/lib/db.server";
 import { draftToRulePayload, readRuleDrafts } from "~/lib/rule-draft";
+import { ownerContext } from "~/lib/owner.server";
 import { enforceRateLimit, getClientIp } from "~/lib/ratelimit.server";
 import { DeleteButton } from "~/components/delete-button";
 import { PageHeader } from "~/components/page-header";
@@ -13,17 +13,19 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Edit rule · 日本語Vocab" }];
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, context }: Route.LoaderArgs) {
   const id = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(id)) {
     throw new Response("Invalid rule id", { status: 400 });
   }
-  const rule = await getRule(id);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  const rule = await getRule(ownerId, id);
   if (!rule) {
     throw new Response("Rule not found", { status: 404 });
   }
-  // Every rule, so "related rules" can be picked by hand here too.
-  return { rule, ruleOptions: await listRuleOptions() };
+  // Every rule of this owner, so "related rules" can be picked by hand here too.
+  return { rule, ruleOptions: await listRuleOptions(ownerId) };
 }
 
 export interface RuleEditActionData {
@@ -32,7 +34,7 @@ export interface RuleEditActionData {
   deleted?: boolean;
 }
 
-export async function action({ request, params }: Route.ActionArgs): Promise<RuleEditActionData> {
+export async function action({ request, params, context }: Route.ActionArgs): Promise<RuleEditActionData> {
   const ruleId = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(ruleId)) {
     return { ok: false, error: "Invalid rule id." };
@@ -43,15 +45,15 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Rul
     return { ok: false, error: "Too many requests. Please wait a moment and try again." };
   }
 
-  // Read the body first: the Convex token travels in the form, not a header.
-  const form = await request.formData();
-  const guard = await guardAdminAction(request, readFormToken(form));
-  if (!guard.ok) {
-    return { ok: false, error: guard.message };
+  const owner = context.get(ownerContext);
+  if (!owner) {
+    return { ok: false, error: "Could not identify your library." };
   }
 
+  const form = await request.formData();
+
   if (form.get("action") === "delete") {
-    const removed = await deleteRule(ruleId);
+    const removed = await deleteRule(owner.ownerId, ruleId);
     if (!removed) {
       return { ok: false, error: "Rule not found." };
     }
@@ -69,7 +71,7 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Rul
     return { ok: false, error: `Rule ${payload.error}` };
   }
 
-  const updated = await updateRule(ruleId, payload.payload);
+  const updated = await updateRule(owner.ownerId, ruleId, payload.payload);
   if (!updated) {
     return { ok: false, error: "Rule not found." };
   }
@@ -88,7 +90,7 @@ export default function RuleEdit() {
           { label: "Rules & forms", to: "/rules" },
           { label: rule.title, to: `/rules/${rule.id}` },
         ]}
-        description="Only admins can change a rule, including its points and examples."
+        description="Rules are private to you — edit this rule, including its points and examples."
       />
       <RuleForm
         rule={rule}

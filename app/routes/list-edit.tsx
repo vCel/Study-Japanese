@@ -2,8 +2,8 @@ import { Link, useActionData, useLoaderData } from "react-router";
 import { Pencil } from "lucide-react";
 
 import type { Route } from "./+types/list-edit";
-import { getConvexSession } from "~/lib/auth.server";
 import { deleteWordList, getWordList, removeWordsFromList, updateWordList } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { enforceRateLimit, getClientIp } from "~/lib/ratelimit.server";
 import { Button } from "~/components/lightswind/button";
 import { DeleteButton } from "~/components/delete-button";
@@ -14,12 +14,14 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Edit word list · 日本語Vocab" }];
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, context }: Route.LoaderArgs) {
   const id = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(id)) {
     throw new Response("Invalid list id", { status: 400 });
   }
-  const list = await getWordList(id);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  const list = await getWordList(ownerId, id);
   if (!list) {
     throw new Response("Word list not found", { status: 404 });
   }
@@ -29,7 +31,6 @@ export async function loader({ params }: Route.LoaderArgs) {
 export interface ListEditActionData {
   ok: boolean;
   error?: string;
-  needsSignIn?: boolean;
   deleted?: boolean;
   /** Entries detached from the list by the `remove-words` action. */
   removed?: number;
@@ -48,7 +49,7 @@ function parseTags(raw: FormDataEntryValue | null): string[] {
   return [...seen];
 }
 
-export async function action({ request, params }: Route.ActionArgs): Promise<ListEditActionData> {
+export async function action({ request, params, context }: Route.ActionArgs): Promise<ListEditActionData> {
   const listId = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(listId)) {
     return { ok: false, error: "Invalid list id." };
@@ -59,28 +60,15 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Lis
     return { ok: false, error: "Too many requests. Please wait a moment and try again." };
   }
 
+  const owner = context.get(ownerContext);
+  if (!owner) {
+    return { ok: false, error: "Could not identify your library." };
+  }
+
   const form = await request.formData();
-  const token = form.get("convexToken");
-  const tokenString = typeof token === "string" && token.length > 0 ? token : null;
-
-  const session = await getConvexSession(tokenString);
-  if (!session) {
-    return { ok: false, needsSignIn: true, error: "You must be signed in to edit word lists." };
-  }
-
-  const list = await getWordList(listId);
-  if (!list) {
-    return { ok: false, error: "Word list not found." };
-  }
-  if (list.createdBy !== session.user.id && !session.isAdmin) {
-    return {
-      ok: false,
-      error: "Only the author of this word list or an admin can edit it.",
-    };
-  }
 
   if (form.get("action") === "delete") {
-    const removed = await deleteWordList(listId);
+    const removed = await deleteWordList(owner.ownerId, listId);
     if (!removed) {
       return { ok: false, error: "Word list not found." };
     }
@@ -95,7 +83,7 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Lis
       .split(",")
       .map((part) => Number.parseInt(part.trim(), 10))
       .filter((id) => !Number.isNaN(id));
-    const removed = await removeWordsFromList(listId, ids);
+    const removed = await removeWordsFromList(owner.ownerId, listId, ids);
     if (removed === 0) {
       return { ok: false, error: "That entry is not part of this word list." };
     }
@@ -116,7 +104,7 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Lis
       : null;
   const tags = parseTags(form.get("tags"));
 
-  const updated = await updateWordList(listId, title, description, tags);
+  const updated = await updateWordList(owner.ownerId, listId, title, description, tags);
   if (!updated) {
     return { ok: false, error: "Word list not found." };
   }
@@ -136,7 +124,7 @@ export default function ListEdit() {
           { label: "Word lists", to: "/" },
           { label: list.title, to: `/lists/${list.id}` },
         ]}
-        description="Only the author of this list can save changes."
+        description="Your lists are private — only you can edit this list."
       />
       <ListEditForm
         list={list}

@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router";
 import {
   BookOpenText,
+  CircleHelp,
   GraduationCap,
   Layers,
   ListTree,
@@ -31,8 +32,15 @@ const PHRASE_LINKS = [
   { to: "/phrases", label: "Phrases", icon: MessageSquareQuote },
 ];
 
-/** Study has its own section. */
-const STUDY_LINKS = [{ to: "/study", label: "Study", icon: GraduationCap }];
+/**
+ * Study: flashcards plus the quizzes placeholder. Two entries, so the mobile
+ * dock — which reuses this list — opens a popover for the category instead of
+ * linking straight through.
+ */
+const STUDY_LINKS = [
+  { to: "/study/flashcards", label: "Flashcards", icon: GraduationCap },
+  { to: "/study/quizzes", label: "Quizzes", icon: CircleHelp },
+];
 
 /** Separate section for word/sentence rules & forms. */
 const RULE_LINKS = [

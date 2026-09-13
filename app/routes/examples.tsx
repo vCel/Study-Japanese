@@ -3,9 +3,8 @@ import { BookOpenText } from "lucide-react";
 
 import type { Route } from "./+types/examples";
 import { listExamples } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
-import { isConvexClientConfigured } from "~/components/convex-provider";
-import { SignedInOnlyClient } from "~/components/signed-in-only";
 import { Card, CardContent } from "~/components/lightswind/card";
 import { Pagination } from "~/components/lightswind/pagination";
 
@@ -13,10 +12,12 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Example sentences · 日本語Vocab" }];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
-  return await listExamples(Number.isNaN(page) ? 1 : page);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  return await listExamples(ownerId, Number.isNaN(page) ? 1 : page);
 }
 
 export default function Examples({ loaderData }: Route.ComponentProps) {
@@ -33,11 +34,9 @@ export default function Examples({ loaderData }: Route.ComponentProps) {
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
             No example sentences yet.{" "}
-            <SignedInOnlyClient>
-              <Link to="/lists/new" className="text-primarylw underline">
-                Add some words with examples
-              </Link>
-            </SignedInOnlyClient>
+            <Link to="/lists/new" className="text-primarylw underline">
+              Add some words with examples
+            </Link>
           </CardContent>
         </Card>
       ) : (

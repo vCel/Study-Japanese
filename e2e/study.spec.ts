@@ -3,9 +3,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { waitForHydration } from "./helpers";
 
 /**
- * Study is split into three independent sections (words, phrases, forms) using
- * the Lightswind tabs component, and saved sessions moved into save/load
- * drawers.
+ * The Flashcards builder (/study/flashcards) is split into three independent
+ * sections (words, phrases, forms) using the Lightswind tabs component, and
+ * saved sessions moved into save/load drawers.
  */
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
@@ -52,7 +52,7 @@ test.describe("study sections", () => {
   });
 
   test("each section keeps its own configuration", async ({ page }) => {
-    await page.goto("/study");
+    await page.goto("/study/flashcards");
     await waitForHydration(page);
 
     // Configure the words tab…
@@ -97,18 +97,18 @@ test.describe("study sections", () => {
 
 test.describe("starting a session", () => {
   test("starts a words session", async ({ page }) => {
-    await page.goto("/study");
+    await page.goto("/study/flashcards");
     await waitForHydration(page);
 
     await panelFor(page, "words").getByRole("button", { name: "Start studying" }).click();
 
-    await expect(page).toHaveURL(/\/study\/session\?kind=words/);
+    await expect(page).toHaveURL(/\/study\/flashcards\/session\?kind=words/);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Words");
     await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
   });
 
   test("starts a rules session with grammar cards", async ({ page }) => {
-    await page.goto("/study?kind=forms");
+    await page.goto("/study/flashcards?kind=forms");
     await waitForHydration(page);
 
     // The deep link opens straight on the rules tab.
@@ -127,17 +127,18 @@ test.describe("starting a session", () => {
   test("a phrase-list link studies phrases (kind is inferred)", async ({ page }) => {
     await page.goto("/phrases/lists");
     await waitForHydration(page);
-    // Scope to the list cards — the sidebar also has a link called "Study".
+    // Scope to the list cards' Study action — the sidebar links in this section
+    // are called Flashcards and Quizzes now.
     const study = page.locator("main").getByRole("link", { name: "Study" }).first();
     await expect(study).toBeVisible();
     await study.click();
 
-    await expect(page).toHaveURL(/\/study\/session\?lists=/);
+    await expect(page).toHaveURL(/\/study\/flashcards\/session\?lists=/);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Phrases");
   });
 
   test("the answer buttons are wide and the card flips in place", async ({ page }) => {
-    await page.goto("/study/session?kind=words&limit=4");
+    await page.goto("/study/flashcards/session?kind=words&limit=4");
     await page.waitForLoadState("networkidle");
 
     const again = await page.getByRole("button", { name: /Again/ }).boundingBox();
@@ -188,7 +189,7 @@ test.describe("starting from a word list", () => {
     await page.getByRole("button", { name: "Study this list" }).click();
     await page.locator("[data-slot='popover']").getByRole("menuitem").first().click();
 
-    await expect(page).toHaveURL(/\/study\/session\?lists=1/);
+    await expect(page).toHaveURL(/\/study\/flashcards\/session\?lists=1/);
     await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
   });
 });
@@ -201,7 +202,7 @@ test.describe("session rendering", () => {
       if (message.type() === "error") problems.push(message.text());
     });
 
-    await page.goto("/study/session?kind=words&limit=4");
+    await page.goto("/study/flashcards/session?kind=words&limit=4");
     await page.waitForLoadState("networkidle");
     await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
 
@@ -213,7 +214,7 @@ test.describe("session rendering", () => {
 
 test.describe("saved study sessions", () => {
   test("saves a configuration through the save drawer", async ({ page }) => {
-    await page.goto("/study");
+    await page.goto("/study/flashcards");
     await waitForHydration(page);
 
     const panel = panelFor(page, "words");
@@ -244,7 +245,7 @@ test.describe("saved study sessions", () => {
   });
 
   test("loads a session from the load drawer's reorderable list", async ({ page }) => {
-    await page.goto("/study");
+    await page.goto("/study/flashcards");
     await waitForHydration(page);
     const panel = panelFor(page, "words");
 
@@ -271,7 +272,7 @@ test.describe("saved study sessions", () => {
   });
 
   test("keeps saved sessions per section", async ({ page }) => {
-    await page.goto("/study");
+    await page.goto("/study/flashcards");
     await waitForHydration(page);
 
     await saveSession(page, "words", "Words only");

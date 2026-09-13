@@ -11,6 +11,12 @@ export interface VocabRowExample {
   translation: string;
 }
 
+/** One conjugation form pair (dictionary / masu / te / ta / …). */
+export interface VocabRowForm {
+  name: string;
+  value: string;
+}
+
 export interface VocabRow {
   /** The word or phrase itself. */
   word: string;
@@ -19,11 +25,17 @@ export interface VocabRow {
   pos: string;
   meanings: string[];
   examples: VocabRowExample[];
+  /** Free-text notes ("" = none). */
+  notes: string;
+  /** Conjugation forms, in display order. */
+  forms: VocabRowForm[];
 }
 
 export const MAX_ROWS = 200;
 export const MAX_MEANINGS = 20;
 export const MAX_EXAMPLES = 50;
+/** A word can carry at most this many conjugation forms (in step with db.server). */
+export const MAX_FORMS = 12;
 
 export const POS_OPTIONS = [
   { value: "", label: "—" },
@@ -35,7 +47,16 @@ export const POS_OPTIONS = [
 ];
 
 export function emptyRow(overrides: Partial<VocabRow> = {}): VocabRow {
-  return { word: "", kana: "", pos: "", meanings: [""], examples: [], ...overrides };
+  return {
+    word: "",
+    kana: "",
+    pos: "",
+    meanings: [""],
+    examples: [],
+    notes: "",
+    forms: [],
+    ...overrides,
+  };
 }
 
 /** A row can be saved once it has the word, its reading and a meaning. */
@@ -68,6 +89,8 @@ export function parseVocabRows(
       japanese: example.japanese,
       translation: example.translation ?? "",
     })),
+    notes: entry.notes ?? "",
+    forms: entry.forms.map((form) => ({ name: form.name, value: form.value })),
   }));
 
   if (rows.length === 0) {
@@ -117,10 +140,29 @@ export function readVocabRows(
         };
       })
       .filter((example) => example.japanese.length > 0);
+    const notes = asString(obj.notes).trim();
+    const forms = (Array.isArray(obj.forms) ? obj.forms : [])
+      .map((form) => {
+        const row = (form ?? {}) as Record<string, unknown>;
+        return {
+          name: asString(row.name).trim(),
+          value: asString(row.value).trim(),
+        };
+      })
+      .filter((form) => form.name.length > 0 || form.value.length > 0)
+      .slice(0, MAX_FORMS);
 
     // Ignore rows the user never filled in.
     if (!word && !kana && meanings.length === 0) continue;
-    rows.push({ word, kana, pos: forcePos ?? asString(obj.pos).trim(), meanings, examples });
+    rows.push({
+      word,
+      kana,
+      pos: forcePos ?? asString(obj.pos).trim(),
+      meanings,
+      examples,
+      notes,
+      forms,
+    });
   }
 
   return { ok: true, rows };
@@ -143,6 +185,14 @@ export function toEntries(rows: VocabRow[], { forcePos }: { forcePos?: string } 
       .map((example) => ({
         japanese: example.japanese.trim().slice(0, 500),
         translation: example.translation.trim() ? example.translation.trim().slice(0, 500) : null,
+      })),
+    notes: row.notes.trim() ? row.notes.trim().slice(0, 2000) : null,
+    forms: row.forms
+      .filter((form) => form.name.trim().length > 0 || form.value.trim().length > 0)
+      .slice(0, MAX_FORMS)
+      .map((form) => ({
+        name: form.name.trim().slice(0, 64),
+        value: form.value.trim().slice(0, 128),
       })),
   }));
 }

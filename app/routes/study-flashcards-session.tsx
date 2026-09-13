@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import type { Route } from "./+types/study-session";
+import type { Route } from "./+types/study-flashcards-session";
 import {
   countRules,
   countWordsInLists,
@@ -10,6 +10,7 @@ import {
   type CardIdFilter,
   type RuleKind,
 } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { isValidPos } from "~/components/pos-filter";
 import {
   randomCardSide,
@@ -22,11 +23,13 @@ import { Flashcards } from "~/components/flashcards";
 import { PageHeader } from "~/components/page-header";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Study session · 日本語Vocab" }];
+  return [{ title: "Flashcards · 日本語Vocab" }];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
   const kindParam = url.searchParams.get("kind");
   const listsParam = url.searchParams.get("lists") ?? "";
   const tagsParam = url.searchParams.get("tags") ?? "";
@@ -61,28 +64,28 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (explicitLists.length > 0) {
     listIds = explicitLists;
   } else if (tagNames.length > 0) {
-    listIds = await listIdsByTags(tagNames);
+    listIds = await listIdsByTags(ownerId, tagNames);
   } else {
-    listIds = await listAllListIds();
+    listIds = await listAllListIds(ownerId);
   }
 
   let kind: StudyKind;
   if (kindParam === "words" || kindParam === "phrases" || kindParam === "forms") {
     kind = kindParam;
   } else {
-    // Deep links (`/study/session?lists=N`) don't say which tab they came from,
+    // Deep links (`/study/flashcards/session?lists=N`) don't say which tab they came from,
     // so pick whichever the selected lists actually contain.
     const [wordCount, phraseCount] = await Promise.all([
-      countWordsInLists(listIds, null, "words", filter),
-      countWordsInLists(listIds, null, "phrases", filter),
+      countWordsInLists(ownerId, listIds, null, "words", filter),
+      countWordsInLists(ownerId, listIds, null, "phrases", filter),
     ]);
     kind = phraseCount > wordCount ? "phrases" : "words";
   }
 
   if (kind === "forms") {
     const [totalAvailable, rules] = await Promise.all([
-      countRules(ruleKind, filter, tagNames),
-      getRuleStudyDeck(limit, ruleKind, filter, tagNames),
+      countRules(ownerId, ruleKind, filter, tagNames),
+      getRuleStudyDeck(ownerId, limit, ruleKind, filter, tagNames),
     ]);
     return {
       kind,
@@ -100,8 +103,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   // to the words tab.
   const pos = kind === "words" && isValidPos(posParam) ? posParam : null;
   const [totalAvailable, words] = await Promise.all([
-    countWordsInLists(listIds, pos, kind, filter),
-    getStudyDeck(listIds, limit, pos, kind, filter),
+    countWordsInLists(ownerId, listIds, pos, kind, filter),
+    getStudyDeck(ownerId, listIds, limit, pos, kind, filter),
   ]);
 
   return {
@@ -129,7 +132,7 @@ export default function StudySession({ loaderData }: Route.ComponentProps) {
     <div className="w-full">
       <PageHeader
         title={`Flashcards · ${STUDY_KIND_LABELS[kind]}`}
-        breadcrumbs={[{ label: "Study", to: `/study?kind=${kind}` }]}
+        breadcrumbs={[{ label: "Flashcards", to: `/study/flashcards?kind=${kind}` }]}
         description={`${scope} · drew ${deck.length} random card${deck.length === 1 ? "" : "s"}. Click the card or press Space to flip.`}
       />
 
@@ -137,7 +140,7 @@ export default function StudySession({ loaderData }: Route.ComponentProps) {
         <div className="rounded-[var(--radius)] border border-border p-10 text-center text-muted-foreground">
           No {starredOnly ? "starred " : ""}
           {pos ? `${pos} ` : ""}cards available for this session.{" "}
-          <Link to={`/study?kind=${kind}`} className="text-primarylw hover:underline">
+          <Link to={`/study/flashcards?kind=${kind}`} className="text-primarylw hover:underline">
             Adjust your session settings
           </Link>
           .

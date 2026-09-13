@@ -76,7 +76,7 @@ test.describe("primary buttons align right", () => {
   });
 });
 
-test.describe("admin delete on edit pages", () => {
+test.describe("delete on edit pages", () => {
   for (const { path, label } of [
     { path: "/rules/1/edit", label: "rule" },
     { path: "/words/1/edit", label: "word" },

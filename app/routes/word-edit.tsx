@@ -2,8 +2,8 @@ import { Link, useActionData, useLoaderData } from "react-router";
 import { Pencil } from "lucide-react";
 
 import type { Route } from "./+types/word-edit";
-import { getConvexSession } from "~/lib/auth.server";
 import { canEditWord, deleteWord, getWord, updateWord } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { enforceRateLimit, getClientIp } from "~/lib/ratelimit.server";
 import { Button } from "~/components/lightswind/button";
 import { DeleteButton } from "~/components/delete-button";
@@ -14,12 +14,14 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Edit word · 日本語Vocab" }];
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, context }: Route.LoaderArgs) {
   const id = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(id)) {
     throw new Response("Invalid word id", { status: 400 });
   }
-  const word = await getWord(id);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  const word = await getWord(ownerId, id);
   if (!word) {
     throw new Response("Word not found", { status: 404 });
   }
@@ -32,7 +34,7 @@ export interface WordEditActionData {
   deleted?: boolean;
 }
 
-export async function action({ request, params }: Route.ActionArgs): Promise<WordEditActionData> {
+export async function action({ request, params, context }: Route.ActionArgs): Promise<WordEditActionData> {
   const wordId = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(wordId)) {
     return { ok: false, error: "Invalid word id." };
@@ -43,26 +45,24 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Wor
     return { ok: false, error: "Too many requests. Please wait a moment and try again." };
   }
 
-  const form = await request.formData();
-  const token = form.get("convexToken");
-  const tokenString = typeof token === "string" && token.length > 0 ? token : null;
-
-  const session = await getConvexSession(tokenString);
-  if (!session) {
-    return { ok: false, error: "You must be signed in to edit words." };
+  const owner = context.get(ownerContext);
+  if (!owner) {
+    return { ok: false, error: "Could not identify your library." };
   }
 
-  // Only the word's creator, the author of its list, or an admin may edit it.
-  const allowed = session.isAdmin || (await canEditWord(wordId, session.user.id));
+  // Only the word's owner may edit it (content is private per owner).
+  const allowed = await canEditWord(owner.ownerId, wordId);
   if (!allowed) {
     return {
       ok: false,
-      error: "Only the word's creator, the author of its word list, or an admin can edit it.",
+      error: "You can only edit words in your own library.",
     };
   }
 
+  const form = await request.formData();
+
   if (form.get("action") === "delete") {
-    const removed = await deleteWord(wordId);
+    const removed = await deleteWord(owner.ownerId, wordId);
     if (!removed) {
       return { ok: false, error: "Word not found." };
     }
@@ -119,7 +119,41 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Wor
     }
   }
 
-  const updated = await updateWord(wordId, { word, kana, pos, meanings, examples });
+  const notesRaw = form.get("notes");
+  const notes =
+    typeof notesRaw === "string" && notesRaw.trim().length > 0
+      ? notesRaw.trim().slice(0, 2000)
+      : null;
+
+  // Conjugation forms arrive as JSON: [{ name, value }]
+  const formsRaw = form.get("formsJson");
+  const forms: { name: string; value: string }[] = [];
+  if (typeof formsRaw === "string" && formsRaw.trim().length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(formsRaw);
+      if (!Array.isArray(parsed)) throw new Error("not an array");
+      for (const item of parsed.slice(0, 12)) {
+        if (item && typeof item === "object") {
+          const obj = item as Record<string, unknown>;
+          const name = typeof obj.name === "string" ? obj.name.trim().slice(0, 64) : "";
+          const value = typeof obj.value === "string" ? obj.value.trim().slice(0, 128) : "";
+          if (name || value) forms.push({ name, value });
+        }
+      }
+    } catch {
+      return { ok: false, error: "The conjugation forms could not be read. Please try again." };
+    }
+  }
+
+  const updated = await updateWord(owner.ownerId, wordId, {
+    word,
+    kana,
+    pos,
+    meanings,
+    examples,
+    notes,
+    forms,
+  });
   if (!updated) {
     return { ok: false, error: "Word not found." };
   }

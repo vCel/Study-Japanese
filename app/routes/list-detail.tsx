@@ -4,12 +4,12 @@ import { ChevronDown, GraduationCap, Layers, Pencil, Star } from "lucide-react";
 
 import type { Route } from "./+types/list-detail";
 import { getWordList } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { useStarredIds } from "~/lib/use-stars";
 import { isConvexClientConfigured } from "~/components/convex-provider";
 import { ImportantStar } from "~/components/important-star";
 import { SignedInOnly } from "~/components/signed-in-only";
 import { PageHeader } from "~/components/page-header";
-import { CanEdit } from "~/components/author-only";
 import { Badge } from "~/components/lightswind/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "~/components/lightswind/popover";
 import { Card, CardContent } from "~/components/lightswind/card";
@@ -19,12 +19,14 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Word list · 日本語Vocab" }];
 }
 
-export async function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params, context }: Route.LoaderArgs) {
   const id = Number.parseInt(params.id ?? "", 10);
   if (Number.isNaN(id)) {
     throw new Response("Invalid list id", { status: 400 });
   }
-  const list = await getWordList(id);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  const list = await getWordList(ownerId, id);
   if (!list) {
     throw new Response("Word list not found", { status: 404 });
   }
@@ -102,7 +104,7 @@ export default function ListDetail({ loaderData }: Route.ComponentProps) {
                 </PopoverTrigger>
                 <PopoverContent align="end" className="w-64 p-1">
                   <Link
-                    to={`/study/session?lists=${list.id}`}
+                    to={`/study/flashcards/session?lists=${list.id}`}
                     role="menuitem"
                     onClick={() => setStudyOpen(false)}
                     className="flex items-start gap-3 rounded-[var(--radius)] px-3 py-2 transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
@@ -121,7 +123,7 @@ export default function ListDetail({ loaderData }: Route.ComponentProps) {
 
                   {starredCount > 0 && (
                     <Link
-                      to={`/study/session?lists=${list.id}&starredIds=${starredIds.join(",")}`}
+                      to={`/study/flashcards/session?lists=${list.id}&starredIds=${starredIds.join(",")}`}
                       role="menuitem"
                       onClick={() => setStudyOpen(false)}
                       className="flex items-start gap-3 rounded-[var(--radius)] px-3 py-2 transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
@@ -140,16 +142,12 @@ export default function ListDetail({ loaderData }: Route.ComponentProps) {
                 </PopoverContent>
               </Popover>
             )}
-            {configured && (
-              <CanEdit ownerIds={[list.createdBy]}>
-                <Link
-                  to={`/lists/${list.id}/edit`}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-full border border-border px-5 text-sm font-medium transition-colors hover:border-primarylw/40 hover:bg-muted"
-                >
-                  <Pencil className="h-4 w-4" /> Edit list
-                </Link>
-              </CanEdit>
-            )}
+            <Link
+              to={`/lists/${list.id}/edit`}
+              className="inline-flex h-10 items-center gap-1.5 rounded-full border border-border px-5 text-sm font-medium transition-colors hover:border-primarylw/40 hover:bg-muted"
+            >
+              <Pencil className="h-4 w-4" /> Edit list
+            </Link>
           </>
         }
       />

@@ -95,7 +95,7 @@ export function ListsHome({
                   </Badge>
                   {list.wordCount > 0 && (
                     <Link
-                      to={`/study/session?lists=${list.id}`}
+                      to={`/study/flashcards/session?lists=${list.id}`}
                       className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primarylw px-6 text-sm font-medium text-white transition-colors hover:bg-primarylw-2"
                     >
                       <GraduationCap className="h-4 w-4" /> Study
@@ -140,7 +140,7 @@ function SelectionBar({ selected, clear }: { selected: number[]; clear: () => vo
           <X className="h-4 w-4" /> Clear
         </button>
         <Link
-          to={`/study/session?lists=${selected.join(",")}`}
+          to={`/study/flashcards/session?lists=${selected.join(",")}`}
           className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primarylw px-6 text-sm font-medium text-white transition-colors hover:bg-primarylw-2"
         >
           <GraduationCap className="h-4 w-4" /> Study

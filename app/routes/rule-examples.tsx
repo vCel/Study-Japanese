@@ -3,11 +3,10 @@ import { BookOpen, Sparkles } from "lucide-react";
 
 import type { Route } from "./+types/rule-examples";
 import { listRuleExamples } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
 import { Badge } from "~/components/lightswind/badge";
 import { Card, CardContent } from "~/components/lightswind/card";
-import { AdminOnly } from "~/components/admin-only";
-import { isConvexClientConfigured } from "~/components/convex-provider";
 import { Pagination } from "~/components/lightswind/pagination";
 
 export function meta({}: Route.MetaArgs) {
@@ -20,10 +19,12 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
-  return await listRuleExamples(Number.isNaN(page) ? 1 : page);
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  return await listRuleExamples(ownerId, Number.isNaN(page) ? 1 : page);
 }
 
 /**
@@ -44,13 +45,9 @@ export default function RuleExamples({ loaderData }: Route.ComponentProps) {
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
             No rule examples yet.{" "}
-            {isConvexClientConfigured() && (
-              <AdminOnly>
-                <Link to="/rules/new" className="text-primarylw underline">
-                  Add a rule with examples
-                </Link>
-              </AdminOnly>
-            )}
+            <Link to="/rules/new" className="text-primarylw underline">
+              Add a rule with examples
+            </Link>
           </CardContent>
         </Card>
       ) : (

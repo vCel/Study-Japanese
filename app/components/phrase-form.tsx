@@ -36,6 +36,7 @@ export const PHRASES_SAMPLE_JSON = `[
     "word": "おはようございます",
     "kana": "おはようございます",
     "meanings": ["Good morning (polite)"],
+    "notes": "Used until around 10–11am; drop the ございます with close friends/colleagues.",
     "examples": [
       { "japanese": "おはようございます、田中さん。", "translation": "Good morning, Mr. Tanaka." }
     ]
@@ -133,7 +134,7 @@ export function PhraseForm() {
 
         <JsonFillAccordion
           sample={PHRASES_SAMPLE_JSON}
-          placeholder='{"word": "ありがとうございます", "kana": "ありがとうございます", "meanings": ["Thank you very much"], "examples": [{"japanese": "…", "translation": "…"}]}'
+          placeholder='{"word": "ありがとうございます", "kana": "ありがとうございます", "meanings": ["Thank you very much"], "notes": "…", "examples": [{"japanese": "…", "translation": "…"}]}'
           hint="Every entry becomes a phrase (part of speech is forced to “phrase”). Filling replaces the rows above with one per entry, using the list title and tags as you typed them."
           onFill={(text) => {
             const parsed = parseVocabRows(text, { forcePos: "phrase" });

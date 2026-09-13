@@ -3,9 +3,8 @@ import { MessageSquareQuote, Plus } from "lucide-react";
 
 import type { Route } from "./+types/phrases";
 import { listWords } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
-import { isConvexClientConfigured } from "~/components/convex-provider";
-import { SignedInOnlyClient } from "~/components/signed-in-only";
 import { SearchBar } from "~/components/search-bar";
 import { Badge } from "~/components/lightswind/badge";
 import { Card, CardContent } from "~/components/lightswind/card";
@@ -18,11 +17,13 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const search = url.searchParams.get("q")?.trim() || null;
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
-  return await listWords(search, Number.isNaN(page) ? 1 : page, "phrase");
+  const owner = context.get(ownerContext);
+  const ownerId = owner?.ownerId ?? "anonymous";
+  return await listWords(ownerId, search, Number.isNaN(page) ? 1 : page, "phrase");
 }
 
 export default function Phrases({ loaderData }: Route.ComponentProps) {
@@ -36,14 +37,12 @@ export default function Phrases({ loaderData }: Route.ComponentProps) {
         icon={MessageSquareQuote}
         description={`${loaderData.total} phrase${loaderData.total === 1 ? "" : "s"}. Polite set phrases and everyday expressions.`}
         actions={
-          <SignedInOnlyClient>
-            <Link
-              to="/phrases/new"
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-primarylw px-6 text-sm font-medium text-white shadow transition-colors hover:bg-primarylw-2"
-            >
-              <Plus className="h-4 w-4" /> Add phrases
-            </Link>
-          </SignedInOnlyClient>
+          <Link
+            to="/phrases/new"
+            className="inline-flex h-10 items-center gap-2 rounded-full bg-primarylw px-6 text-sm font-medium text-white shadow transition-colors hover:bg-primarylw-2"
+          >
+            <Plus className="h-4 w-4" /> Add phrases
+          </Link>
         }
       />
 
@@ -58,11 +57,9 @@ export default function Phrases({ loaderData }: Route.ComponentProps) {
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground">
             No phrases found{search ? ` for “${search}”` : ""}.{" "}
-            <SignedInOnlyClient>
-              <Link to="/phrases/new" className="text-primarylw underline">
-                Add the first one
-              </Link>
-            </SignedInOnlyClient>
+            <Link to="/phrases/new" className="text-primarylw underline">
+              Add the first one
+            </Link>
           </CardContent>
         </Card>
       ) : (

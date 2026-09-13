@@ -1,6 +1,6 @@
 import type { Route } from "./+types/lists-new";
-import { getConvexSession, readFormToken } from "~/lib/auth.server";
 import { createWordList, insertVocabEntries } from "~/lib/db.server";
+import { ownerContext } from "~/lib/owner.server";
 import { enforceRateLimit, getClientIp } from "~/lib/ratelimit.server";
 import { parseTags } from "~/lib/tags";
 import { readVocabRows, toEntries } from "~/lib/vocab-rows";
@@ -15,9 +15,10 @@ export function meta({}: Route.MetaArgs) {
  * Create a word list from the form's own rows. The JSON accordion only *fills*
  * those rows on the client, so there is a single write path: the title, tags and
  * description as typed, plus every complete word row (with all of its meanings
- * and example sentences).
+ * and example sentences). Lists are private to the submitting owner (a signed-in
+ * account or a device).
  */
-export async function action({ request }: Route.ActionArgs): Promise<ListsNewActionData> {
+export async function action({ request, context }: Route.ActionArgs): Promise<ListsNewActionData> {
   const limit = await enforceRateLimit("UPLOAD_LIMITER", getClientIp(request), "upload");
   if (!limit.allowed) {
     return { ok: false, error: "Too many requests. Please wait a moment and try again." };
@@ -25,13 +26,9 @@ export async function action({ request }: Route.ActionArgs): Promise<ListsNewAct
 
   const form = await request.formData();
 
-  const session = await getConvexSession(readFormToken(form));
-  if (!session) {
-    return {
-      ok: false,
-      needsSignIn: true,
-      error: "You must be signed in to create word lists.",
-    };
+  const owner = context.get(ownerContext);
+  if (!owner) {
+    return { ok: false, error: "Could not identify your library." };
   }
 
   const title = typeof form.get("title") === "string" ? (form.get("title") as string).trim() : "";
@@ -64,8 +61,8 @@ export async function action({ request }: Route.ActionArgs): Promise<ListsNewAct
   }
 
   try {
-    const listId = await createWordList(title, description, session.user.id, tags);
-    const result = await insertVocabEntries(entries, session.user.id, listId);
+    const listId = await createWordList(owner.ownerId, title, description, tags);
+    const result = await insertVocabEntries(owner.ownerId, entries, listId);
     return { ok: true, listId, title, wordsInserted: result.wordsInserted };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown database error";

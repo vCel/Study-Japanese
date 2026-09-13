@@ -130,7 +130,7 @@ export function ListsNewForm() {
 
         <JsonFillAccordion
           sample={SAMPLE_JSON}
-          placeholder='{"word": "日本語", "kana": "にほんご", "meanings": ["Japanese language"], "examples": [{"japanese": "…", "translation": "…"}]}'
+          placeholder='{"word": "食べる", "kana": "たべる", "meanings": ["to eat"], "notes": "…", "forms": [{"name": "ます", "value": "食べます"}], "examples": [{"japanese": "…", "translation": "…"}]}'
           hint="A single object or an array both work; key aliases are accepted (kanji, reading, definitions, sentences, …). Filling replaces the rows above with one per entry, using the list title, tags and description as you typed them."
           onFill={(text) => {
             const parsed = parseVocabRows(text);

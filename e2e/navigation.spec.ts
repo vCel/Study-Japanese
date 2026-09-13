@@ -8,7 +8,8 @@ const ACTIVE_LINK_CASES = [
   { path: "/words/examples", label: "Examples" },
   { path: "/phrases/lists", label: "Phrase lists" },
   { path: "/phrases", label: "Phrases" },
-  { path: "/study", label: "Study" },
+  { path: "/study/flashcards", label: "Flashcards" },
+  { path: "/study/quizzes", label: "Quizzes" },
   { path: "/rules", label: "Rules & forms" },
   { path: "/rules/examples", label: "Rule examples" },
 ];
