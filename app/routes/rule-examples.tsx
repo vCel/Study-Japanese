@@ -57,9 +57,12 @@ export default function RuleExamples({ loaderData }: Route.ComponentProps) {
               <CardContent className="p-5">
                 <p className="text-lg">{example.japanese}</p>
                 {example.english && (
-                  <p className="mt-1 flex items-start gap-1.5 text-sm text-muted-foreground">
+                  <p className="mt-1 text-sm text-muted-foreground">{example.english}</p>
+                )}
+                {example.englishEquivalent && (
+                  <p className="mt-1 flex items-start gap-1.5 text-sm font-medium text-primarylw">
                     <BookOpen className="mt-0.5 h-4 w-4 shrink-0" />
-                    {example.english}
+                    {example.englishEquivalent}
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">

@@ -14,6 +14,8 @@ export const LIMITS = {
   api: { fallbackLimit: 60, windowMs: 60_000 },
   /** Uploads (writes): 10 requests per minute per key. */
   upload: { fallbackLimit: 10, windowMs: 60_000 },
+  /** AI quiz generation: expensive upstream calls, so a tight budget. */
+  ai: { fallbackLimit: 10, windowMs: 60_000 },
 } as const;
 
 export interface RateLimitResult {
@@ -65,7 +67,7 @@ function memoryLimit(
  * pass `null` to always use the in-memory fallback.
  */
 export async function enforceRateLimit(
-  binding: "API_LIMITER" | "UPLOAD_LIMITER" | null,
+  binding: "API_LIMITER" | "UPLOAD_LIMITER" | "AI_LIMITER" | null,
   key: string,
   limitName: keyof typeof LIMITS
 ): Promise<RateLimitResult> {
@@ -76,7 +78,9 @@ export async function enforceRateLimit(
       ? env.API_LIMITER
       : binding === "UPLOAD_LIMITER"
         ? env.UPLOAD_LIMITER
-        : null;
+        : binding === "AI_LIMITER"
+          ? env.AI_LIMITER
+          : null;
 
   if (limiter && typeof limiter.limit === "function") {
     try {

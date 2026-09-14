@@ -23,8 +23,7 @@ Framer Motion.
     (nouns / verbs / adjectives / adverbs / all) and a **deck size** (10–100).
   - **Phrases** — the same, but over **phrase lists** (no part-of-speech step).
   - **Rules** — drill your grammar rules, filtered by **rule type** and **tags**.
-  - **Quizzes** (`/study/quizzes`) sits next to it as a placeholder — the page renders its
-    header and nothing else for now.
+  - **Quizzes** (`/study/quizzes`) — see below.
 - **Saving a session:** the **Save session** button opens a Lightswind **Drawer** with a form
   (session name + save). **Load** opens a drawer containing a Lightswind **Scroll Area** with a
   **draggable reorder list** — drag the grip to reorder, tap a session to load it, ✕ to delete.
@@ -40,6 +39,59 @@ Framer Motion.
   `StudyCard` (`app/lib/study-cards.ts`), so one `Flashcards` component drills them all.
 - Keyboard: **Space** flips, **←** = Again, **→** = Got it.
 
+## Quizzes
+
+`/study/quizzes` is the AI-powered counterpart to the flashcards builder. Where a flashcard
+session is one kind of card, a quiz can span any combination of them:
+
+- **What to quiz on** — **Words**, **Phrases** and **Rules** are togglable buttons, not tabs, so
+  one quiz can test all three together (or any subset). At least one must stay on. The rest of
+  the panel follows: the list picker appears when words or phrases are on, the part-of-speech and
+  "what to ask about" steps only when words/phrases are on, and the rule-kind step only when
+  rules are on. The list picker merges word and phrase lists by id and shows the count for
+  whichever kinds are enabled, so a single list selection scopes both.
+
+Then the quiz-specific settings:
+
+- **Number of questions** — 5 / 10 / 15 / 20 / 30.
+- **Time limit per question** — a `Switch`; when on, a second row offers **15–90s** in 15s
+  steps. Off means untimed.
+- **Question types** (multi-select, at least one required):
+  - **Multiple choice** — pick from four options.
+  - **Type the answer** — free text; kana and romaji both count.
+  - **Fill in the blanks** — a sentence with one or two gaps, filled from an *unordered*
+    button bank. For particle rules the gaps are the particles themselves
+    (e.g. 「私___学生です」 → は) with plausible particle distractors.
+  - **True or false** — judge whether a generated sentence is correct.
+  - **How to split them** — **Even split** or **Mix freely** (the AI picks the mix), shown
+    once more than one type is selected.
+- **Difficulty** — a Lightswind **Slider** on the same line as its label, across Easy / Normal /
+  Hard, which drives sentence length, gap count, and how close the distractors sit to the answer.
+- **Only what I keep missing** — appears once the answer log holds at least one wrong answer for
+  a selected kind. Scopes the quiz to those items, worst accuracy first, so a quiz can target
+  exactly what you keep getting wrong. Rule ids and word ids are separate sequences, so they are
+  sent (and applied) per kind.
+
+Pressing **Generate quiz** opens the session page, which asks the AI for the questions and
+then runs them one at a time with per-question feedback, an explanation, and a link back to
+the source rule/word page. Because a question's `sourceId` may point at either a rule or a word,
+each generated question also carries a `sourceKind` — that is what makes the source link and the
+answer log correct in a quiz that mixes both.
+
+**Model fallback.** Generation walks a fixed chain —
+`gemini-3.8-flash` → `gemini-3.7-flash` → `gemini-3.6-flash` → `glm-4.7-flash` → `glm-4.5-flash`
+— trying the next model when one fails or times out. A **rate-limit** response is special: a
+Gemini 429 means the whole Google account is out of quota, so the remaining Gemini models are
+skipped and the walk jumps straight to GLM. Transient "provider is busy" errors get one retry
+with a short backoff before moving on. The loading panel names the model currently being tried
+and explains any skip, so a slow cascade never looks like a freeze. See
+`app/lib/ai.server.ts` for the error taxonomy.
+
+**Answer log.** Questions are generated fresh every session and are never stored. What *is*
+kept is per-library-item accuracy — "you've answered the は-particle rule right 4 times and
+wrong 3 times" — stored in Convex (`convex/quizStats.ts`) so it follows the account across
+devices, and folded in once at the end of a session.
+
 ## App structure
 
 - **Side navigation** (desktop) / top bar (mobile) is grouped into four sections —
@@ -54,7 +106,9 @@ Framer Motion.
   (`/study/flashcards?lists=1,2,3`). The header holds a single **Add word list** button
   (`/lists/new`). Phrase lists are excluded here.
 - **`/words`, `/words/:id`** — searchable vocabulary with meanings, examples and list links
-  (phrases are excluded here; they live in the Phrases section).
+  (phrases are excluded here; they live in the Phrases section). A word page reads **meanings
+  | conjugation forms** side by side (the two cards are stretched to the **same height**),
+  with the **example sentences** in a full-width card underneath — Forms first, then Examples.
 - **`/phrases/lists`** — **phrase lists** (word lists whose entries are phrases), with the
   same tag filter, per-list study buttons and multi-select. The seeded *Everyday Phrases*
   list lives here.
@@ -81,8 +135,9 @@ Framer Motion.
 - **`/rules/examples`** — every rule/grammar example sentence in one place, each linking back
   to its rule. Kept separate from `/words/examples`, which only lists **word-list** examples.
 - **`/rules/:id`** — rule detail: the explanation card holds the explanation *and* its
-  ポイント callouts, then examples, an **English equivalents** section, and a **Related
-  rules** section (only the rules you linked by hand, see below).
+  ポイント callouts, then examples (each with its translation and its **English
+  equivalent**), an **English equivalents** section listing those equivalents on their own,
+  and a **Related rules** section (only the rules you linked by hand, see below).
 - **Edit pages** (`/lists/:id/edit`, `/words/:id/edit`, `/rules/:id/edit`) keep the same
   structure as their detail page with the text swapped for inputs, and are as wide as their
   *Add* counterpart (no narrow column). Repeatable lists — word meanings, word examples and
@@ -174,10 +229,10 @@ app/
   root.tsx                     # layout: side navigation (desktop) + mobile top bar
   routes.ts                    # route config
   routes/                      # index (word lists home), words, phrases (+ phrases/lists),
-                               # study/flashcards (+ /session) and study/quizzes,
+                               # study/flashcards (+ /session), study/quizzes (+ /session),
                                # examples, lists/:id, lists/new, rules/*
                                # (+ rules/examples), settings, upload (redirect),
-                               # login, signup, logout, api/*
+                               # login, signup, logout, api/* (+ api/quiz/generate)
   components/
     sidebar.tsx                # desktop side nav + mobile top bar (dock lives here)
     page-header.tsx            # the one page header every page uses (fixed height)
@@ -186,6 +241,8 @@ app/
     json-fill-accordion.tsx    # the shared *Fill form from JSON* accordion (never submits)
     vocab-rows-editor.tsx      # draggable word/phrase rows with meanings + examples
     study-setup.tsx            # study tabs (words / phrases / forms) + save & load drawers
+    quiz-setup.tsx             # quiz builder: togglable sources, count, timer, types, difficulty
+    quiz-runner.tsx            # quiz session: generation panel, timer, per-type inputs, results
     rule-point.tsx             # the dashed ポイント callout (one per rule point)
     select-field.tsx           # Lightswind Select wrapped for <Form> usage
     delete-button.tsx          # Delete + Lightswind Alert Dialog confirm (submits the form)
@@ -200,7 +257,7 @@ app/
     auth-buttons.tsx           # sidebar sign-in area (name + settings cog when signed in)
     lightswind/                # Lightswind UI components (accordion, alert dialog, breadcrumb,
                                # dock, drawer, reorder, tabs, scroll area, animated copy button,
-                               # select, button, card, badge, input, pagination, toast)
+                               # select, button, card, badge, input, pagination, slider, toast)
   lib/
     db.server.ts               # D1 queries (server-only)
     auth.server.ts             # verifies Convex tokens server-side before D1 writes
@@ -210,8 +267,14 @@ app/
     tags.ts                    # shared tag parsing (comma-separated or array)
     study-prefs.ts             # study config + saved sessions (localStorage, per tab)
     study-cards.ts             # flattens words/phrases/rules into flashcard StudyCards
+    quiz-types.ts              # quiz config + generated-question shapes (shared client/server)
+    quiz-prefs.ts              # quiz config + saved setups (localStorage)
+    quiz-prompt.ts             # builds the generation prompt from library items (pure)
+    quiz-parse.ts              # validates/normalises the model's JSON into questions
+    ai.server.ts               # Gemini → GLM fallback chain + error classification (server-only)
+    use-quiz-stats.ts          # reads/writes the per-item answer log (Convex)
     rule-draft.ts              # rule drafts: parse pasted JSON + validate (shared client/server)
-convex/                        # Convex Auth backend (schema, auth, http, users)
+convex/                        # Convex Auth backend (schema, auth, http, users, stars, quizStats)
 migrations/                    # D1 SQL migrations (schema + seed)
 workers/app.ts                 # Worker entry
 wrangler.jsonc                 # Workers + D1 binding config
@@ -262,6 +325,23 @@ VITE_CONVEX_URL=https://<your-deployment>.convex.cloud
 # JWT signing key required by Convex Auth:
 npx convex env set JWT_PRIVATE_KEY "<paste output of: openssl genrsa -out key.pem 2048 && cat key.pem>"
 ```
+
+Quiz generation additionally needs an AI key. It is called from the Worker, so it is a
+**server-side secret** read via `env.*` — deliberately *not* prefixed with `VITE_`, which
+would inline it into the browser bundle:
+
+```bash
+# local development: put them in .dev.vars
+GEMINI_API_KEY=<your Gemini key>
+GLM_API_KEY=<your Z.AI / BigModel key>
+
+# production: Worker secrets
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put GLM_API_KEY
+```
+
+Either key alone works (the chain just skips the provider with no key). Both must be
+re-run after changing them, and `wrangler types` must be re-run so `env.*` stays typed.
 
 > Until `VITE_CONVEX_URL` is set, the app runs normally for browsing/studying, but
 > sign-in/sign-up pages and the upload form show a "not configured" state.
@@ -328,9 +408,11 @@ when Convex is not configured, and `200` with JSON otherwise. The upload action 
 limited twice — per client IP and per user account — and returns a friendly error in the
 form when throttled.
 
-Rate limiting is enforced by the `API_LIMITER` / `UPLOAD_LIMITER` bindings in
-`wrangler.jsonc` (`simple: { limit, period }`). If a binding is unavailable (e.g. unit
-tests), an in-memory per-isolate limiter with identical limits is used as a fallback.
+Rate limiting is enforced by the `API_LIMITER` / `UPLOAD_LIMITER` / `AI_LIMITER` bindings in
+`wrangler.jsonc` (`simple: { limit, period }`). `AI_LIMITER` guards quiz generation, which
+calls out to Gemini/GLM and so gets a much smaller budget than the general API. If a binding
+is unavailable (e.g. unit tests), an in-memory per-isolate limiter with identical limits is
+used as a fallback.
 
 ## Word lists & tags
 
@@ -357,12 +439,22 @@ a phrase list's own tag links on `/lists/:id` do the same. `/rules` uses the ide
 
 The **"Rules & forms"** section in the navigation (visually separated, labelled 文法)
 covers **word rules/forms** and **sentence rules** — each with a title, up to four
-**points** (ポイント lines describing the pattern), an explanation, and examples that pair a
-**Japanese sentence with its English equivalent**. Rules are private to their owner, just
-like word lists and phrases.
+**points** (ポイント lines describing the pattern), an explanation, and examples. A rule
+example carries **two** English fields, because they answer two different questions:
+
+| Field | Question it answers | Example (`友達に手伝われました`) |
+| --- | --- | --- |
+| `english` | What does the sentence mean? | “My friend helped me.” |
+| `englishEquivalent` | How is the same idea *said in English*? | “I was helped by my friend.” |
+
+The **equivalent** is the one the rule page breaks the sentence down into (it is what the
+detail page's *English equivalents* card lists), so a passive or a request can be explained
+in English instead of only translated. Rules are private to their owner, just like word
+lists and phrases.
 
 - `/rules` — browse your rules, filterable by kind (All / Word rules / Sentence rules)
-- `/rules/:id` — rule detail with examples + English equivalents
+- `/rules/:id` — rule detail with examples (translation + English equivalent) and an
+  English equivalents card
 - `/rules/new`, `/rules/:id/edit` — create/edit forms. A rule shows one
   dashed ポイント callout per point (start with one, then *Add point* up to four; each has
   its own remove control once there is more than one), plus a **Related rules** picker:
@@ -372,7 +464,9 @@ like word lists and phrases.
 - `/rules/upload` — bulk import: paste an array of rule objects (same shape
   as the create form). Each item needs `kind` (`"word"` or `"sentence"`), `title` and
   `explanation`; `points` (up to four strings) and `examples` are optional. A legacy
-  single `pattern` string is still accepted and becomes the first point:
+  single `pattern` string is still accepted and becomes the first point. Each example takes
+  `japanese`, an optional `english` translation and an optional `englishEquivalent`
+  (short alias: `equivalent`):
 
   ```json
   [
@@ -381,7 +475,13 @@ like word lists and phrases.
       "title": "Polite て-form",
       "points": ["Verb て-form", "Drop ます and add て"],
       "explanation": "The て-form connects clauses and forms requests.",
-      "examples": [{ "japanese": "食べてください。", "english": "Please eat." }]
+      "examples": [
+        {
+          "japanese": "食べてください。",
+          "english": "Please eat.",
+          "englishEquivalent": "Please eat."
+        }
+      ]
     }
   ]
   ```

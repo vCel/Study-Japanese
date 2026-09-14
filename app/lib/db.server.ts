@@ -1256,7 +1256,14 @@ export type RuleKind = "word" | "sentence";
 
 export interface RuleExample {
   japanese: string;
+  /** The English translation of the example sentence — what it means. */
   english: string;
+  /**
+   * The English *equivalent* of the grammar shown, i.e. how the same idea is
+   * said in English (what the rule page breaks the sentence down into).
+   * NULL = not written yet.
+   */
+  englishEquivalent: string | null;
 }
 
 export interface RuleSummary {
@@ -1486,9 +1493,14 @@ export async function getRule(ownerId: string, id: number): Promise<RuleDetail |
   if (!row) return null;
 
   const { results } = await db
-    .prepare("SELECT japanese, english FROM rule_examples WHERE rule_id = ?1 ORDER BY id ASC")
+    .prepare(
+      `SELECT japanese, english, english_equivalent
+         FROM rule_examples
+        WHERE rule_id = ?1
+        ORDER BY id ASC`
+    )
     .bind(id)
-    .all<RuleExample>();
+    .all<{ japanese: string; english: string; english_equivalent: string | null }>();
   const tagMap = await loadTagsForRules(db, [id]);
 
   return {
@@ -1499,7 +1511,11 @@ export async function getRule(ownerId: string, id: number): Promise<RuleDetail |
     points: parseRulePoints(row.points, row.pattern),
     createdAt: row.created_at,
     exampleCount: (results ?? []).length,
-    examples: results ?? [],
+    examples: (results ?? []).map((row) => ({
+      japanese: row.japanese,
+      english: row.english,
+      englishEquivalent: row.english_equivalent,
+    })),
     tags: tagMap.get(id) ?? [],
     related: await loadRelatedRules(db, id),
     notes: row.notes,
@@ -1593,8 +1609,10 @@ export async function createRule(ownerId: string, input: RuleInput): Promise<num
     await db.batch(
       input.examples.map((e) =>
         db
-          .prepare("INSERT INTO rule_examples (rule_id, japanese, english) VALUES (?1, ?2, ?3)")
-          .bind(ruleId, e.japanese, e.english)
+          .prepare(
+            "INSERT INTO rule_examples (rule_id, japanese, english, english_equivalent) VALUES (?1, ?2, ?3, ?4)"
+          )
+          .bind(ruleId, e.japanese, e.english, e.englishEquivalent ?? null)
       )
     );
   }
@@ -1628,8 +1646,10 @@ export async function updateRule(ownerId: string, id: number, input: RuleInput):
     await db.batch(
       input.examples.map((e) =>
         db
-          .prepare("INSERT INTO rule_examples (rule_id, japanese, english) VALUES (?1, ?2, ?3)")
-          .bind(id, e.japanese, e.english)
+          .prepare(
+            "INSERT INTO rule_examples (rule_id, japanese, english, english_equivalent) VALUES (?1, ?2, ?3, ?4)"
+          )
+          .bind(id, e.japanese, e.english, e.englishEquivalent ?? null)
       )
     );
   }
@@ -1733,7 +1753,10 @@ export async function getRuleStudyDeck(
 export interface RuleExampleItem {
   id: number;
   japanese: string;
+  /** English translation of the sentence. */
   english: string;
+  /** English equivalent of the grammar shown (null = not written yet). */
+  englishEquivalent: string | null;
   ruleId: number;
   ruleTitle: string;
   ruleKind: RuleKind;
@@ -1759,7 +1782,7 @@ export async function listRuleExamples(ownerId: string, page: number): Promise<P
 
   const { results } = await db
     .prepare(
-      `SELECT re.id, re.japanese, re.english, re.rule_id,
+      `SELECT re.id, re.japanese, re.english, re.english_equivalent, re.rule_id,
               r.title AS rule_title, r.kind AS rule_kind
        FROM rule_examples re
        JOIN rules r ON r.id = re.rule_id
@@ -1772,6 +1795,7 @@ export async function listRuleExamples(ownerId: string, page: number): Promise<P
       id: number;
       japanese: string;
       english: string;
+      english_equivalent: string | null;
       rule_id: number;
       rule_title: string;
       rule_kind: RuleKind;
@@ -1782,6 +1806,7 @@ export async function listRuleExamples(ownerId: string, page: number): Promise<P
       id: row.id,
       japanese: row.japanese,
       english: row.english,
+      englishEquivalent: row.english_equivalent,
       ruleId: row.rule_id,
       ruleTitle: row.rule_title,
       ruleKind: row.rule_kind,

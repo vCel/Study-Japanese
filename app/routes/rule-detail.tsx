@@ -1,12 +1,11 @@
-import { Link, useParams } from "react-router";
-import { BookOpen, Languages, Pencil } from "lucide-react";
+import { Link } from "react-router";
+import { Languages, Pencil } from "lucide-react";
 
 import type { Route } from "./+types/rule-detail";
 import { getRule } from "~/lib/db.server";
 import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
 import { Badge } from "~/components/lightswind/badge";
-import { Button } from "~/components/lightswind/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/lightswind/card";
 import { RulePoint } from "~/components/rule-point";
 
@@ -30,7 +29,12 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function RuleDetail({ loaderData }: Route.ComponentProps) {
   const { rule } = loaderData;
-  const englishExamples = rule.examples.filter((example) => example.english.trim().length > 0);
+  // Examples whose English *equivalent* has been written — those are the ones
+  // the breakdown list below can explain. (The translation of an example is a
+  // different field: see `rule-form.tsx`.)
+  const equivalents = rule.examples.filter(
+    (example) => example.englishEquivalent?.trim().length
+  );
 
   return (
     <div className="w-full">
@@ -111,35 +115,40 @@ export default function RuleDetail({ loaderData }: Route.ComponentProps) {
             rule.examples.map((example, index) => (
               <div key={index} className="rounded-[var(--radius)] border border-border p-4">
                 <p className="text-lg">{example.japanese}</p>
-                <p className="mt-1 flex items-start gap-1.5 text-sm text-muted-foreground">
-                  <BookOpen className="mt-0.5 h-4 w-4 shrink-0" />
-                  {example.english}
-                </p>
+                {example.english && (
+                  <p className="mt-1 text-sm text-muted-foreground">{example.english}</p>
+                )}
+                {example.englishEquivalent && (
+                  <p className="mt-1 flex items-start gap-1.5 text-sm font-medium text-primarylw">
+                    <Languages className="mt-0.5 h-4 w-4 shrink-0" />
+                    {example.englishEquivalent}
+                  </p>
+                )}
               </div>
             ))
           )}
         </CardContent>
       </Card>
 
-      {englishExamples.length > 0 && (
+      {equivalents.length > 0 && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="text-lg">
               English equivalents{" "}
               <span className="text-sm font-normal text-muted-foreground">
-                ({englishExamples.length})
+                ({equivalents.length})
               </span>
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2">
-              {englishExamples.map((example, index) => (
+              {equivalents.map((example, index) => (
                 <li
                   key={index}
                   className="flex items-start gap-2 rounded-[var(--radius)] border border-border bg-muted/30 p-3 text-sm leading-relaxed"
                 >
                   <Languages className="mt-0.5 h-4 w-4 shrink-0 text-primarylw" />
-                  <span>{example.english}</span>
+                  <span>{example.englishEquivalent}</span>
                 </li>
               ))}
             </ul>

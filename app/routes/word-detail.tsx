@@ -56,11 +56,12 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
       />
 
       {/*
-        Meanings and example sentences share the width on large screens: a
+        Meanings and conjugation forms share the width on large screens: a
         one-line meanings list no longer floats in a card stretched the whole
-        way across the page.
+        way across the page. The row is stretched (no `items-start`) so the two
+        cards measure the same height.
       */}
-      <div className="grid items-start gap-6 lg:grid-cols-3">
+      <div className="grid items-stretch gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="text-lg">Meanings</CardTitle>
@@ -84,61 +85,61 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-lg">
-              Example sentences{" "}
-              <span className="text-sm font-normal text-muted-foreground">
-                ({word.examples.length})
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 xl:grid-cols-2">
-            {word.examples.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No examples yet for this word.</p>
-            ) : (
-              word.examples.map((example) => (
+        {/* Conjugation forms — listed before the example sentences. */}
+        {word.forms.length > 0 && (
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-lg">
+                Forms{" "}
+                <span className="text-sm font-normal text-muted-foreground">
+                  ({word.forms.length})
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {word.forms.map((form, index) => (
                 <div
-                  key={example.id}
-                  className="rounded-[var(--radius)] border border-border p-4"
+                  key={index}
+                  className="flex items-baseline justify-between gap-2 rounded-[var(--radius)] border border-border p-3"
                 >
-                  <p className="text-lg">{example.japanese}</p>
-                  {example.translation && (
-                    <p className="mt-1 text-sm text-muted-foreground">{example.translation}</p>
-                  )}
+                  <span className="text-sm font-medium text-muted-foreground">
+                    {form.name || "Form"}
+                  </span>
+                  <span className="text-lg font-semibold">{form.value}</span>
                 </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+              ))}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      {/* Conjugation forms */}
-      {word.forms.length > 0 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-lg">
-              Forms{" "}
-              <span className="text-sm font-normal text-muted-foreground">
-                ({word.forms.length})
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {word.forms.map((form, index) => (
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-lg">
+            Example sentences{" "}
+            <span className="text-sm font-normal text-muted-foreground">
+              ({word.examples.length})
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 xl:grid-cols-2">
+          {word.examples.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No examples yet for this word.</p>
+          ) : (
+            word.examples.map((example) => (
               <div
-                key={index}
-                className="flex items-baseline justify-between gap-2 rounded-[var(--radius)] border border-border p-3"
+                key={example.id}
+                className="rounded-[var(--radius)] border border-border p-4"
               >
-                <span className="text-sm font-medium text-muted-foreground">
-                  {form.name || "Form"}
-                </span>
-                <span className="text-lg font-semibold">{form.value}</span>
+                <p className="text-lg">{example.japanese}</p>
+                {example.translation && (
+                  <p className="mt-1 text-sm text-muted-foreground">{example.translation}</p>
+                )}
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       {/* Notes */}
       {word.notes && (

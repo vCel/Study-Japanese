@@ -11,6 +11,7 @@
 import type * as account from "../account.js";
 import type * as auth from "../auth.js";
 import type * as http from "../http.js";
+import type * as quizStats from "../quizStats.js";
 import type * as stars from "../stars.js";
 import type * as users from "../users.js";
 
@@ -24,6 +25,7 @@ declare const fullApi: ApiFromModules<{
   account: typeof account;
   auth: typeof auth;
   http: typeof http;
+  quizStats: typeof quizStats;
   stars: typeof stars;
   users: typeof users;
 }>;

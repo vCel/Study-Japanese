@@ -9,7 +9,14 @@ import { parseTags } from "~/lib/tags";
 
 export interface RuleDraftExample {
   japanese: string;
+  /** The English translation of the sentence — what it means. */
   english: string;
+  /**
+   * The English *equivalent* of the grammar being shown, i.e. how the same
+   * idea is actually said in English. "" = none. This is the field the rule
+   * page breaks the sentence down into.
+   */
+  englishEquivalent: string;
 }
 
 export interface RuleDraft {
@@ -34,9 +41,20 @@ export interface RulePayload {
   explanation: string;
   points: string[];
   tags: string[];
-  examples: RuleDraftExample[];
+  /** The normalized examples — as stored, so `englishEquivalent` is nullable. */
+  examples: RuleInputExample[];
   relatedIds: number[];
   notes: string | null;
+}
+
+/**
+ * A rule example as it is written to the database: the translation is always
+ * stored (the column is NOT NULL), the equivalent only when one was given.
+ */
+export interface RuleInputExample {
+  japanese: string;
+  english: string;
+  englishEquivalent: string | null;
 }
 
 export const MAX_RULES = 100;
@@ -69,9 +87,13 @@ function readExamples(raw: unknown): RuleDraftExample[] {
     .slice(0, MAX_EXAMPLES)
     .map((entry) => {
       const obj = (entry ?? {}) as Record<string, unknown>;
+      // `englishEquivalent` is the canonical key; `equivalent` is a short alias
+      // so hand-written JSON stays terse.
+      const equivalent = obj.englishEquivalent ?? obj.equivalent;
       return {
         japanese: typeof obj.japanese === "string" ? obj.japanese.trim() : "",
         english: typeof obj.english === "string" ? obj.english.trim() : "",
+        englishEquivalent: typeof equivalent === "string" ? equivalent.trim() : "",
       };
     })
     .filter((example) => example.japanese.length > 0);
@@ -181,6 +203,9 @@ export function draftToRulePayload(
         .map((example) => ({
           japanese: example.japanese.trim().slice(0, 500),
           english: example.english.trim().slice(0, 500),
+          englishEquivalent: example.englishEquivalent.trim()
+            ? example.englishEquivalent.trim().slice(0, 500)
+            : null,
         })),
       relatedIds: readRelatedIds(draft.relatedIds),
       notes: draft.notes.trim() ? draft.notes.trim().slice(0, 2000) : null,

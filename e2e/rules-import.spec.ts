@@ -17,7 +17,13 @@ const TWO_RULES = JSON.stringify([
     points: ["Verb stem + ました", "Drop ます and add ました"],
     explanation: "Drop ます and add ました for the polite past.",
     tags: "verbs, jlpt",
-    examples: [{ japanese: "食べました", english: "ate (polite)" }],
+    examples: [
+      {
+        japanese: "食べました",
+        english: "ate (polite)",
+        englishEquivalent: "I ate (politely)",
+      },
+    ],
   },
   {
     kind: "sentence",
@@ -60,6 +66,11 @@ test.describe("rules: JSON import fills the form", () => {
       "は marks the topic the sentence is about."
     );
     await expect(page.getByLabel("Example 1 (Japanese) 1")).toHaveValue("食べました");
+    // The example's translation and its English equivalent are separate fields.
+    await expect(page.getByLabel("Example 1 (English) 1")).toHaveValue("ate (polite)");
+    await expect(page.getByLabel("Example 1 (English equivalent) 1")).toHaveValue(
+      "I ate (politely)"
+    );
 
     // Still on the create page — nothing was written.
     await expect(page).toHaveURL(/\/rules\/new$/);

@@ -102,12 +102,40 @@ test.describe("rules & forms list", () => {
 });
 
 test.describe("rule detail", () => {
-  test("has an English equivalents section", async ({ page }) => {
+  test("has an English equivalents section built from its own field", async ({ page }) => {
     await page.goto("/rules/1");
     // Anchored: the section heading carries a count, and the site footer also
     // mentions "English equivalents".
-    await expect(page.getByText(/^English equivalents/)).toBeVisible();
-    await expect(page.locator("main ul li").first()).toBeVisible();
+    const section = page.locator("main").getByText(/^English equivalents/);
+    await expect(section).toBeVisible();
+
+    // The equivalents are the rule example's own `englishEquivalent` field —
+    // not a second rendering of the translation of the sentences above.
+    const equivalents = page.locator("main ul li");
+    await expect(equivalents.first()).toBeVisible();
+    await expect(equivalents).toHaveCount(2);
+    await expect(equivalents).toContainText([
+      "kaku → kakimasu (to write → writes, politely)",
+      "taberu → tabemashita (to eat → ate, politely)",
+    ]);
+  });
+
+  test("shows each example's translation and its English equivalent", async ({ page }) => {
+    await page.goto("/rules/1");
+
+    // The example cards sit above the breakdown: sentence, then translation,
+    // then the equivalent the section below re-lists.
+    const example = page.locator("main").getByText("書く → 書きます").locator("../..");
+    await expect(example).toContainText("kaku → kakimasu (to write → writes, politely)");
+
+    const sectionY = await page
+      .locator("main")
+      .getByText(/^English equivalents/)
+      .boundingBox();
+    const exampleY = await example.boundingBox();
+    expect(sectionY, "English equivalents").not.toBeNull();
+    expect(exampleY, "example card").not.toBeNull();
+    expect(exampleY!.y).toBeLessThan(sectionY!.y);
   });
 
   test("puts the kind badge to the right of the heading", async ({ page }) => {
@@ -194,9 +222,12 @@ test.describe("rule examples page", () => {
     await page.goto("/rules/examples");
     await expect(page.getByRole("heading", { level: 1, name: "Rule examples" })).toBeVisible();
 
-    // A seeded rule example lives here…
+    // A seeded rule example lives here, with its equivalent broken out…
     const ruleExample = "書く → 書きます";
     await expect(page.getByText(ruleExample)).toBeVisible();
+    await expect(
+      page.getByText("kaku → kakimasu (to write → writes, politely)")
+    ).toBeVisible();
 
     // …and is not mixed into the word-list examples page.
     await page.goto("/words/examples");

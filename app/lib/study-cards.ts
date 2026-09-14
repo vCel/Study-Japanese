@@ -56,7 +56,9 @@ export function ruleToStudyCard(rule: RuleDetail, side: CardSide): StudyCard {
     side,
     examples: rule.examples.map((example) => ({
       japanese: example.japanese,
-      translation: example.english || null,
+      // The card's answer side is the *equivalent* — how the grammar is said in
+      // English — falling back to the plain translation when there is none.
+      translation: example.englishEquivalent || example.english || null,
     })),
   };
 }

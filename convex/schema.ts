@@ -29,4 +29,23 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_kind_item", ["userId", "kind", "itemId"]),
+  /**
+   * Per-user quiz answer log. Quiz questions themselves are ephemeral — the AI
+   * regenerates them every session — so what is worth keeping is which library
+   * item the user got right or wrong. Keyed by the same (userId, kind, itemId)
+   * shape as `stars`, which lets the two be joined when the quiz builder wants
+   * to prioritise "the rules you keep missing".
+   */
+  quizStats: defineTable({
+    userId: v.id("users"),
+    kind: v.union(v.literal("word"), v.literal("rule")),
+    /** `words.id` for words/phrases, `rules.id` for rules. */
+    itemId: v.number(),
+    correct: v.number(),
+    wrong: v.number(),
+    /** Epoch ms of the most recent attempt, for "recently missed" ordering. */
+    lastAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_kind_item", ["userId", "kind", "itemId"]),
 });

@@ -155,6 +155,57 @@ test.describe("word detail", () => {
     expect(examplesBox, "examples heading").not.toBeNull();
     expect(listBox!.y).toBeGreaterThan(examplesBox!.y);
   });
+
+  test("puts Forms before Examples, with the side-by-side cards the same height", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/words/1");
+    await page.waitForLoadState("networkidle");
+
+    // Words are private to their owner: a fresh browser has no device cookie, so
+    // it can only see the starter pack. Nothing to lay out in that case.
+    if (await page.getByRole("heading", { level: 1, name: "404" }).isVisible().catch(() => false)) {
+      test.skip(true, "word 1 is not visible to this browser's owner");
+    }
+
+    const forms = page.getByText(/^Forms/).first();
+    const examples = page.getByText(/^Example sentences/).first();
+    await expect(forms).toBeVisible();
+    await expect(examples).toBeVisible();
+
+    const formsBox = await forms.boundingBox();
+    const examplesBox = await examples.boundingBox();
+    expect(formsBox, "forms heading").not.toBeNull();
+    expect(examplesBox, "examples heading").not.toBeNull();
+    // The forms card swapped places with the examples card.
+    expect(formsBox!.y).toBeLessThan(examplesBox!.y);
+
+    // The two cards that share the row (meanings | forms) are stretched to the
+    // same height rather than sizing to their own content.
+    const heights = await page.evaluate(() => {
+      const heading = Array.from(document.querySelectorAll("main div, main h2, main h3")).find(
+        (el) => (el.textContent ?? "").trim() === "Meanings"
+      );
+      const meaningsCard = heading?.closest("[class*='rounded-']") as HTMLElement | null;
+      const formsHeading = Array.from(document.querySelectorAll("main div")).find((el) =>
+        (el.textContent ?? "").trim().startsWith("Forms")
+      );
+      const formsCard = formsHeading?.closest("[class*='rounded-']") as HTMLElement | null;
+      if (!meaningsCard || !formsCard) return null;
+      return {
+        meanings: Math.round(meaningsCard.getBoundingClientRect().height),
+        forms: Math.round(formsCard.getBoundingClientRect().height),
+        sameRow:
+          Math.abs(meaningsCard.getBoundingClientRect().y - formsCard.getBoundingClientRect().y) <
+          4,
+      };
+    });
+
+    expect(heights).not.toBeNull();
+    expect(heights!.sameRow).toBe(true);
+    expect(heights!.meanings).toBe(heights!.forms);
+  });
 });
 
 /**

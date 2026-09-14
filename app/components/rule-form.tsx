@@ -62,7 +62,11 @@ export const RULES_SAMPLE_JSON = `[
     "explanation": "The て-form connects clauses and forms requests.",
     "notes": "The て-form has several uses — this rule covers the request usage only.",
     "examples": [
-      { "japanese": "食べてください。", "english": "Please eat." }
+      {
+        "japanese": "食べてください。",
+        "english": "Please eat.",
+        "englishEquivalent": "Please eat."
+      }
     ]
   }
 ]`;
@@ -77,6 +81,13 @@ interface ExampleRow {
   id: string;
   japanese: string;
   english: string;
+  /**
+   * The English equivalent of the grammar shown — how the same idea is said in
+   * English. Kept separate from `english` (the translation of the sentence)
+   * so e.g. 友達に手伝われました can translate to "My friend helped me." while
+   * its equivalent is "I was helped by my friend."
+   */
+  englishEquivalent: string;
 }
 
 /** One editable ポイント (point!) row inside a draft. */
@@ -117,6 +128,7 @@ function toDraft(draft: RuleDraft): Draft {
       id: `x${index}-${key}`,
       japanese: example.japanese,
       english: example.english,
+      englishEquivalent: example.englishEquivalent ?? "",
     })),
   };
 }
@@ -132,6 +144,7 @@ function toRuleDraft(draft: Draft): RuleDraft {
     examples: draft.examples.map((example) => ({
       japanese: example.japanese,
       english: example.english,
+      englishEquivalent: example.englishEquivalent,
     })),
     relatedIds: draft.relatedIds,
     notes: draft.notes,
@@ -365,7 +378,12 @@ function RuleFields({
               onChange({
                 examples: [
                   ...draft.examples,
-                  { id: `new-${draft.id}-${draft.examples.length}`, japanese: "", english: "" },
+                  {
+                    id: `new-${draft.id}-${draft.examples.length}`,
+                    japanese: "",
+                    english: "",
+                    englishEquivalent: "",
+                  },
                 ],
               })
             }
@@ -373,6 +391,11 @@ function RuleFields({
             <Plus className="h-3.5 w-3.5" /> Add example
           </button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          The <span className="font-medium">translation</span> says what the sentence means; the{" "}
+          <span className="font-medium">English equivalent</span> is how the same idea is said in
+          English, e.g. 友達に手伝われました = “I was helped by my friend.”
+        </p>
         {draft.examples.length === 0 ? (
           <p className="text-xs text-muted-foreground">No examples yet.</p>
         ) : (
@@ -388,7 +411,7 @@ function RuleFields({
                   })
                 }
               >
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 sm:grid-cols-3">
                   <Input
                     value={example.japanese}
                     onChange={(event) =>
@@ -402,8 +425,16 @@ function RuleFields({
                     onChange={(event) =>
                       updateExample(example.id, { english: event.target.value })
                     }
-                    placeholder="English equivalent"
+                    placeholder="English translation"
                     aria-label={`Example ${exampleIndex + 1} (English)${suffix}`}
+                  />
+                  <Input
+                    value={example.englishEquivalent}
+                    onChange={(event) =>
+                      updateExample(example.id, { englishEquivalent: event.target.value })
+                    }
+                    placeholder="English equivalent"
+                    aria-label={`Example ${exampleIndex + 1} (English equivalent)${suffix}`}
                   />
                 </div>
               </ReorderRow>
@@ -559,7 +590,7 @@ export function RulesCreateForm({
 
         <JsonFillAccordion
           sample={RULES_SAMPLE_JSON}
-          placeholder='[{ "kind": "word", "title": "…", "explanation": "…", "examples": [{ "japanese": "…", "english": "…" }] }]'
+          placeholder='[{ "kind": "word", "title": "…", "explanation": "…", "examples": [{ "japanese": "…", "english": "…", "englishEquivalent": "…" }] }]'
           hint="Paste up to 100 rules, then press Fill form from JSON. Each rule becomes an editable panel below; nothing is saved until you press Create."
           onFill={(text) => {
             const parsed = parseRuleJson(text);
@@ -688,7 +719,12 @@ export function RuleForm({
       points: rule.points,
       explanation: rule.explanation,
       tags: rule.tags.join(", "),
-      examples: rule.examples,
+      examples: rule.examples.map((example) => ({
+        japanese: example.japanese,
+        english: example.english,
+        // The stored column is nullable; the form edits a plain string.
+        englishEquivalent: example.englishEquivalent ?? "",
+      })),
       relatedIds: rule.related.map((related) => related.id),
       notes: rule.notes ?? "",
     })

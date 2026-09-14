@@ -23,10 +23,11 @@ export default [
   route("rules/upload", "routes/rule-upload.tsx"),
   route("rules/:id", "routes/rule-detail.tsx"),
   route("rules/:id/edit", "routes/rule-edit.tsx"),
-  // Study: flashcards (deck builder + runner). Quizzes will sit beside them.
+  // Study: flashcards (deck builder + runner) and quizzes (setup + session).
   route("study/flashcards", "routes/study-flashcards.tsx"),
   route("study/flashcards/session", "routes/study-flashcards-session.tsx"),
   route("study/quizzes", "routes/study-quizzes.tsx"),
+  route("study/quizzes/session", "routes/study-quizzes-session.tsx"),
   // Legacy URLs — the builder and runner moved under /study/flashcards.
   route("study", "routes/study-redirect.tsx"),
   route("study/session", "routes/study-session-redirect.tsx"),
@@ -45,6 +46,8 @@ export default [
   route("api/words", "routes/api.words.ts"),
   route("api/words/:id", "routes/api.word.ts"),
   route("api/examples", "routes/api.examples.ts"),
+  // AI quiz generation (signed-in users only, own rate limit).
+  route("api/quiz/generate", "routes/api.quiz-generate.ts"),
   // Sign-in sync: move device-scoped content into the account.
   route("api/sync", "routes/api.sync.ts"),
 ] satisfies RouteConfig;

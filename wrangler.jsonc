@@ -39,6 +39,13 @@
 			"name": "UPLOAD_LIMITER",
 			"namespace_id": "1002",
 			"simple": { "limit": 10, "period": 60 }
+		},
+		// Quiz generation calls out to Gemini/GLM, so it is far more expensive
+		// than a normal API request and gets its own, much smaller budget.
+		{
+			"name": "AI_LIMITER",
+			"namespace_id": "1003",
+			"simple": { "limit": 10, "period": 60 }
 		}
 	]
 }
