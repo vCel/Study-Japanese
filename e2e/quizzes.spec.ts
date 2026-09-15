@@ -1074,7 +1074,7 @@ test.describe("quiz session", () => {
       // other spec, and a client that choked on an unknown event would fail the
       // wait below rather than silently losing the quiz.
       const events = [
-        { type: "attempt", model: "gemini-3.8-flash", index: 5, total: 15 },
+        { type: "attempt", model: "gemini-3.8-flash", index: 4, total: 14 },
         {
           type: "attemptDone",
           attempt: {
@@ -1088,8 +1088,8 @@ test.describe("quiz session", () => {
         {
           type: "attempt",
           model: "inclusionai/ling-3.0-flash-vl:free",
-          index: 12,
-          total: 15,
+          index: 11,
+          total: 14,
         },
         {
           type: "attemptDone",
@@ -1102,7 +1102,7 @@ test.describe("quiz session", () => {
           },
         },
         { type: "round", round: 2, totalRounds: 2, detail: "no model answered on the first pass" },
-        { type: "attempt", model: "gemini-3.6-flash", index: 7, total: 15 },
+        { type: "attempt", model: "gemini-3.6-flash", index: 6, total: 14 },
         {
           type: "result",
           questions: sampleQuestions(),

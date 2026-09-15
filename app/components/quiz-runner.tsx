@@ -478,14 +478,12 @@ export function QuizRunner({
  * The commented-out GLM and NVIDIA rows are absent here too — an entry left in
  * would shift every label after it by one.
  *
- * The four OpenCode rows are listed even though they cannot answer. They are
- * first in the chain, so they are what the bar shows for the first moment of
- * every generation, and the panel would otherwise fall back to raw model ids
- * like `deepseek-v4-flash-free`. They report as a skipped provider, which is
- * accurate and is exactly what the attempt list is for.
+ * The three OpenCode rows are the first thing the bar shows: MiMo answers over
+ * chat-completions, the two Muse Spark rows answer over the Responses API, and
+ * all three are listed so the bar never falls back to raw model ids like
+ * `muse-spark-1.3-contributor-free`.
  */
 const CHAIN_LABELS = [
-  "OpenCode DeepSeek V4 Flash",
   "OpenCode MiMo V2.5",
   "OpenCode Muse Spark 1.3",
   "OpenCode Muse Spark 1.2",
