@@ -7,9 +7,29 @@ export type CardSide = "title" | "meaning";
  * Deal a card its leading side. Called while building the deck *on the server*,
  * so the side travels with the loader data and the hydrated client renders the
  * exact same markup — picking it during render would desync SSR and hydration.
+ *
+ * Only words and phrases are dealt at random: a rule always leads with its
+ * point (see {@link ruleToStudyCards}), because a rule's explanation is the
+ * answer and must stay hidden until the card is flipped.
  */
 export function randomCardSide(): CardSide {
   return Math.random() < 0.5 ? "title" : "meaning";
+}
+
+/**
+ * Shuffle a copy of `items` (Fisher–Yates).
+ *
+ * Shared by the session loader, which shuffles a flattened deck so no rule's
+ * points arrive as one block, and by the session itself, where it re-orders the
+ * queue for a restart.
+ */
+export function shuffle<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }
 
 /**
@@ -18,7 +38,10 @@ export function randomCardSide(): CardSide {
  * `Flashcards` component can drill any of them.
  */
 export interface StudyCard {
-  /** Stable local-stats key, namespaced by source (`w:12`, `r:3`). */
+  /**
+   * Stable local-stats key, namespaced by source and — for rules — by point:
+   * `w:12` (a word) or `r:3:0` (point one of rule 3).
+   */
   key: string;
   /** Big text on the question side. */
   title: string;
@@ -45,31 +68,46 @@ export function wordToStudyCard(word: WordDetail, side: CardSide): StudyCard {
   };
 }
 
-export function ruleToStudyCard(rule: RuleDetail, side: CardSide): StudyCard {
-  // The first point is the rule's headline; more points still show on the page.
-  const point = rule.points[0] ?? null;
-  return {
-    key: `r:${rule.id}`,
-    title: point ?? rule.title,
-    reading: point ? rule.title : null,
+/**
+ * Flatten a rule into **one card per ポイント (point!)**.
+ *
+ * A rule that lists three points is three separate things to learn, so it
+ * becomes three cards instead of one card that shows point one and hides the
+ * rest. The rule's title and explanation are repeated on every one of them —
+ * each point is drilled in the context of the rule it belongs to.
+ *
+ * Every rule card leads with its point. Unlike a word, where either side can
+ * be the question, a rule's explanation is always the answer: dealing a rule a
+ * random side would sometimes open with the explanation, which gives the point
+ * away before the learner has tried to recall it.
+ */
+export function ruleToStudyCards(rule: RuleDetail): StudyCard[] {
+  const hasPoints = rule.points.length > 0;
+  // A rule saved without any point still needs a question side; its title is
+  // the only thing left to ask about.
+  const points = hasPoints ? rule.points : [rule.title];
+  return points.map((point, index) => ({
+    key: `r:${rule.id}:${index}`,
+    title: point,
+    reading: hasPoints ? rule.title : null,
     meanings: [rule.explanation],
-    side,
+    side: "title",
     examples: rule.examples.map((example) => ({
       japanese: example.japanese,
       // The card's answer side is the *equivalent* — how the grammar is said in
       // English — falling back to the plain translation when there is none.
       translation: example.englishEquivalent || example.english || null,
     })),
-  };
+  }));
 }
 
 /**
- * The id a card came from, decoded from its `w:12` / `r:3` key. Starring is
+ * The id a card came from, decoded from its `w:12` / `r:3:0` key. Starring is
  * per-user and only known in the browser, so the study screen marks its cards
  * client-side from this.
  */
 export function studyCardSource(card: StudyCard): { kind: "word" | "rule"; id: number } | null {
-  const match = /^([wr]):(\d+)$/.exec(card.key);
+  const match = /^([wr]):(\d+)(?::\d+)?$/.exec(card.key);
   if (!match) return null;
   return { kind: match[1] === "w" ? "word" : "rule", id: Number(match[2]) };
 }

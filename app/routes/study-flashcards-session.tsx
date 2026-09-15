@@ -14,7 +14,8 @@ import { ownerContext } from "~/lib/owner.server";
 import { isValidPos } from "~/components/pos-filter";
 import {
   randomCardSide,
-  ruleToStudyCard,
+  ruleToStudyCards,
+  shuffle,
   wordToStudyCard,
   type StudyCard,
 } from "~/lib/study-cards";
@@ -87,9 +88,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       countRules(ownerId, ruleKind, filter, tagNames),
       getRuleStudyDeck(ownerId, limit, ruleKind, filter, tagNames),
     ]);
+    // Each ポイント of a rule becomes its own card, so one rule can contribute
+    // several. The rule list is fetched at the deck size (every rule yields at
+    // least one card, so there is always enough to fill the deck), flattened,
+    // then re-shuffled and trimmed: without the shuffle a rule's points would
+    // arrive as a block and the rule straddling the cut-off would lose its
+    // later points to the deck's other cards.
+    const deck = shuffle(rules.flatMap((rule) => ruleToStudyCards(rule))).slice(0, limit);
     return {
       kind,
-      deck: rules.map((rule) => ruleToStudyCard(rule, randomCardSide())),
+      deck,
       listIds: [],
       pos: null,
       ruleKind,

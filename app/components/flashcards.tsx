@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { Check, ExternalLink, RotateCcw, Shuffle, X } from "lucide-react";
 
 import type { CardSide, StudyCard } from "~/lib/study-cards";
-import { studyCardSource } from "~/lib/study-cards";
+import { shuffle, studyCardSource } from "~/lib/study-cards";
 import { Button } from "~/components/lightswind/button";
 import { Badge } from "~/components/lightswind/badge";
 import { Tooltip } from "~/components/lightswind/tooltip";
@@ -13,15 +13,6 @@ import {
   REPETITION_KEY,
   savePreference,
 } from "~/lib/study-prefs";
-
-function shuffle<T>(items: T[]): T[] {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-}
 
 // ---------------------------------------------------------------------------
 // Per-word study stats (localStorage — works for anonymous visitors too).
@@ -393,7 +384,10 @@ function Flashcard({
         transition={{ duration: 0.5, ease: [0.4, 0.2, 0.2, 1] }}
         aria-label={flipped ? "Show question side" : "Reveal answer"}
       >
-        <div className="backface-hidden absolute inset-0 flex flex-col items-center justify-center overflow-y-auto rounded-[var(--radius)] border border-border bg-card p-6 shadow-sm">
+        <div
+          data-slot="flashcard-front"
+          className="backface-hidden absolute inset-0 flex flex-col items-center justify-center overflow-y-auto rounded-[var(--radius)] border border-border bg-card p-6 shadow-sm"
+        >
           {front}
           <p className="mt-4 text-xs tracking-widest text-muted-foreground uppercase">
             {side === "title"
@@ -401,7 +395,10 @@ function Flashcard({
               : "Guess the answer, then click to check"}
           </p>
         </div>
-        <div className="backface-hidden rotate-y-180 absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-y-auto rounded-[var(--radius)] border border-primarylw/40 bg-card p-6 shadow-sm">
+        <div
+          data-slot="flashcard-back"
+          className="backface-hidden rotate-y-180 absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-y-auto rounded-[var(--radius)] border border-primarylw/40 bg-card p-6 shadow-sm"
+        >
           {back}
         </div>
       </motion.button>
