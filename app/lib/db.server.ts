@@ -353,14 +353,18 @@ export async function copyStarterPack(ownerId: string): Promise<{
   for (const [oldRuleId, newRuleId] of ruleIdMap) {
     if (!newRuleId) continue;
     const examples = await db
-      .prepare("SELECT japanese, english FROM rule_examples WHERE rule_id = ?1")
+      .prepare(
+        "SELECT japanese, english, english_equivalent FROM rule_examples WHERE rule_id = ?1"
+      )
       .bind(oldRuleId)
-      .all<{ japanese: string; english: string }>();
+      .all<{ japanese: string; english: string; english_equivalent: string | null }>();
     for (const row of examples.results ?? []) {
       childStatements.push(
         db
-          .prepare("INSERT INTO rule_examples (rule_id, japanese, english) VALUES (?1, ?2, ?3)")
-          .bind(newRuleId, row.japanese, row.english)
+          .prepare(
+            "INSERT INTO rule_examples (rule_id, japanese, english, english_equivalent) VALUES (?1, ?2, ?3, ?4)"
+          )
+          .bind(newRuleId, row.japanese, row.english, row.english_equivalent ?? null)
       );
     }
     const tagLinks = await db
@@ -394,6 +398,10 @@ export async function copyStarterPack(ownerId: string): Promise<{
     await db.batch(childStatements);
   }
 
+  // The home page was rendered moments ago (that is where the button lives),
+  // so this owner's empty tag list is almost certainly still cached.
+  invalidateTagLookups(ownerId);
+
   await setStarterChoice(ownerId, true);
   return {
     lists: listIdMap.size,
@@ -423,6 +431,10 @@ export async function reownerContent(fromOwner: string, toOwner: string): Promis
       .bind(toOwner, fromOwner)
       .run(),
   ]);
+  // Tags travel with their lists and rules, so both sides of the move have a
+  // stale tag list now: the account gains them, the device id loses them.
+  invalidateTagLookups(fromOwner);
+  invalidateTagLookups(toOwner);
   return (
     (words.meta.changes ?? 0) + (lists.meta.changes ?? 0) + (rules.meta.changes ?? 0)
   );
@@ -850,6 +862,7 @@ export async function createWordList(
     }
   }
 
+  invalidateTagLookups(ownerId);
   return listId;
 }
 
@@ -959,13 +972,62 @@ export interface TagInfo {
 const LOOKUP_CACHE_MS = 20_000;
 const lookupCache = new Map<string, { at: number; value: unknown }>();
 
+/**
+ * Soft cap on the number of cached entries.
+ *
+ * `cachedLookup` replaces an entry on re-read but never removes one, so an
+ * owner who is not seen again leaves their entry behind for the lifetime of the
+ * isolate. The cache is keyed per owner, so without a cap it grows with the
+ * number of distinct owners the isolate has ever served — small per entry, but
+ * unbounded, and a Worker isolate can live a long time.
+ *
+ * Pruning is opportunistic: it runs only when the map is over the cap, and the
+ * window is short, so by then most of what is in there is already dead.
+ */
+const LOOKUP_CACHE_MAX = 500;
+
+function pruneLookupCache(now: number): void {
+  if (lookupCache.size <= LOOKUP_CACHE_MAX) return;
+
+  for (const [key, entry] of lookupCache) {
+    if (now - entry.at >= LOOKUP_CACHE_MS) lookupCache.delete(key);
+  }
+
+  // A burst of fresh owners can leave nothing expired. Map iteration is
+  // insertion order, so this evicts oldest-first to keep the bound real.
+  while (lookupCache.size > LOOKUP_CACHE_MAX) {
+    const oldest = lookupCache.keys().next().value;
+    if (oldest === undefined) break;
+    lookupCache.delete(oldest);
+  }
+}
+
 async function cachedLookup<T>(key: string, load: () => Promise<T>): Promise<T> {
   const hit = lookupCache.get(key);
   const now = Date.now();
   if (hit && now - hit.at < LOOKUP_CACHE_MS) return hit.value as T;
   const value = await load();
   lookupCache.set(key, { at: now, value });
+  pruneLookupCache(now);
   return value;
+}
+
+/**
+ * Drop an owner's cached tag lists.
+ *
+ * The cache is a latency fix, but it is invisible to writes: without this, the
+ * value loaded *before* a write keeps being served until the window lapses.
+ * The visible symptom is the tag popover. Copying the starter pack loads the
+ * home page first (an empty owner → `[]` is cached), then inserts the pack, so
+ * the popover reads "No tags yet." for the next 20 seconds — the tags are in
+ * D1 the whole time. The same lag applies to adding or removing a tag.
+ *
+ * Callers pass the owner whose content changed; every write path below that
+ * can alter a tag set drops its own entries instead of waiting out the window.
+ */
+function invalidateTagLookups(ownerId: string): void {
+  lookupCache.delete(`listAllTags:${ownerId}`);
+  lookupCache.delete(`listAllRuleTags:${ownerId}`);
 }
 
 /**
@@ -1138,6 +1200,7 @@ export async function updateWordList(
       await insertJoin.bind(listId, tagRow.id).run();
     }
   }
+  invalidateTagLookups(ownerId);
   return true;
 }
 
@@ -1176,6 +1239,9 @@ export async function deleteWordList(ownerId: string, listId: number): Promise<b
     .prepare("DELETE FROM word_lists WHERE id = ?1 AND owner_id = ?2")
     .bind(listId, ownerId)
     .run();
+  // A deleted list can take the last use of a tag with it (the join rows
+  // cascade), so the tag filter has to be rebuilt.
+  if (result.meta.changes > 0) invalidateTagLookups(ownerId);
   return result.meta.changes > 0;
 }
 
@@ -1618,6 +1684,7 @@ export async function createRule(ownerId: string, input: RuleInput): Promise<num
   }
   await setRelatedRules(db, ruleId, input.relatedIds);
   await setRuleTags(db, ruleId, input.tags);
+  invalidateTagLookups(ownerId);
   return ruleId;
 }
 
@@ -1655,6 +1722,7 @@ export async function updateRule(ownerId: string, id: number, input: RuleInput):
   }
   await setRelatedRules(db, id, input.relatedIds);
   await setRuleTags(db, id, input.tags);
+  invalidateTagLookups(ownerId);
   return true;
 }
 
@@ -1665,6 +1733,7 @@ export async function deleteRule(ownerId: string, id: number): Promise<boolean> 
     .prepare("DELETE FROM rules WHERE id = ?1 AND owner_id = ?2")
     .bind(id, ownerId)
     .run();
+  if (result.meta.changes > 0) invalidateTagLookups(ownerId);
   return result.meta.changes > 0;
 }
 

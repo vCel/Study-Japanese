@@ -179,7 +179,10 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
                         <Link
                           key={t}
                           to={rulesHref({ kind, q, tag: t })}
-                          className="rounded-full border border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primarylw/40 hover:text-foreground"
+                          // `relative z-10` keeps the chip above the title
+                          // link's `after:inset-0` overlay, which otherwise
+                          // swallows the click and opens the rule instead.
+                          className="relative z-10 rounded-full border border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primarylw/40 hover:text-foreground"
                         >
                           #{t}
                         </Link>
@@ -191,7 +194,9 @@ export default function Rules({ loaderData }: Route.ComponentProps) {
                             .map((t) => `#${t}`)
                             .join(", ")}
                         >
-                          <span className="rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                          {/* Same reason: without z-10 the overlay eats the
+                              hover and the tooltip never opens. */}
+                          <span className="relative z-10 rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
                             +{rule.tags.length - MAX_VISIBLE_TAGS}
                           </span>
                         </Tooltip>
