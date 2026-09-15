@@ -370,6 +370,45 @@ test.describe("quiz builder", () => {
 
     await expect(page.getByRole("switch", { name: "Only what I keep missing" })).toHaveCount(0);
   });
+
+  test("an empty list selection means every list, and the picker says so", async ({ page }) => {
+    await stubConvex(page);
+    // Lists are owner-scoped, so the starter pack has to be copied in first.
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+    // Rules is the default source; the lists section only shows for words or
+    // phrases. Both, so every seeded list is on offer.
+    await page.getByRole("button", { name: "Words", exact: true }).click();
+    await page.getByRole("button", { name: "Phrases", exact: true }).click();
+
+    const daily = page.getByRole("button", { name: /Daily Conversation/ });
+    const starter = page.getByRole("button", { name: /JLPT N5 Starter/ });
+    const pill = page.getByRole("button", { name: "Select all lists" });
+
+    // Nothing is narrowed, so every card reads as chosen and "select all" has
+    // nothing to do. Offering it contradicted the hint beside it, which said
+    // every list was already included.
+    await expect(page.getByText(/Every list is included \(\d+\)\./)).toBeVisible();
+    await expect(daily).toHaveAttribute("aria-pressed", "true");
+    await expect(starter).toHaveAttribute("aria-pressed", "true");
+    await expect(pill).toHaveCount(0);
+
+    // Clicking a card that reads as chosen has to *deselect* it, not become the
+    // only selection: the "every list" sentinel must be resolved before toggling.
+    await daily.click();
+    await expect(daily).toHaveAttribute("aria-pressed", "false");
+    await expect(starter).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText(/2 of 3 lists selected\./)).toBeVisible();
+    await expect(pill).toBeVisible();
+
+    // The pill restores the sentinel rather than listing the ids, so a list
+    // created later is included too.
+    await pill.click();
+    await expect(page.getByText(/Every list is included \(\d+\)\./)).toBeVisible();
+    await expect(daily).toHaveAttribute("aria-pressed", "true");
+    await expect(pill).toHaveCount(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

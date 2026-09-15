@@ -88,6 +88,16 @@ const pill = (active: boolean) =>
       : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
   );
 
+/**
+ * One setting: its label (and hint) beside the control it drives.
+ *
+ * Stacks below `sm`. Side by side at a 390px viewport the label was left about
+ * 130px by the fixed-width control beside it, so "Seconds per question" broke
+ * over three lines while its slider stayed put.
+ */
+const settingRow =
+  "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4";
+
 /** "words and rules", "words, phrases and rules", "rules". */
 function listWords(items: string[]): string {
   if (items.length <= 1) return items[0] ?? "";
@@ -317,7 +327,10 @@ function QuizPanel({
     });
   };
 
-  /** One pill, two labels — the same "select all / clear" pattern the lists use. */
+  /**
+   * One pill, two labels: rules can be cleared (`[]`) as well as all-selected
+   * (`null`). Lists only ever get the one label — see `allListsSelected`.
+   */
   const toggleSelectAllRules = () => onChange({ ruleIds: allRulesSelected ? [] : null });
 
   const rulesMatch = !wantsRules
@@ -367,12 +380,19 @@ function QuizPanel({
         : [...config.tags, tag],
     });
 
-  const toggleList = (id: number) =>
-    onChange({
-      lists: config.lists.includes(id)
-        ? config.lists.filter((value) => value !== id)
-        : [...config.lists, id],
-    });
+  const toggleList = (id: number) => {
+    // An empty `lists` means "every list" and every card reads as selected, so
+    // resolve it to the concrete ids first — otherwise clicking a card that
+    // looks chosen would make it the *only* selection.
+    const current = config.lists.length === 0 ? selectableLists : config.lists;
+    const next = current.includes(id)
+      ? current.filter((value) => value !== id)
+      : [...current, id];
+    // Like the source and type pills, the selection is never emptied: a quiz
+    // drawing on no lists has nothing to ask about, so removing the last one
+    // falls back to the "every list" sentinel.
+    onChange({ lists: next.length === 0 ? [] : next });
+  };
 
   /** Multi-select: a quiz may mix question types. At least one must remain. */
   const toggleType = (type: QuizQuestionType) => {
@@ -402,9 +422,26 @@ function QuizPanel({
   };
 
   const selectableLists = tagFiltered.filter((list) => list.count > 0).map((list) => list.id);
+  /**
+   * An empty `lists` is the "every list" sentinel rather than an empty
+   * selection, so it counts as fully selected — the same way `ruleIds === null`
+   * does above. Read the other way round, the header said "Every list is
+   * included" while the pill offered to select them all and no card looked
+   * chosen.
+   *
+   * Lists deliberately have no "clear": `[]` already means everything, and a
+   * quiz drawing on no lists is expressed by switching the Words/Phrases
+   * sources off in step 1.
+   */
   const allListsSelected =
-    selectableLists.length > 0 && selectableLists.every((id) => config.lists.includes(id));
-  const toggleSelectAllLists = () => onChange({ lists: allListsSelected ? [] : selectableLists });
+    config.lists.length === 0 ||
+    (selectableLists.length > 0 && selectableLists.every((id) => config.lists.includes(id)));
+  /**
+   * Resets to the `[]` sentinel rather than enumerating every id, so a list
+   * created later is included too and the header returns to "Every list is
+   * included" — the same state as a fresh builder.
+   */
+  const toggleSelectAllLists = () => onChange({ lists: [] });
 
   const selectAllPill = (all: boolean, onToggle: () => void, label: string, empty = false) => (
     <button
@@ -560,12 +597,14 @@ function QuizPanel({
               : `${config.lists.length} of ${tagFiltered.length} lists selected.`}
           </p>
         </div>
-        {selectAllPill(
-          allListsSelected,
-          toggleSelectAllLists,
-          "Select all lists",
-          selectableLists.length === 0
-        )}
+        {/* Offered only when it has something to do — see `allListsSelected`. */}
+        {!allListsSelected &&
+          selectAllPill(
+            false,
+            toggleSelectAllLists,
+            "Select all lists",
+            selectableLists.length === 0
+          )}
       </div>
 
       {tagFiltered.length === 0 ? (
@@ -577,7 +616,7 @@ function QuizPanel({
       ) : (
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {tagFiltered.map((list) => {
-            const active = config.lists.includes(list.id);
+            const active = config.lists.length === 0 || config.lists.includes(list.id);
             const disabled = list.count === 0;
             return (
               <button
@@ -856,7 +895,7 @@ function QuizPanel({
               "retry my misses" quiz with no misses would be empty.
             */}
             {missedIds.length > 0 && (
-              <div className="flex items-center justify-between gap-4">
+              <div className={settingRow}>
                 <SettingLabel
                   label="Only what I keep missing"
                   hint={
@@ -880,7 +919,7 @@ function QuizPanel({
               every future quiz.
             */}
             {starredIds.size > 0 && (
-              <div className="flex items-center justify-between gap-4">
+              <div className={settingRow}>
                 <SettingLabel
                   label="Starred items only"
                   hint={
@@ -900,7 +939,7 @@ function QuizPanel({
               </div>
             )}
 
-            <div className="flex items-center justify-between gap-4">
+            <div className={settingRow}>
               <SettingLabel
                 label="Number of questions"
                 hint="How many questions the AI should write for this quiz."
@@ -917,7 +956,7 @@ function QuizPanel({
               />
             </div>
 
-            <div className="flex items-center justify-between gap-4">
+            <div className={settingRow}>
               <SettingLabel
                 label="Time limit per question"
                 hint="When on, each question is timed and auto-submits when the clock runs out. Turn it off to answer at your own pace."
@@ -932,14 +971,14 @@ function QuizPanel({
             {/* Seconds sits on the label's line like difficulty: slider right,
                 current step beside it. */}
             {config.timeLimitEnabled && (
-              <div className="flex items-center justify-between gap-4">
+              <div className={settingRow}>
                 <SettingLabel
                   label="Seconds per question"
                   hint="How long to allow for each question."
                 />
-                <div className="flex shrink-0 items-center gap-3">
+                <div className="flex items-center gap-3 sm:shrink-0">
                   <Slider
-                    className="w-36 sm:w-52"
+                    className="w-36 flex-1 sm:w-52 sm:flex-none"
                     aria-label="Seconds per question"
                     aria-valuetext={`${config.timeLimitSeconds} seconds`}
                     value={[Math.max(0, QUIZ_TIME_LIMITS.indexOf(config.timeLimitSeconds))]}
@@ -960,11 +999,11 @@ function QuizPanel({
 
             {/* Difficulty sits on the label's line, like every other row: the
                 slider to the right of the name, with its current step beside it. */}
-            <div className="flex items-center justify-between gap-4">
+            <div className={settingRow}>
               <SettingLabel label="Difficulty" hint={QUIZ_DIFFICULTY_HINTS[config.difficulty]} />
-              <div className="flex shrink-0 items-center gap-3">
+              <div className="flex items-center gap-3 sm:shrink-0">
                 <Slider
-                  className="w-36 sm:w-52"
+                  className="w-36 flex-1 sm:w-52 sm:flex-none"
                   aria-label="Difficulty"
                   aria-valuetext={QUIZ_DIFFICULTY_LABELS[config.difficulty]}
                   value={[QUIZ_DIFFICULTIES.indexOf(config.difficulty)]}
