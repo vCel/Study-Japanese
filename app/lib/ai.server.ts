@@ -12,10 +12,10 @@
  * per *model*, so a 429 there costs one row and says nothing about the
  * provider's other models. AIHubMix meters `xiaomi-mimo-v2.5-free` at 5 rpm /
  * 100 rpd on its own, OpenRouter forwards to a single upstream per free model,
- * and Groq's limits are published per model (which matters, because both Groq
- * and Comet hold two rows here). Treating those as account-level is how you
- * silently lose a healthy fallback — the same shape of bug as the GLM `1305`
- * mix-up documented in `classifyGlm`.
+ * and Groq publishes its limits per model. Four providers now hold two rows
+ * each (AIHubMix, Comet, Groq, NVIDIA), so this distinction has teeth: treating
+ * those as account-level is how you silently lose a healthy fallback — the same
+ * shape of bug as the GLM `1305` mix-up documented in `classifyGlm`.
  *
  * Runs in the Worker (`env` from `cloudflare:workers`), never in the browser —
  * the keys must not reach the client bundle.
@@ -46,14 +46,31 @@ interface ModelSpec {
 
 /**
  * Ordered as specified: the AIHubMix free model first, then Gemini newest-first
- * down to 3.5, then the three Comet/Groq rows, then the two remaining
- * fallbacks, with Comet's `gpt-5-nano` last.
+ * down to 3.5, then the Comet/Groq block, then the two remaining fallbacks, with
+ * Comet's `gpt-5-nano` last.
  *
- * The GLM rows are commented out, not deleted — see the note at their old
- * position. Everything shares the same interface so the walk below stays one
+ * Two pairs of rows are commented out, not deleted — GLM's two and NVIDIA's two.
+ * Both notes are at their old positions and say what has to change before they
+ * come back. Everything shares the same interface so the walk below stays one
  * loop.
  */
 export const MODEL_CHAIN: ModelSpec[] = [
+  // NVIDIA's `deepseek-v4-flash-0731` and `moonshotai/kimi-k3` were specified
+  // for the top of the chain, ahead of `xiaomi-mimo-v2.5-free`, and are
+  // commented out at the owner's request.
+  //
+  // Measured 2026-09-15 on a trivial one-item request: both returned nothing at
+  // all within 90s, and again within 150s on a second attempt. `kimi-k3` never
+  // answered. `deepseek-v4-flash-0731` answered exactly once, at 115s, and only
+  // with `reasoning_effort: "low"` — which is *not* a fix, since 115s is still
+  // four and a half times the ceiling below. Against `ATTEMPT_TIMEOUT_MS` these
+  // are a guaranteed wasted timeout on every generation, and `deepseek` sits
+  // first, so it would spend 25s of the 95s budget before the walk reached a
+  // model that can actually answer.
+  //
+  // Restore only with a measurement showing they fit the ceiling.
+  // { model: "deepseek-ai/deepseek-v4-flash-0731", provider: "nvidia" },
+  // { model: "moonshotai/kimi-k3", provider: "nvidia" },
   {
     model: "xiaomi-mimo-v2.5-free",
     provider: "aihubmix",
@@ -88,6 +105,16 @@ export const MODEL_CHAIN: ModelSpec[] = [
   },
   {
     model: "openai/gpt-oss-20b",
+    provider: "nvidia",
+    // The same model as the Groq row below, on a different host — hence its own
+    // entry rather than a comment on that one. NVIDIA's deployment is markedly
+    // slower to think: 17.6s and 1491 reasoning characters unforced, versus
+    // 6.6s and 693 at `reasoning_effort: "low"`. The unforced figure fits the
+    // 25s ceiling only barely, so the param is not optional here.
+    extraBody: { reasoning_effort: "low" },
+  },
+  {
+    model: "openai/gpt-oss-20b",
     provider: "groq",
     // Same family as the row above, same treatment. Fast either way (783ms
     // unforced, 387ms at "low") — set for consistency, since the token spend it
@@ -112,6 +139,14 @@ export const MODEL_CHAIN: ModelSpec[] = [
   // { model: "glm-4.5-flash", provider: "glm" },
   { model: "hy3-free", provider: "aihubmix" },
   { model: "inclusionai/ling-3.0-flash-vl:free", provider: "openrouter" },
+  {
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    provider: "nvidia",
+    // Second last, as specified. The one NVIDIA row that needed nothing: 3.6s
+    // and 191 reasoning characters unforced, comfortably inside the ceiling. No
+    // `reasoning_effort` — it was never shown to need it, and sending an
+    // unverified param is how you turn a healthy row into a 400.
+  },
   {
     model: "gpt-5-nano",
     provider: "comet",
@@ -274,7 +309,8 @@ function classifyGlm(status: number, code: string | undefined, body: string): Fa
  * a single upstream provider per free model, and Groq publishes its RPM/TPM/RPD
  * per model — so none of their 429s tell us the account is out. Escalating it
  * would let a rate limit on the *first* row skip a sibling rows later, which
- * now matters for three providers: AIHubMix holds two rows, Groq two, Comet two.
+ * now matters for four providers: AIHubMix holds two rows, Comet two, Groq two,
+ * NVIDIA two.
  */
 function classifyOpenAiCompatible(status: number, body: string): FailureKind {
   if (status === 429) return "ratelimit";
@@ -399,6 +435,10 @@ function groqKey(): string {
   return (env.GROQ_API_KEY ?? "").trim();
 }
 
+function nvidiaKey(): string {
+  return (env.NVIDIA_API_KEY ?? "").trim();
+}
+
 /** True when at least one provider has a key, so the route can fail early. */
 export function isAiConfigured(): boolean {
   return (
@@ -407,7 +447,8 @@ export function isAiConfigured(): boolean {
     aihubmixKey().length > 0 ||
     openrouterKey().length > 0 ||
     cometKey().length > 0 ||
-    groqKey().length > 0
+    groqKey().length > 0 ||
+    nvidiaKey().length > 0
   );
 }
 
@@ -554,6 +595,7 @@ const AGGREGATOR_ENDPOINTS: Record<OpenAiCompatibleProvider, string> = {
   comet: "https://api.cometapi.com/v1/chat/completions",
   // Groq's OpenAI-compatible face lives under a path prefix, unlike the others.
   groq: "https://api.groq.com/openai/v1/chat/completions",
+  nvidia: "https://integrate.api.nvidia.com/v1/chat/completions",
 };
 
 /** The key each of those reads. Thunks, so the env is read per attempt. */
@@ -562,11 +604,12 @@ const AGGREGATOR_KEYS: Record<OpenAiCompatibleProvider, () => string> = {
   openrouter: openrouterKey,
   comet: cometKey,
   groq: groqKey,
+  nvidia: nvidiaKey,
 };
 
 /**
- * Chat-completions transport for AIHubMix, OpenRouter, Comet and Groq, which
- * share a wire format and a status ladder.
+ * Chat-completions transport for AIHubMix, OpenRouter, Comet, Groq and NVIDIA,
+ * which share a wire format and a status ladder.
  *
  * No `response_format`: the prompt already asks for JSON and the parser is
  * tolerant, and asking anyway is not free — OpenRouter answers a

@@ -65,8 +65,9 @@ export default function QuizzesPage({ loaderData }: Route.ComponentProps) {
         <div className="mb-6 rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-600 dark:text-amber-400">
           Quiz generation needs an AI key. Set any one of{" "}
           <code>GEMINI_API_KEY</code>, <code>AIHUBMIX_API_KEY</code>,{" "}
-          <code>OPENROUTER_API_KEY</code>, <code>COMET_API_KEY</code> or{" "}
-          <code>GROQ_API_KEY</code> (see <code>.env.example</code>) to enable it.
+          <code>OPENROUTER_API_KEY</code>, <code>COMET_API_KEY</code>,{" "}
+          <code>GROQ_API_KEY</code> or <code>NVIDIA_API_KEY</code> (see{" "}
+          <code>.env.example</code>) to enable it.
         </div>
       )}
 

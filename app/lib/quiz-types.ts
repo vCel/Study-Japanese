@@ -281,7 +281,7 @@ export interface QuizQuestion {
  * because that module reaches for `cloudflare:workers` and must never be pulled
  * into the client bundle.
  */
-export type Provider = "gemini" | "glm" | "aihubmix" | "openrouter" | "comet" | "groq";
+export type Provider = "gemini" | "glm" | "aihubmix" | "openrouter" | "comet" | "groq" | "nvidia";
 
 /** One step of the model-fallback walk, reported back so the UI can narrate it. */
 export interface GenerationAttempt {
