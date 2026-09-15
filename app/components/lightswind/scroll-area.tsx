@@ -64,18 +64,26 @@ const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
       both: "overflow-auto",
     };
 
+    // `max-height` has to sit on the element that actually scrolls.
+    //
+    // Putting it on the outer wrapper (with `h-full` on the inner viewport) does
+    // not work: the outer's height is `auto` — it only has a *max*-height — so the
+    // inner's `height: 100%` resolves against an indefinite height and falls back
+    // to `auto`, making the viewport exactly as tall as its content. The outer then
+    // caps at max-height and `overflow-hidden` clips the rest, so the overflow is
+    // not scrollable — it is simply invisible and unreachable.
+    const maxHeightStyle =
+      maxHeight !== undefined
+        ? typeof maxHeight === "number"
+          ? `${maxHeight}px`
+          : maxHeight
+        : undefined;
+
     return (
       <div
         ref={ref}
         className={cn("relative overflow-hidden", className)}
-        style={{
-          maxHeight: maxHeight !== undefined
-            ? typeof maxHeight === "number"
-              ? `${maxHeight}px`
-              : maxHeight
-            : undefined,
-          ...style,
-        }}
+        style={style}
         {...props}
       >
         <div
@@ -86,6 +94,7 @@ const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
             smooth && "scroll-smooth",
             showScrollbars ? SCROLLBAR_THEMES[theme] : SCROLLBAR_THEMES.none
           )}
+          style={{ maxHeight: maxHeightStyle }}
           data-slot="scroll-area-viewport"
         >
           {children}

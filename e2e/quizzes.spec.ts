@@ -624,6 +624,40 @@ test.describe("quiz builder", () => {
     await expect(polite).toHaveAttribute("aria-pressed", "true");
   });
 
+  test("the rules list scrolls once it outgrows its max height", async ({ page }) => {
+    await stubConvex(page);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    // The viewport that scrolls the rule rows — located by content, not by index,
+    // so it survives another ScrollArea being added to this page.
+    const viewport = page
+      .locator("[data-slot='scroll-area-viewport']")
+      .filter({ has: page.locator("[data-slot='quiz-rule']") });
+
+    // The max-height has to live on the element that scrolls. On the wrapper it is
+    // silently useless: the viewport's `h-full` resolves against an indefinite
+    // height, so it grows to fit its content, and the wrapper's `overflow-hidden`
+    // clips the rest — rules past the fold are unreachable, not scrollable.
+    await expect(viewport).toHaveCSS("overflow-y", "auto");
+    await expect(viewport).toHaveCSS("max-height", "280px");
+
+    // The three seeded rules fit inside 280px, so force the overflow and prove the
+    // container actually moves.
+    const scrollTop = await viewport.evaluate((el) => {
+      const list = el.querySelector("ul")!;
+      for (let i = 0; i < 5; i++) {
+        for (const row of Array.from(list.children)) {
+          list.appendChild(row.cloneNode(true));
+        }
+      }
+      el.scrollTop = 9999;
+      return el.scrollTop;
+    });
+    expect(scrollTop).toBeGreaterThan(0);
+  });
+
   test("a tag hides the rules that do not carry it, in both directions", async ({ page }) => {
     await stubConvex(page);
     await seedStarterPack(page);
