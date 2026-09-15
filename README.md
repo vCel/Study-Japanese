@@ -22,7 +22,8 @@ Framer Motion.
   - **Words** — pick **tags**, narrow to specific **word lists**, choose **types of words**
     (nouns / verbs / adjectives / adverbs / all) and a **deck size** (10–100).
   - **Phrases** — the same, but over **phrase lists** (no part-of-speech step).
-  - **Rules** — drill your grammar rules, filtered by **rule type** and **tags**.
+  - **Rules** — drill your grammar rules, filtered by **rule type** and **tags**. A rule's
+    ポイント are dealt one card each, always asking the point first.
   - **Quizzes** (`/study/quizzes`) — see below.
 - **Saving a session:** the **Save session** button opens a Lightswind **Drawer** with a form
   (session name + save). **Load** opens a drawer containing a Lightswind **Scroll Area** with a
@@ -34,9 +35,11 @@ Framer Motion.
   on (persisted per browser via localStorage). Due cards are prioritized, "Again" cards
   come back a few positions later in the same session, and the card shows how many times
   you've missed it before.
-- **Randomized card side:** each card randomly shows the Japanese term or the meaning
-  first, so you practice recall in both directions. Every source is flattened into a
-  `StudyCard` (`app/lib/study-cards.ts`), so one `Flashcards` component drills them all.
+- **Randomized card side:** each **word or phrase** card randomly shows the Japanese term or the
+  meaning first, so you practice recall in both directions. **Rule** cards are the exception —
+  they always ask the ポイント first and keep the explanation for the answer side, and a rule with
+  several points becomes one card per point. Every source is flattened into `StudyCard`
+  (`app/lib/study-cards.ts`), so one `Flashcards` component drills them all.
 - Keyboard: **Space** flips, **←** = Again, **→** = Got it.
 
 ## Quizzes
