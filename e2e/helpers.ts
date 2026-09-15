@@ -3,6 +3,12 @@ import { expect, type Page } from "@playwright/test";
 const ACCORDION_TRIGGER = /Bulk import from JSON/;
 
 /**
+ * The word list the seed migration ships (`migrations/0003_word_lists.sql`).
+ * Its presence on the home page is the proof that a starter-pack copy landed.
+ */
+export const STARTER_WORD_LIST = "JLPT N5 Starter";
+
+/**
  * Wait until React has hydrated the server-rendered markup.
  *
  * React tags the host nodes it adopts with internal `__reactFiber$…` keys, so
@@ -115,21 +121,136 @@ export async function seedStarterPack(page: Page) {
   // The card only renders when the owner has no content and has not chosen yet.
   if ((await button.count()) === 0) return;
   await button.click();
-  await expect(button).toHaveCount(0, { timeout: 15_000 });
+
+  // Wait for the content, not for the button to go away.
+  //
+  // The submit button is labelled "Loading…" while the action is in flight, so
+  // `expect(button).toHaveCount(0)` matches *during* the copy as well as after
+  // it. That resolved the wait early and sent specs off to browse a library
+  // that was still being written — rare on an idle machine, routine once the
+  // suite runs in parallel and the action takes longer to land.
+  //
+  // A seeded list title is the thing every caller actually depends on, so it is
+  // also the honest completion signal. (`goto` may have been a full navigation
+  // if the click landed before hydration — either way this waits for the DOM
+  // that proves the copy finished.)
+  await expect(page.getByRole("heading", { name: STARTER_WORD_LIST })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 /**
- * Navigate to a page and wait until the app is hydrated.
+ * Wait until the webfont has settled.
+ *
+ * Text metrics decide element heights and positions, so a spec that measures
+ * geometry has to wait for this — otherwise it can measure a fallback font and
+ * compare numbers that were never comparable. Cheap after the first page: the
+ * font is cached for the rest of the browser context.
+ *
+ * This replaces `waitForLoadState("networkidle")` in those specs. The content
+ * being measured is server-rendered, so the network going quiet buys nothing;
+ * `goto` has already resolved on `load`, which includes the stylesheets.
+ */
+export async function waitForFonts(page: Page) {
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+}
+
+/**
+ * Budget for resolving an id off a listing page. The resolver has to load a
+ * page first, and a dev-server page load is a couple of seconds before the
+ * suite's workers start competing for the same server, so this is deliberately
+ * far larger than the default assertion timeout.
+ */
+const ID_RESOLVE_TIMEOUT = 30_000;
+
+function readId(href: string | null, pattern: RegExp, what: string): number {
+  const match = href?.match(pattern);
+  if (!match) {
+    throw new Error(
+      `Could not resolve the id of ${what} from href "${href}". Did seedStarterPack() run ` +
+        `first? Content is owner-scoped, so an unseeded browser has nothing to link to.`,
+    );
+  }
+  return Number(match[1]);
+}
+
+/**
+ * Resolve a rule's id from its title.
+ *
+ * These specs used to navigate straight to `/rules/1`. That worked while the
+ * seeded rows were global, but content is owner-scoped now: ids 1-3 belong to
+ * rows with `owner_id IS NULL`, which no owner can see, and `seedStarterPack`
+ * copies them into *new* rows with new ids. So the old hard-coded ids 404 for
+ * every owner.
+ *
+ * Reading the id off the list page is both correct and closer to what a user
+ * does — find the rule in the collection, then open it.
+ */
+export async function ruleIdByTitle(page: Page, title: string): Promise<number> {
+  await page.goto("/rules");
+  const link = page
+    .locator("main [data-slot='rule-card']")
+    .filter({ hasText: title })
+    .first()
+    .locator("a[href^='/rules/']")
+    .first();
+  await expect(link).toBeVisible({ timeout: ID_RESOLVE_TIMEOUT });
+  return readId(await link.getAttribute("href"), /\/rules\/(\d+)/, `rule "${title}"`);
+}
+
+/** Resolve a word's id from its headword. See {@link ruleIdByTitle}. */
+export async function wordIdByTitle(page: Page, word: string): Promise<number> {
+  await page.goto("/words");
+  const link = page
+    .locator("main [data-slot='word-card']")
+    .filter({ hasText: word })
+    .first()
+    .locator("a[href^='/words/']")
+    .first();
+  await expect(link).toBeVisible({ timeout: ID_RESOLVE_TIMEOUT });
+  return readId(await link.getAttribute("href"), /\/words\/(\d+)/, `word "${word}"`);
+}
+
+/**
+ * Resolve a word list's id from its title. See {@link ruleIdByTitle}.
+ *
+ * `listPath` defaults to the home page (word lists). Pass `/phrases/lists` for
+ * a phrase list.
+ */
+export async function listIdByTitle(
+  page: Page,
+  title: string,
+  listPath = "/",
+): Promise<number> {
+  await page.goto(listPath);
+  const link = page
+    .locator("main a[href^='/lists/']")
+    .filter({ hasText: title })
+    .first();
+  await expect(link).toBeVisible({ timeout: ID_RESOLVE_TIMEOUT });
+  return readId(await link.getAttribute("href"), /\/lists\/(\d+)/, `list "${title}" on ${listPath}`);
+}
+
+/**
+ * Navigate to a create page and wait until it is safe to interact with.
  *
  * The create pages render an "auth not configured" fallback during SSR and only
  * swap in the real form once the Convex client is available in the browser, so
  * assertions must not run against the server-rendered markup alone.
+ *
+ * Waiting for the accordion trigger to be *visible* is not enough on its own:
+ * the trigger is in the server-rendered HTML, so visibility is satisfied long
+ * before React is listening. A click dispatched in that window is dropped, and
+ * the accordion stays `data-state="closed"` — which then surfaces much later as
+ * a mysterious "… intercepts pointer events" on the collapsed content. So this
+ * waits for the trigger *and* for hydration.
  */
 export async function gotoHydrated(page: Page, path: string) {
   await page.goto(path);
   await expect(page.getByRole("button", { name: ACCORDION_TRIGGER })).toBeVisible({
     timeout: 30_000,
   });
+  await expectHydrated(page);
 }
 
 export { ACCORDION_TRIGGER };

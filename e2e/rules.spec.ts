@@ -1,5 +1,22 @@
 import { expect, test } from "@playwright/test";
 
+import { expectHydrated, ruleIdByTitle, seedStarterPack, stubConvex } from "./helpers";
+
+/**
+ * Everything here reads owner-scoped content, so this browser has to own a copy
+ * of the starter pack before any list page has something to show. `stubConvex`
+ * comes first because `seedStarterPack` clicks a button, and clicks are dropped
+ * until React has hydrated.
+ */
+test.beforeEach(async ({ page }) => {
+  await stubConvex(page);
+  await seedStarterPack(page);
+});
+
+/** The seeded rule titles, which are also the ids the specs navigate to. */
+const POLITE = "Polite ます-form";
+const ADJECTIVE = "Adjective conjugation";
+
 test.describe("rules & forms list", () => {
   test("leads with the title and keeps the kind badge to its right", async ({ page }) => {
     await page.goto("/rules");
@@ -68,6 +85,8 @@ test.describe("rules & forms list", () => {
 
   test("shows at most two tags, collapsing the rest into +x", async ({ page }) => {
     await page.goto("/rules");
+    // Hovering and clicking are dropped until React has hydrated.
+    await expectHydrated(page);
     // Rule 3 is seeded with three tags (adjectives, jlpt, n5).
     const card = page
       .locator("main [data-slot='rule-card']")
@@ -81,6 +100,13 @@ test.describe("rules & forms list", () => {
     // …but is still discoverable via the counter's tooltip.
     await card.getByText("+1").hover();
     await expect(page.locator("[data-slot='tooltip']")).toContainText("#n5");
+
+    // The chip has to be genuinely *clickable*, not merely visible: the card's
+    // title link stretches an `after:inset-0` overlay across the whole card, so
+    // without a z-index the click lands on that link and opens the rule instead
+    // of filtering by tag.
+    await card.getByRole("link", { name: "#adjectives" }).click();
+    await expect(page).toHaveURL(/tag=adjectives/);
   });
 
   test("filters by tag", async ({ page }) => {
@@ -103,7 +129,8 @@ test.describe("rules & forms list", () => {
 
 test.describe("rule detail", () => {
   test("has an English equivalents section built from its own field", async ({ page }) => {
-    await page.goto("/rules/1");
+    const id = await ruleIdByTitle(page, POLITE);
+    await page.goto(`/rules/${id}`);
     // Anchored: the section heading carries a count, and the site footer also
     // mentions "English equivalents".
     const section = page.locator("main").getByText(/^English equivalents/);
@@ -121,7 +148,8 @@ test.describe("rule detail", () => {
   });
 
   test("shows each example's translation and its English equivalent", async ({ page }) => {
-    await page.goto("/rules/1");
+    const id = await ruleIdByTitle(page, POLITE);
+    await page.goto(`/rules/${id}`);
 
     // The example cards sit above the breakdown: sentence, then translation,
     // then the equivalent the section below re-lists.
@@ -139,7 +167,8 @@ test.describe("rule detail", () => {
   });
 
   test("puts the kind badge to the right of the heading", async ({ page }) => {
-    await page.goto("/rules/1");
+    const id = await ruleIdByTitle(page, POLITE);
+    await page.goto(`/rules/${id}`);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 
     const geometry = await page.locator("main").evaluate((el) => {
@@ -161,7 +190,8 @@ test.describe("rule detail", () => {
   test("shows the ポイント callout inside the explanation card, under the text", async ({
     page,
   }) => {
-    await page.goto("/rules/1");
+    const id = await ruleIdByTitle(page, POLITE);
+    await page.goto(`/rules/${id}`);
     const label = page.getByText("ポイント!");
     await expect(label).toBeVisible();
     await expect(label.locator("..")).toHaveClass(/border-dashed/);
@@ -195,7 +225,10 @@ test.describe("rule detail", () => {
   });
 
   test("related rules are picked by hand, never inferred", async ({ page }) => {
-    await page.goto("/rules/1/edit");
+    const id = await ruleIdByTitle(page, POLITE);
+    await page.goto(`/rules/${id}/edit`);
+    // The picker below only opens once React is driving the form.
+    await expectHydrated(page);
 
     // The form offers a picker instead of guessing…
     await expect(page.getByText("Related rules", { exact: true })).toBeVisible();
@@ -212,7 +245,11 @@ test.describe("rule detail", () => {
   });
 
   test("shows no related section until something is linked", async ({ page }) => {
-    await page.goto("/rules/4");
+    // The starter pack seeds no related-rule links at all, so any seeded rule
+    // demonstrates the "nothing linked yet" state. (This used to point at
+    // `/rules/4`, an id that no longer exists for an owner.)
+    const id = await ruleIdByTitle(page, ADJECTIVE);
+    await page.goto(`/rules/${id}`);
     await expect(page.getByText("Related rules")).toHaveCount(0);
   });
 });
@@ -225,8 +262,11 @@ test.describe("rule examples page", () => {
     // A seeded rule example lives here, with its equivalent broken out…
     const ruleExample = "書く → 書きます";
     await expect(page.getByText(ruleExample)).toBeVisible();
+    // The equivalent comes from the example's own `english_equivalent` field.
+    // Migration 0013 backfilled that column from `english`, so for seeded rows
+    // the two hold the same string and it renders twice — hence `.first()`.
     await expect(
-      page.getByText("kaku → kakimasu (to write → writes, politely)")
+      page.getByText("kaku → kakimasu (to write → writes, politely)").first()
     ).toBeVisible();
 
     // …and is not mixed into the word-list examples page.

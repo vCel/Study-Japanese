@@ -19,6 +19,12 @@ import { E2E_BASE_URL, E2E_PORT } from "./e2e/test-config";
  * create, edit and delete rows — so the web server below is started with
  * `CLOUDFLARE_VITE_FORCE_LOCAL=true`, which forces every binding back to the
  * local miniflare copy and keeps production data untouched.
+ *
+ * On timeouts: these specs run against a dev server, so every `page.goto` pays
+ * for Vite's unbundled module graph — a couple of seconds each even on an idle
+ * machine, and noticeably more once several workers share one server and one
+ * local D1. Specs that walk a dozen pages (the page-header layout sweep) need
+ * the headroom, so the per-test budget is 60s rather than Playwright's 30s.
  */
 const PORT = E2E_PORT;
 const baseURL = E2E_BASE_URL;
@@ -33,8 +39,8 @@ export default defineConfig({
   reporter: process.env.CI
     ? [["github"], ["html", { open: "never" }]]
     : [["list"], ["html", { open: "never" }]],
-  timeout: 30_000,
-  expect: { timeout: 10_000 },
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
   use: {
     baseURL,
     trace: "on-first-retry",

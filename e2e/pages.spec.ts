@@ -1,11 +1,42 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { waitForHydration } from "./helpers";
+import {
+  expectHydrated,
+  listIdByTitle,
+  ruleIdByTitle,
+  seedStarterPack,
+  STARTER_WORD_LIST,
+  stubConvex,
+  waitForFonts,
+  waitForHydration,
+  wordIdByTitle,
+} from "./helpers";
+
+/**
+ * These pages are all empty until the browser's owner owns something, so every
+ * test starts by taking a copy of the starter pack. That also retires the
+ * hard-coded ids (`/words/1`, `/lists/1`): the seeded rows have `owner_id IS
+ * NULL` and are invisible to an owner, so ids are resolved from the list pages.
+ */
+test.beforeEach(async ({ page }) => {
+  await stubConvex(page);
+  await seedStarterPack(page);
+});
+
+/** Seeded titles used to resolve ids. */
+const WORD = "日本語";
+const WORD_LIST = STARTER_WORD_LIST;
+const PHRASE_LIST = "Everyday Phrases";
+const RULE = "Polite ます-form";
 
 /** Titles of the cards on a listing page (each card renders its title as an h2). */
 async function cardTitles(page: Page, path: string): Promise<string[]> {
   await page.goto(path);
-  await page.waitForLoadState("networkidle");
+  // The cards are server-rendered, so waiting for the network to go quiet is
+  // pure overhead on a dev server. Waiting for the first card is also the
+  // stronger assertion: a listing that renders nothing now fails here, at the
+  // page that rendered nothing, rather than as an empty-array mismatch later.
+  await expect(page.locator("main h2").first()).toBeVisible({ timeout: 30_000 });
   return page.locator("main h2").allInnerTexts();
 }
 
@@ -122,7 +153,8 @@ test.describe("tag filters", () => {
   });
 
   test("a phrase list's own tags stay on the phrase-lists page", async ({ page }) => {
-    await page.goto("/lists/3");
+    const id = await listIdByTitle(page, PHRASE_LIST, "/phrases/lists");
+    await page.goto(`/lists/${id}`);
     await expect(page.getByRole("link", { name: "#phrases" })).toHaveAttribute(
       "href",
       "/phrases/lists?tag=phrases"
@@ -136,8 +168,7 @@ test.describe("tag filters", () => {
  */
 test.describe("word detail", () => {
   test("lists meanings as text and links its list at the bottom", async ({ page }) => {
-    await page.goto("/words/1");
-    await page.waitForLoadState("networkidle");
+    await page.goto(`/words/${await wordIdByTitle(page, WORD)}`);
 
     // Meanings are a numbered list, not badges.
     await expect(page.locator("main ol li").first()).toBeVisible();
@@ -146,7 +177,9 @@ test.describe("word detail", () => {
     // There is no "study this list" button on a word page…
     await expect(page.getByRole("link", { name: "Study this list" })).toHaveCount(0);
 
-    // …and the list it belongs to is linked below the examples.
+    // …and the list it belongs to is linked below the examples. Comparing two
+    // y-positions only means something once text metrics have settled.
+    await waitForFonts(page);
     const list = page.getByRole("link", { name: "JLPT N5 Starter" });
     const examples = page.getByText("Example sentences").first();
     const listBox = await list.boundingBox();
@@ -160,13 +193,15 @@ test.describe("word detail", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto("/words/1");
-    await page.waitForLoadState("networkidle");
+    await page.goto(`/words/${await wordIdByTitle(page, WORD)}`);
+    // Every assertion here is a height comparison.
+    await waitForFonts(page);
 
-    // Words are private to their owner: a fresh browser has no device cookie, so
-    // it can only see the starter pack. Nothing to lay out in that case.
-    if (await page.getByRole("heading", { level: 1, name: "404" }).isVisible().catch(() => false)) {
-      test.skip(true, "word 1 is not visible to this browser's owner");
+    // No word in the starter pack carries conjugation forms, so there is no
+    // Forms card to lay out. (This used to skip because `/words/1` 404'd for a
+    // fresh owner — the reason was wrong, even though the outcome was right.)
+    if ((await page.getByText(/^Forms/).count()) === 0) {
+      test.skip(true, "the starter pack ships no conjugation forms");
     }
 
     const forms = page.getByText(/^Forms/).first();
@@ -214,7 +249,8 @@ test.describe("word detail", () => {
  * a phrase or a form never changes the size of the top of the page.
  */
 test.describe("page header", () => {
-  const PAGES = [
+  /** Pages whose URL is the same for every owner. */
+  const STATIC_PAGES = [
     "/",
     "/words",
     "/phrases",
@@ -224,23 +260,35 @@ test.describe("page header", () => {
     "/rules/examples",
     "/study/flashcards",
     "/study/quizzes",
-    "/words/1",
-    "/lists/1",
-    "/rules/1",
     "/lists/new",
     "/phrases/new",
     "/rules/new",
   ];
 
   test("keeps the same shape and height on lists, detail pages and forms", async ({ page }) => {
+    // Detail pages need ids resolved for *this* owner — see the note at the top.
+    const detailPages = [
+      `/words/${await wordIdByTitle(page, WORD)}`,
+      `/lists/${await listIdByTitle(page, WORD_LIST)}`,
+      `/rules/${await ruleIdByTitle(page, RULE)}`,
+    ];
+
     const heights: number[] = [];
 
-    for (const path of PAGES) {
+    for (const path of [...STATIC_PAGES, ...detailPages]) {
       await page.goto(path);
-      await page.waitForLoadState("networkidle");
+
+      // No `networkidle` here: the header is server-rendered, so it is already
+      // in the HTML that `goto` resolved on, and waiting for the network to go
+      // quiet on fifteen dev-server page loads is what made this sweep the
+      // slowest test in the suite. What the measurement *does* depend on is the
+      // webfont — text metrics decide the header's height.
+      await waitForFonts(page);
 
       const header = page.locator("main [data-slot='page-header']");
-      await expect(header, path).toHaveCount(1);
+      // Strict-mode visible == exactly one, which is the old `toHaveCount(1)`
+      // plus the guarantee that it is actually laid out.
+      await expect(header, path).toBeVisible();
       await expect(header.locator("h1"), path).toHaveCount(1);
       await expect(header.locator("[data-slot='page-subtitle']"), path).toHaveCount(1);
 
@@ -254,7 +302,7 @@ test.describe("page header", () => {
   });
 
   test("puts an item's tags to the right of the subtitle", async ({ page }) => {
-    await page.goto("/rules/1");
+    await page.goto(`/rules/${await ruleIdByTitle(page, RULE)}`);
 
     const subtitle = await page.locator("main [data-slot='page-subtitle']").boundingBox();
     const tags = await page.locator("main [data-slot='page-tags']").boundingBox();
@@ -266,7 +314,7 @@ test.describe("page header", () => {
 
     // An item without tags reserves the same room, so the header never resizes.
     const withTags = await page.locator("main [data-slot='page-header']").boundingBox();
-    await page.goto("/words/1");
+    await page.goto(`/words/${await wordIdByTitle(page, WORD)}`);
     await expect(page.locator("main [data-slot='page-tags']")).toHaveCount(0);
     const withoutTags = await page.locator("main [data-slot='page-header']").boundingBox();
     expect(withTags).not.toBeNull();
@@ -309,16 +357,17 @@ test.describe("page header", () => {
 
     // A nested page trails through every ancestor, outermost first, ending on
     // the page itself.
-    await page.goto("/lists/1/edit");
+    const listId = await listIdByTitle(page, WORD_LIST);
+    await page.goto(`/lists/${listId}/edit`);
     const editCrumbs = page.getByRole("navigation", { name: "breadcrumb" });
     await expect(editCrumbs.locator("a")).toHaveCount(2);
     await expect(editCrumbs.getByRole("link", { name: "Word lists" })).toHaveAttribute(
       "href",
       "/"
     );
-    await expect(editCrumbs.getByRole("link", { name: "JLPT N5 Starter" })).toHaveAttribute(
+    await expect(editCrumbs.getByRole("link", { name: WORD_LIST })).toHaveAttribute(
       "href",
-      "/lists/1"
+      `/lists/${listId}`
     );
     await expect(editCrumbs.locator("[aria-current='page']")).toHaveText("Edit word list");
 
@@ -344,6 +393,9 @@ test.describe("settings page", () => {
     });
 
     await page.goto("/settings");
+    // Kept on purpose, like the session-rendering spec in study.spec.ts: this
+    // test watches for errors rather than content, and a hydration mismatch can
+    // be reported a tick after the markup is up.
     await page.waitForLoadState("networkidle");
     await waitForHydration(page);
 
