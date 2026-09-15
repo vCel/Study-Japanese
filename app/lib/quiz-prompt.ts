@@ -129,6 +129,37 @@ const DISTRACTOR_QUALITY = [
   "- With several gaps, every option must be wrong in every gap it could plausibly fill — except where it is the answer.",
 ].join("\n");
 
+/**
+ * Ruby text for the kanji.
+ *
+ * The quiz is aimed at a learner who cannot read kanji, so every kanji they
+ * meet carries its reading. The notation is the traditional Japanese ruby form,
+ * `漢字《かんじ》`, rather than parentheses or brackets: `《》` does not occur in
+ * ordinary prose, so the pattern can be parsed without guessing which
+ * punctuation the sentence legitimately contained. `furigana.ts` turns it into a
+ * `<ruby>` element, and a toggle hides the readings again.
+ *
+ * The wording matters. An earlier draft listed "prompt" among the *Japanese*
+ * fields, which reads as permission to write the prompt in Japanese — the
+ * exact opposite of what the system prompt asks for. The fields are not
+ * Japanese or English; the rule is about any Japanese that appears in them.
+ *
+ * The exception matters as much as the rule. Annotating the item under test
+ * hands over the answer — a question asking how to read 学生 is ruined by
+ * 学生《がくせい》 — so the annotated and the tested form have to be kept apart.
+ */
+const FURIGANA_RULE = [
+  '## Ruby text for kanji',
+  'The reader cannot read kanji, so every kanji they will meet carries its reading, written in 《》 — the traditional Japanese ruby notation.',
+  '',
+  '- Annotate every kanji you write, wherever it appears: 学生です → 学生《がくせい》です, 今日は寒い → 今日《きょう》は寒《さむ》い.',
+  '- That includes Japanese quoted inside an English "prompt" or "explanation": Which of these means 学生《がくせい》?',
+  '- Kana is left bare: です, ます, は, を take no annotation.',
+  '- Annotate whole words, not single characters: 大学《だいがく》, never 大《だい》学《がく》.',
+  '- Use the reading that fits the sentence — the same kanji can be read several ways.',
+  '- EXCEPTION, and it overrides everything above: never annotate the item the question is testing. If the question asks how to read a word, that word stays bare — the annotation would be the answer.',
+].join('\n');
+
 function distributionInstruction(config: QuizConfig): string {
   if (config.types.length <= 1) return "";
   if (config.distribution === "even") {
@@ -142,7 +173,7 @@ const RESPONSE_SCHEMA = `{
   "questions": [
     {
       "type": "multiple-choice" | "input" | "fill-blanks" | "true-false",
-      "prompt": "the question text shown to the user",
+      "prompt": "the question text shown to the user — English, with any Japanese inside it annotated",
       "sentence": "optional — the Japanese sentence, required for fill-blanks",
       "blanks": 0,
       "options": ["optional", "unordered", "pool"],
@@ -200,7 +231,8 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
       : "Mix the vocabulary question angles freely: word meaning, reading of the kanji, the kanji for a given reading, and correct usage in a sentence.";
 
   const system = [
-    "You are a Japanese-language teacher writing a quiz.",
+    "You are a Japanese-language teacher writing a quiz for an English-speaking learner who cannot yet read kanji.",
+    'Write the question itself in English: "prompt" and "explanation" are English sentences, and Japanese appears only as the material under test, quoted inside them. The learner must be able to tell what is being asked without reading a word of Japanese.',
     "You are given a fixed set of library items. Write questions about THOSE items only — never invent rules, words or readings that are not supported by the material.",
     "All Japanese must be natural, correctly spelled and grammatical (except where a true/false question deliberately contains one error).",
     "Every question that offers a set of options must have exactly ONE defensible answer — no distractor may also be grammatical and plausible in the given context.",
@@ -253,9 +285,11 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     spreadInstruction,
     focusInstruction,
     offersOptions ? DISTRACTOR_QUALITY : "",
+    FURIGANA_RULE,
     "",
     "## Rules",
     `- Produce exactly ${config.questionCount} questions.`,
+    '- Write "prompt" and "explanation" in English. Japanese belongs only *inside* them, as the material under test — never as the instruction itself.',
     '- Every question MUST set "sourceId" to the id of the library item it came from (the #number above).',
     wantsRules
       ? '- Every question MUST set "sourceKind" to "rule" when it came from a rule, or "word" when it came from a vocabulary item.'

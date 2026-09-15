@@ -15,6 +15,26 @@ body {
   }
 }
 
+/*
+ * Furigana. The browser's default `rt` is sized in `em` against an inherited
+ * line-height, which pushes the kanji down and opens a gap between lines — the
+ * readings are meant to sit *above* the text, not inside its rhythm. Pinning
+ * the size, the line-height and the position keeps the reading legible without
+ * the surrounding sentence shifting.
+ */
+ruby.furigana {
+  ruby-position: over;
+}
+ruby.furigana > rt {
+  font-size: 0.5em;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--color-muted-foreground);
+  letter-spacing: 0.02em;
+  /* Readings are an aid, not content: never let one wrap onto its own line. */
+  white-space: nowrap;
+}
+
 /* 3D flip helper for study flashcards */
 .perspective-1000 {
   perspective: 1000px;

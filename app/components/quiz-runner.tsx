@@ -5,7 +5,9 @@ import { Check, ExternalLink, Loader2, RotateCcw, Sparkles, Timer, X } from "luc
 
 import type { GenerationAttempt, QuizQuestion, QuizSourceKind } from "~/lib/quiz-types";
 import { QUIZ_SOURCE_KIND_LABELS, QUIZ_TYPE_LABELS } from "~/lib/quiz-types";
+import { anyHasFurigana, stripFurigana } from "~/lib/furigana";
 import { useQuizStats } from "~/lib/use-quiz-stats";
+import { FuriganaProvider, FuriganaToggle, Ruby } from "~/components/furigana";
 import { Button, buttonVariants } from "~/components/lightswind/button";
 import { Badge } from "~/components/lightswind/badge";
 import { Card, CardContent } from "~/components/lightswind/card";
@@ -60,10 +62,19 @@ interface Answer {
 
 type Phase = "generating" | "question" | "feedback" | "complete" | "error";
 
-/** Loose answer comparison: trim, case-fold, and ignore Japanese punctuation. */
+/**
+ * Loose answer comparison: trim, case-fold, ignore Japanese punctuation, and
+ * drop the ruby annotations.
+ *
+ * The annotation step is not optional. `question.answer` arrives annotated —
+ * `学生《がくせい》` — while the user types the plain `学生`, so comparing the
+ * two as-is would mark every kanji answer wrong. `stripFurigana` is applied to
+ * both sides and to the alternatives, so the comparison is always plain text
+ * against plain text.
+ */
 function answersMatch(given: string, question: QuizQuestion): boolean {
   const normalize = (value: string) =>
-    value
+    stripFurigana(value)
       .trim()
       .toLowerCase()
       // Full-width spaces and the sentence-final 。 are never the point of a
@@ -75,6 +86,31 @@ function answersMatch(given: string, question: QuizQuestion): boolean {
   const attempt = normalize(given);
   if (attempt === target) return true;
   return (question.acceptableAnswers ?? []).some((alt) => normalize(alt) === attempt);
+}
+
+/**
+ * Whether two displayed strings are the same choice.
+ *
+ * Used to highlight the picked option and the correct one. Both sides are
+ * annotated in practice — the option came straight from the question — but the
+ * comparison goes through `stripFurigana` anyway, so a mismatch in how the two
+ * happen to be written can never hide the correct answer from the review.
+ */
+function sameChoice(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  return stripFurigana(a) === stripFurigana(b);
+}
+
+/** Whether a question carries any ruby annotation worth offering a toggle for. */
+function questionHasFurigana(question: QuizQuestion): boolean {
+  return anyHasFurigana([
+    question.prompt,
+    question.sentence,
+    question.answer,
+    question.explanation,
+    ...(question.options ?? []),
+    ...(question.acceptableAnswers ?? []),
+  ]);
 }
 
 /**
@@ -102,7 +138,7 @@ function sourceHref(question: QuizQuestion, config: QuizRunConfig): string | nul
 /** What the generation stream reports while it runs. */
 interface StreamHandlers {
   onAttempt: (info: { model: string; index: number; total: number }) => void;
-  onRetry: (info: { model: string; detail: string; retryInMs: number }) => void;
+  onRound: (info: { round: number; totalRounds: number; detail: string }) => void;
   onAttemptDone: (attempt: GenerationAttempt) => void;
 }
 
@@ -149,11 +185,11 @@ async function readGenerationStream(
           total: Number(event.total ?? 1),
         });
         break;
-      case "retry":
-        handlers.onRetry({
-          model: String(event.model ?? ""),
+      case "round":
+        handlers.onRound({
+          round: Number(event.round ?? 2),
+          totalRounds: Number(event.totalRounds ?? 2),
           detail: String(event.detail ?? ""),
-          retryInMs: Number(event.retryInMs ?? 0),
         });
         break;
       case "attemptDone":
@@ -236,7 +272,12 @@ export function QuizRunner({
     total: number;
   } | null>(null);
   const [liveAttempts, setLiveAttempts] = React.useState<GenerationAttempt[]>([]);
-  const [retryNote, setRetryNote] = React.useState<string | null>(null);
+  /**
+   * Set when the chain restarts for a second pass. Named for the `round` event
+   * that carries it, not for the retry it replaced — the walk no longer retries
+   * a single model, it runs the whole chain again.
+   */
+  const [roundNote, setRoundNote] = React.useState<string | null>(null);
 
   // Generation is kicked off exactly once, even under StrictMode's double
   // effect invocation.
@@ -245,7 +286,7 @@ export function QuizRunner({
   const generate = React.useCallback(async () => {
     setPhase("generating");
     setError("");
-    setRetryNote(null);
+    setRoundNote(null);
     setProgress(null);
     setLiveAttempts([]);
     setAnswers([]);
@@ -311,10 +352,9 @@ export function QuizRunner({
 
       const outcome = await readGenerationStream(response, {
         onAttempt: (info) => setProgress(info),
-        onRetry: (info) =>
-          setRetryNote(
-            `${info.model} is busy — retrying in ${Math.max(1, Math.round(info.retryInMs / 1000))}s.`
-          ),
+        // Only ever fires between passes, never after the last one.
+        onRound: () =>
+          setRoundNote("Every model failed — starting the chain again."),
         onAttemptDone: (attempt) => {
           seen.push(attempt);
           setLiveAttempts([...seen]);
@@ -345,74 +385,78 @@ export function QuizRunner({
   }, [generate]);
 
   return (
-    <div>
-      {phase === "generating" && (
-        <GeneratingPanel
-          config={config}
-          progress={progress}
-          attempts={liveAttempts}
-          retryNote={retryNote}
-        />
-      )}
+    // Every panel that renders Japanese sits inside this, so the toggle reaches
+    // the prompt, the options, the feedback and the results review at once.
+    <FuriganaProvider>
+      <div>
+        {phase === "generating" && (
+          <GeneratingPanel
+            config={config}
+            progress={progress}
+            attempts={liveAttempts}
+            roundNote={roundNote}
+          />
+        )}
 
-      {phase === "error" && (
-        <ErrorPanel
-          message={error}
-          attempts={attempts}
-          onRetry={() => void generate()}
-          config={config}
-        />
-      )}
+        {phase === "error" && (
+          <ErrorPanel
+            message={error}
+            attempts={attempts}
+            onRetry={() => void generate()}
+            config={config}
+          />
+        )}
 
-      {(phase === "question" || phase === "feedback") && (
-        <QuestionFlow
-          questions={questions}
-          model={model}
-          attempts={attempts}
-          config={config}
-          timeLimitSeconds={config.timeLimitSeconds}
-          onAnswer={(answer) => setAnswers((prev) => [...prev, answer])}
-          onFinished={() => {
-            setPhase("complete");
-            // Fold this session's answers into the per-item log. Only questions
-            // that cite a library item have anywhere to go, and a question whose
-            // kind cannot be determined is skipped rather than logged wrongly —
-            // a rule id and a word id can collide.
-            void record(
-              answers.flatMap((answer) => {
-                const { sourceId } = answer.question;
-                if (!sourceId) return [];
-                const kind = sourceKindOf(answer.question, config);
-                if (!kind) return [];
-                return [
-                  {
-                    kind,
-                    itemId: sourceId,
-                    correct: answer.correct ? 1 : 0,
-                    wrong: answer.correct ? 0 : 1,
-                  },
-                ];
-              })
-            );
-          }}
-        />
-      )}
+        {(phase === "question" || phase === "feedback") && (
+          <QuestionFlow
+            questions={questions}
+            model={model}
+            attempts={attempts}
+            config={config}
+            timeLimitSeconds={config.timeLimitSeconds}
+            onAnswer={(answer) => setAnswers((prev) => [...prev, answer])}
+            onFinished={() => {
+              setPhase("complete");
+              // Fold this session's answers into the per-item log. Only questions
+              // that cite a library item have anywhere to go, and a question whose
+              // kind cannot be determined is skipped rather than logged wrongly —
+              // a rule id and a word id can collide.
+              void record(
+                answers.flatMap((answer) => {
+                  const { sourceId } = answer.question;
+                  if (!sourceId) return [];
+                  const kind = sourceKindOf(answer.question, config);
+                  if (!kind) return [];
+                  return [
+                    {
+                      kind,
+                      itemId: sourceId,
+                      correct: answer.correct ? 1 : 0,
+                      wrong: answer.correct ? 0 : 1,
+                    },
+                  ];
+                })
+              );
+            }}
+          />
+        )}
 
-      {phase === "complete" && (
-        <ResultsPanel
-          config={config}
-          model={model}
-          attempts={attempts}
-          answers={answers}
-          onRestart={() => void generate()}
-        />
-      )}
-    </div>
+        {phase === "complete" && (
+          <ResultsPanel
+            config={config}
+            model={model}
+            attempts={attempts}
+            answers={answers}
+            onRestart={() => void generate()}
+          />
+        )}
+      </div>
+    </FuriganaProvider>
   );
 }
 
 /** Number of models in the chain, for the loading bar's segments. */
-const CHAIN_LENGTH = 8;
+const CHAIN_LENGTH = 9;
 
 /**
  * Display names for the loading bar, **in `MODEL_CHAIN` order** — the index in
@@ -425,6 +469,7 @@ const CHAIN_LABELS = [
   "Gemini 3.8 Flash",
   "Gemini 3.7 Flash",
   "Gemini 3.6 Flash",
+  "Gemini 3.5 Flash",
   "GLM 4.7 Flash",
   "GLM 4.5 Flash",
   "Hunyuan Hy3",
@@ -441,12 +486,12 @@ function GeneratingPanel({
   config,
   progress,
   attempts,
-  retryNote,
+  roundNote,
 }: {
   config: QuizRunConfig;
   progress: { model: string; index: number; total: number } | null;
   attempts: GenerationAttempt[];
-  retryNote: string | null;
+  roundNote: string | null;
 }) {
   const total = progress?.total ?? CHAIN_LENGTH;
   const step = progress ? Math.min(progress.index + 1, total) : 0;
@@ -493,9 +538,9 @@ function GeneratingPanel({
           </div>
         </div>
 
-        {retryNote && (
+        {roundNote && (
           <p className="rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-600 dark:text-amber-400">
-            {retryNote}
+            {roundNote}
           </p>
         )}
 
@@ -662,6 +707,11 @@ function QuestionFlow({
   const isLast = index + 1 >= questions.length;
   const progress = ((index + (submitted ? 1 : 0)) / questions.length) * 100;
 
+  // Computed over the whole run, not the current question: a toggle that
+  // appeared and vanished as the quiz moved between English and Japanese
+  // questions would be worse than one that is simply always there.
+  const offersFurigana = React.useMemo(() => questions.some(questionHasFurigana), [questions]);
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between gap-3 text-sm text-muted-foreground">
@@ -670,6 +720,7 @@ function QuestionFlow({
           {QUIZ_TYPE_LABELS[question.type]}
         </span>
         <div className="flex shrink-0 items-center gap-2">
+          {offersFurigana && <FuriganaToggle />}
           {model && (
             <Tooltip content={<AttemptList attempts={attempts} />}>
               <Badge variant="kana">{model}</Badge>
@@ -715,7 +766,7 @@ function QuestionFlow({
             <CardContent className="p-6 md:p-8">
               <div className="mb-4 flex items-start justify-between gap-4">
                 <p className="text-lg leading-relaxed font-medium whitespace-pre-line">
-                  {question.prompt}
+                  <Ruby>{question.prompt}</Ruby>
                 </p>
                 {timeLimitSeconds !== null && !submitted && (
                   <span
@@ -765,6 +816,12 @@ function QuestionFlow({
 /**
  * The sentence with its gaps. Before answering, blank underscores; after, the
  * gap shows what the user put (green when right, red when wrong).
+ *
+ * The sentence around the gaps is annotated Japanese like everything else, so
+ * it goes through `Ruby`; the gap contents are options lifted straight out of
+ * the question, so they are annotated too. The green/red decision compares the
+ * two with `sameChoice`, which strips the readings — an option and the answer
+ * can be the same word written with the annotation only once.
  */
 function renderSentence(
   sentence: string,
@@ -772,7 +829,7 @@ function renderSentence(
   answer: string | null
 ): React.ReactNode {
   const parts = sentence.split(/_{2,}/g);
-  if (parts.length === 1) return sentence;
+  if (parts.length === 1) return <Ruby>{sentence}</Ruby>;
 
   const givenParts = given ? given.split(/\s*,\s*/) : [];
   const answerParts = answer ? answer.split(/\s*,\s*/) : [];
@@ -781,7 +838,7 @@ function renderSentence(
     const isLast = index === parts.length - 1;
     return (
       <React.Fragment key={index}>
-        {part}
+        <Ruby>{part}</Ruby>
         {!isLast && (
           <span
             className={cn(
@@ -790,7 +847,7 @@ function renderSentence(
               "mx-1 inline-flex h-8 min-w-16 items-center justify-center border-b-2 px-2 align-middle text-base font-semibold",
               given === null
                 ? "border-primarylw/60 text-primarylw"
-                : givenParts[index] === answerParts[index]
+                : sameChoice(givenParts[index], answerParts[index])
                   ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
                   : "border-red-500 text-red-500"
             )}
@@ -800,7 +857,7 @@ function renderSentence(
               // chips below carry — and nothing else.
               <span className="text-xs font-normal opacity-40">{index + 1}</span>
             ) : (
-              (givenParts[index] ?? "—")
+              <Ruby>{givenParts[index] ?? "—"}</Ruby>
             )}
           </span>
         )}
@@ -849,8 +906,11 @@ function QuestionInput({
     return (
       <div className="grid gap-2 sm:grid-cols-2">
         {options.map((option, index) => {
-          const isCorrect = option === question.answer;
-          const isChosen = submitted?.given === option;
+          // Compared with the readings stripped: the option and the answer are
+          // the same word, but only one of them may happen to carry the
+          // annotation, and a raw `===` would then show no correct option.
+          const isCorrect = sameChoice(option, question.answer);
+          const isChosen = sameChoice(submitted?.given, option);
           return (
             <button
               key={`${option}-${index}`}
@@ -869,7 +929,9 @@ function QuestionInput({
                       : "border-border opacity-60"
               )}
             >
-              <span className="text-sm font-medium">{labels[index]}</span>
+              <span className="text-sm font-medium">
+                <Ruby>{labels[index]}</Ruby>
+              </span>
               {submitted !== null && isCorrect && (
                 <Check className="h-4 w-4 shrink-0 text-emerald-500" />
               )}
@@ -901,7 +963,9 @@ function QuestionInput({
               key={index}
               className="rounded-[var(--radius)] border border-dashed border-primarylw/60 px-4 py-2 text-sm font-semibold text-primarylw"
             >
-              {picked[index] ?? (
+              {picked[index] ? (
+                <Ruby>{picked[index]}</Ruby>
+              ) : (
                 // An unfilled slot shows its number, faintly — the same marker
                 // the sentence itself uses, so the two read as the same slot.
                 <span className="text-xs font-normal opacity-40">{index + 1}</span>
@@ -927,7 +991,7 @@ function QuestionInput({
                       : "cursor-pointer border-border hover:border-primarylw/50 hover:bg-muted"
                   )}
                 >
-                  {option}
+                  <Ruby>{option}</Ruby>
                 </button>
               );
             })}
@@ -1023,15 +1087,23 @@ function Feedback({
       {!correct && (
         <p className="mt-2 text-sm">
           <span className="text-muted-foreground">Correct answer: </span>
-          <span className="font-semibold">{question.answer}</span>
+          <span className="font-semibold">
+            <Ruby>{question.answer}</Ruby>
+          </span>
           {given.trim().length > 0 && (
-            <span className="text-muted-foreground"> · you said “{given}”</span>
+            <span className="text-muted-foreground">
+              {" · you said “"}
+              <Ruby>{given}</Ruby>
+              {"”"}
+            </span>
           )}
         </p>
       )}
 
       {question.explanation && (
-        <p className="mt-2 text-sm text-muted-foreground">{question.explanation}</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          <Ruby>{question.explanation}</Ruby>
+        </p>
       )}
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -1116,18 +1188,34 @@ function ResultsPanel({
         {/* Every question the user got wrong, so the review is actionable. */}
         {missed.length > 0 && (
           <div className="w-full max-w-lg space-y-2 text-left">
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              Worth another look
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Worth another look
+              </p>
+              {missed.some((answer) => questionHasFurigana(answer.question)) && <FuriganaToggle />}
+            </div>
             {missed.map((answer) => (
               <div
                 key={answer.question.id}
                 className="rounded-[var(--radius)] border border-border p-3 text-sm"
               >
-                <p className="font-medium whitespace-pre-line">{answer.question.prompt}</p>
+                <p className="font-medium whitespace-pre-line">
+                  <Ruby>{answer.question.prompt}</Ruby>
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Correct answer: <span className="text-foreground">{answer.question.answer}</span>
-                  {answer.timedOut ? " · timed out" : ` · you said “${answer.given}”`}
+                  Correct answer:{" "}
+                  <span className="text-foreground">
+                    <Ruby>{answer.question.answer}</Ruby>
+                  </span>
+                  {answer.timedOut ? (
+                    " · timed out"
+                  ) : (
+                    <>
+                      {" · you said “"}
+                      <Ruby>{answer.given}</Ruby>
+                      {"”"}
+                    </>
+                  )}
                 </p>
                 {(() => {
                   const href = sourceHref(answer.question, config);

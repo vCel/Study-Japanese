@@ -104,6 +104,56 @@ async function stubGenerationFailure(page: Page, message: string, attempts: unkn
   });
 }
 
+/**
+ * A quiz in the shape a *live* generation returns: the Japanese is annotated
+ * with ruby readings, `漢字《かんじ》`.
+ *
+ * `sampleQuestions` above deliberately has none — it predates the annotations,
+ * and leaving it alone is what keeps every other spec in this file a check that
+ * the renderer passes plain text through untouched. This fixture is the other
+ * half: it is the one that would catch the renderer mangling real output, and
+ * the one that catches the grader comparing an annotated answer against the
+ * plain text the user actually types.
+ *
+ * The `input` question is the sharp end of that. Its `answer` is annotated and
+ * its `acceptableAnswers` deliberately does *not* include the plain `学生` — so
+ * typing 学生 can only be graded correct if the annotation is stripped before
+ * the comparison.
+ */
+function furiganaQuestions(): StubQuestion[] {
+  return [
+    {
+      type: "multiple-choice",
+      prompt: "Which of these means 学生《がくせい》?",
+      options: ["学生《がくせい》", "先生《せんせい》", "医者《いしゃ》", "友達《ともだち》"],
+      answer: "学生《がくせい》",
+      explanation: "学生《がくせい》 means student.",
+      sourceId: 1,
+      sourceKind: "word",
+    },
+    {
+      type: "fill-blanks",
+      prompt: "Fill in the missing particle.",
+      sentence: "私《わたし》___学生《がくせい》です",
+      blanks: 1,
+      options: ["は", "が", "を", "に"],
+      answer: "は",
+      explanation: "は marks the topic.",
+      sourceId: 2,
+      sourceKind: "rule",
+    },
+    {
+      type: "input",
+      prompt: 'Type the Japanese for "student".',
+      answer: "学生《がくせい》",
+      acceptableAnswers: ["がくせい", "gakusei"],
+      explanation: "学生《がくせい》 means student.",
+      sourceId: 3,
+      sourceKind: "word",
+    },
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Builder
 // ---------------------------------------------------------------------------
@@ -514,6 +564,73 @@ test.describe("quiz session", () => {
     await expect(page.getByText("· you said “teacher”")).toBeVisible();
   });
 
+  test("shows the kana above the kanji, and the toggle hides them", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, furiganaQuestions());
+
+    await page.goto("/study/quizzes/session?sources=words,rules&count=3&types=multiple-choice,fill-blanks,input");
+    await expectHydrated(page);
+
+    // The reading is in an `rt` above the kanji, not inline in the sentence.
+    // Asserting on the element rather than the paragraph text is the point:
+    // `textContent` of `<ruby>学生<rt>がくせい</rt></ruby>` is "学生がくせい", so
+    // a `getByText` on the whole prompt could not tell the two apart.
+    await expect(page.locator("rt").first()).toHaveText("がくせい", { timeout: 15_000 });
+
+    const toggle = page.getByRole("button", { name: /Furigana/ });
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    await toggle.click();
+
+    // Off: no ruby anywhere, and the prompt is now plain, readable Japanese —
+    // which is what makes this exact `getByText` succeed where it could not above.
+    await expect(page.locator("rt")).toHaveCount(0);
+    await expect(page.getByText("Which of these means 学生?", { exact: true })).toBeVisible();
+
+    // The choice is remembered across a reload, not just for this question.
+    // Waiting on `aria-pressed` — which only renders once the question panel is
+    // back — is what makes this a check of the persisted preference: `rt` is
+    // already zero during the loading panel, so counting it would prove nothing.
+    await page.reload();
+    await expectHydrated(page);
+    await expect(toggle).toHaveAttribute("aria-pressed", "false", { timeout: 15_000 });
+    await expect(page.locator("rt")).toHaveCount(0);
+  });
+
+  test("grades a plain answer against an annotated one", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, furiganaQuestions());
+
+    await page.goto("/study/quizzes/session?sources=words,rules&count=3&types=multiple-choice,fill-blanks,input");
+    await expectHydrated(page);
+
+    // The correct option is itself annotated. Clicking it must be accepted —
+    // the comparison strips the reading off both sides rather than trusting
+    // that the option and the answer are written identically.
+    await expect(page.locator("rt").first()).toHaveText("がくせい", { timeout: 15_000 });
+    await page.locator("button", { hasText: "学生" }).first().click();
+    await expect(page.getByText("Correct!")).toBeVisible();
+
+    await page.getByRole("button", { name: "Next question →" }).click();
+    await page.getByRole("button", { name: "は", exact: true }).click();
+    await expect(page.getByText("Correct!")).toBeVisible();
+
+    await page.getByRole("button", { name: "Next question →" }).click();
+
+    // The answer to this one is `学生《がくせい》` and the plain `学生` is NOT
+    // among its alternatives, so this passes only if the annotation is stripped
+    // before the comparison. Without that, every kanji answer would be marked
+    // wrong while the question looked perfectly correct on screen.
+    const input = page.getByPlaceholder("Type your answer — kana or romaji");
+    await input.fill("学生");
+    await page.getByRole("button", { name: "Check answer" }).click();
+    await expect(page.getByText("Correct!")).toBeVisible();
+
+    await page.getByRole("button", { name: "See results" }).click();
+    await expect(page.getByText("3 of 3 correct (100%)")).toBeVisible();
+  });
+
   test("omitting seconds means the quiz is untimed", async ({ page }) => {
     await stubConvex(page);
     const getRequest = await stubGeneration(page, [sampleQuestions()[0]]);
@@ -667,8 +784,14 @@ test.describe("quiz session", () => {
     // exercises the parser: a client that only understood a buffered JSON body
     // would never see the result, and the wait below would time out.
     await page.route("**/api/quiz/generate", async (route: Route) => {
+      // Mirrors a real walk that needed both passes: Gemini 3.8 timed out, the
+      // last row answered with output the parser could not read, and only then
+      // did the chain restart and Gemini 3.6 answer. Covering the `round` event
+      // and the unusable-output outcome here is deliberate — neither has any
+      // other spec, and a client that choked on an unknown event would fail the
+      // wait below rather than silently losing the quiz.
       const events = [
-        { type: "attempt", model: "gemini-3.8-flash", index: 0, total: 8 },
+        { type: "attempt", model: "gemini-3.8-flash", index: 1, total: 9 },
         {
           type: "attemptDone",
           attempt: {
@@ -679,7 +802,19 @@ test.describe("quiz session", () => {
             ms: 300,
           },
         },
-        { type: "attempt", model: "gemini-3.6-flash", index: 2, total: 8 },
+        { type: "attempt", model: "inclusionai/ling-3.0-flash-vl:free", index: 8, total: 9 },
+        {
+          type: "attemptDone",
+          attempt: {
+            model: "inclusionai/ling-3.0-flash-vl:free",
+            provider: "openrouter",
+            outcome: "error",
+            detail: "answered with output we could not use",
+            ms: 900,
+          },
+        },
+        { type: "round", round: 2, totalRounds: 2, detail: "no model answered on the first pass" },
+        { type: "attempt", model: "gemini-3.6-flash", index: 3, total: 9 },
         {
           type: "result",
           questions: sampleQuestions(),
@@ -691,6 +826,13 @@ test.describe("quiz session", () => {
               outcome: "timeout",
               detail: "503 UNAVAILABLE",
               ms: 300,
+            },
+            {
+              model: "inclusionai/ling-3.0-flash-vl:free",
+              provider: "openrouter",
+              outcome: "error",
+              detail: "answered with output we could not use",
+              ms: 900,
             },
             { model: "gemini-3.6-flash", provider: "gemini", outcome: "ok", ms: 900 },
           ],

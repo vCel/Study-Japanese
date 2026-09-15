@@ -318,12 +318,12 @@ function streamGeneration(
             index: attempt.index,
             total: attempt.total,
           }),
-        onRetry: (info) =>
+        onRound: (info) =>
           send({
-            type: "retry",
-            model: info.model,
+            type: "round",
+            round: info.round,
+            totalRounds: info.totalRounds,
             detail: info.detail,
-            retryInMs: info.retryInMs,
           }),
         onAttemptDone: (attempt) => send({ type: "attemptDone", attempt }),
         // The same parser the route runs below, as a gate: an answer we cannot

@@ -45,9 +45,9 @@ interface ModelSpec {
 }
 
 /**
- * Ordered exactly as specified: the AIHubMix free model first, then newest
- * Gemini, then GLM, then the two remaining fallbacks. Everything shares the
- * same interface so the walk below stays one loop.
+ * Ordered exactly as specified: the AIHubMix free model first, then Gemini
+ * newest-first down to 3.5, then GLM, then the two remaining fallbacks.
+ * Everything shares the same interface so the walk below stays one loop.
  */
 export const MODEL_CHAIN: ModelSpec[] = [
   {
@@ -69,6 +69,7 @@ export const MODEL_CHAIN: ModelSpec[] = [
   { model: "gemini-3.8-flash", provider: "gemini" },
   { model: "gemini-3.7-flash", provider: "gemini" },
   { model: "gemini-3.6-flash", provider: "gemini" },
+  { model: "gemini-3.5-flash", provider: "gemini" },
   { model: "glm-4.7-flash", provider: "glm" },
   { model: "glm-4.5-flash", provider: "glm" },
   { model: "hy3-free", provider: "aihubmix" },
@@ -80,12 +81,14 @@ export const MODEL_CHAIN: ModelSpec[] = [
 const ATTEMPT_TIMEOUT_MS = 25_000;
 
 /**
- * Ceiling for the whole walk, so a slow cascade still returns a response.
+ * Ceiling for the whole walk — every pass together, not each pass, so the
+ * request still returns a response when a slow cascade fails everywhere.
  *
- * Deliberately unchanged at 95s while the chain grew from five rows to eight:
- * Gemini alone can burn ~70s before GLM gets a turn, so the last two rows are
- * only reached when the models above them fail fast. Raising this is a product
- * decision, not a bug fix — see `AI.md`.
+ * This is what decides whether the second pass happens at all, and it is why the
+ * pass is only reachable when the first one failed *fast*: nine rows that each
+ * burn the full 25s ceiling need 225s on their own, whereas a 429/503 storm is
+ * over in a couple of seconds and leaves the budget almost untouched. Raising
+ * this is a product decision, not a bug fix — see `AI.md`.
  */
 const TOTAL_BUDGET_MS = 95_000;
 
@@ -93,8 +96,8 @@ const TOTAL_BUDGET_MS = 95_000;
  * How a failed attempt should affect the walk.
  *  * `ratelimit`          → *this model* is out of quota; siblings may be fine
  *  * `provider-ratelimit` → the *account* is out; skip the provider's siblings
- *  * `overloaded`         → transient provider-wide load; worth one retry,
- *                           unless the provider already answered that way
+ *  * `overloaded`         → transient provider-wide load; the next model is
+ *                           tried, and the second pass is the retry
  *  * `timeout`            → this attempt stalled; try the next model
  *  * `error`              → anything else (bad request, bad key, bad output)
  *
@@ -120,10 +123,11 @@ export interface GenerateOptions {
    */
   onAttempt?: (attempt: { model: string; provider: string; index: number; total: number }) => void;
   /**
-   * Called when an attempt fails and a retry is about to happen, so the UI can
-   * explain the pause rather than appearing stuck.
+   * Called when the walk has been round the whole chain without an answer and is
+   * about to start again. The UI needs this because the progress bar jumps back
+   * to the first model, which otherwise looks like a glitch.
    */
-  onRetry?: (info: { model: string; detail: string; retryInMs: number }) => void;
+  onRound?: (info: { round: number; totalRounds: number; detail: string }) => void;
   /**
    * Called whenever an attempt settles — succeeded, failed, or skipped because
    * its provider was already known to be rate limited.
@@ -496,18 +500,24 @@ function callModel(
 // The walk
 // ---------------------------------------------------------------------------
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+/**
+ * How many times the whole chain is walked. The first pass gives every model one
+ * shot; the second exists because the failures worth repeating — a 429/503
+ * storm, an answer we could not read — come back in well under a second, so a
+ * repeat walk is cheap exactly when it is useful. A model that burned its whole
+ * 25s timeout is not retried at all, which is the point: one slow model must not
+ * get two turns while eight others wait.
+ */
+const WALK_PASSES = 2;
 
 /**
- * Try each model in `MODEL_CHAIN` until one answers.
+ * Try each model in `MODEL_CHAIN` until one answers, then walk the whole chain
+ * once more if none did.
  *
  * A rate-limit failure skips ahead — how far depends on its scope: an
  * account-level one abandons the provider (so a Gemini 429 lands straight on
- * GLM), a model-level one costs only that row. `overloaded` failures get one
- * retry with a short backoff, but only while there is still reason to think the
- * load is transient — see `overloadedProvider`.
+ * GLM), a model-level one costs only that row. Everything else moves straight on
+ * to the next model rather than retrying itself; the second pass is the retry.
  */
 export async function generateWithFallback(
   messages: ChatMessage[],
@@ -515,25 +525,14 @@ export async function generateWithFallback(
 ): Promise<GenerateOutcome> {
   const attempts: GenerationAttempt[] = [];
   const deadline = Date.now() + TOTAL_BUDGET_MS;
-  /** Providers whose *account* is already known to be rate limited. */
-  const exhausted = new Set<string>();
   /**
-   * The provider whose most recent attempt failed `overloaded`, or null when
-   * the walk's last attempt failed some other way.
+   * Providers whose *account* is already known to be rate limited.
    *
-   * Retrying is only worth ~25s of the budget if the overload might be a blip
-   * on one model. When the *next* model on the same provider answers
-   * `overloaded` too, the load is the provider's, and the retry is spent on a
-   * model that has just been told the same thing — Gemini 503s all three of its
-   * models together. Measured 2026-09-15: a retry costs 20s + 1.5s backoff + 4s,
-   * and three of them put the walk over `TOTAL_BUDGET_MS` at row 5, so rows 6-8
-   * were never attempted at all.
-   *
-   * Keyed on the *previous attempt's* provider rather than "any earlier row",
-   * because AIHubMix holds two non-adjacent rows (1 and 7) — a stale entry from
-   * row 1 must not suppress a retry six rows later.
+   * Deliberately not reset between passes: an exhausted account does not come
+   * back inside the seconds a pass takes, so re-walking its rows would only
+   * spend budget to be told the same thing again.
    */
-  let overloadedProvider: Provider | null = null;
+  const exhausted = new Set<string>();
   let lastDetail = "No model in the fallback chain answered.";
 
   /** Keep the collected list and any live listener in step. */
@@ -542,35 +541,37 @@ export async function generateWithFallback(
     options.onAttemptDone?.(attempt);
   };
 
-  for (let index = 0; index < MODEL_CHAIN.length; index++) {
-    const spec = MODEL_CHAIN[index];
-
-    // A 429 on one Gemini model means the account is out — don't spend the
-    // other two attempts finding out.
-    if (exhausted.has(spec.provider)) {
-      record({
-        model: spec.model,
-        provider: spec.provider,
-        outcome: "ratelimit",
-        detail: `${spec.provider} is out of quota — skipped.`,
-        ms: 0,
-      });
-      continue;
+  for (let pass = 0; pass < WALK_PASSES; pass++) {
+    // The progress bar is about to jump back to the first model, so say why.
+    if (pass > 0) {
+      options.onRound?.({ round: pass + 1, totalRounds: WALK_PASSES, detail: lastDetail });
     }
 
-    if (Date.now() >= deadline) {
-      lastDetail = "Ran out of time before any model answered.";
-      break;
-    }
+    for (let index = 0; index < MODEL_CHAIN.length; index++) {
+      const spec = MODEL_CHAIN[index];
 
-    // Two passes on the same model: the second is the retry after a transient
-    // overload. Only `overloaded` earns the retry.
-    for (let pass = 0; pass < 2; pass++) {
-      // Read before this attempt can overwrite it: a provider-wide overload
-      // makes the retry below pointless, and this attempt is about to become
-      // the most recent one.
-      const providerAlreadyOverloaded = overloadedProvider === spec.provider;
-      overloadedProvider = null;
+      // A 429 on one Gemini model means the account is out — don't spend the
+      // other three attempts finding out.
+      if (exhausted.has(spec.provider)) {
+        // Reported on the pass that discovered it, once. A skip is a fact about
+        // the provider rather than about each pass, and repeating it would fill
+        // the attempt list with identical rows.
+        if (pass === 0) {
+          record({
+            model: spec.model,
+            provider: spec.provider,
+            outcome: "ratelimit",
+            detail: `${spec.provider} is out of quota — skipped.`,
+            ms: 0,
+          });
+        }
+        continue;
+      }
+
+      if (Date.now() >= deadline) {
+        lastDetail = "Ran out of time before any model answered.";
+        break;
+      }
 
       options.onAttempt?.({
         model: spec.model,
@@ -596,7 +597,7 @@ export async function generateWithFallback(
             ms: Date.now() - started,
           });
           lastDetail = `${spec.model}: ${detail}`;
-          break; // move to the next model
+          continue; // next model — every row gets one shot per pass
         }
 
         record({
@@ -628,29 +629,20 @@ export async function generateWithFallback(
         record({ model: spec.model, provider: spec.provider, outcome, detail, ms });
         lastDetail = `${spec.model}: ${detail}`;
 
-        // Remember this for the next row's retry decision.
-        if (kind === "overloaded") overloadedProvider = spec.provider;
-
         if (kind === "ratelimit" || kind === "provider-ratelimit") {
           // Only an account-level cap says anything about the sibling models.
           // A per-model one (the aggregators) leaves the rest of the provider
           // in play, which matters because AIHubMix holds two rows.
           if (kind === "provider-ratelimit") exhausted.add(spec.provider);
-          break;
         }
-
-        // One retry, but only if the overload still looks like a blip. If the
-        // provider's previous model said the same thing, it does not.
-        if (kind === "overloaded" && pass === 0 && !providerAlreadyOverloaded) {
-          const retryInMs = 1500;
-          options.onRetry?.({ model: spec.model, detail, retryInMs });
-          await sleep(retryInMs);
-          continue; // one retry on the same model
-        }
-
-        break; // move to the next model
+        // No retry here on purpose: the pass moves on to the next model, and
+        // the second pass is the retry.
       }
     }
+
+    // Out of time mid-pass. Another pass cannot fit, so stop rather than
+    // re-walking rows only to break on the same deadline again.
+    if (Date.now() >= deadline) break;
   }
 
   throw new GenerationError("error", lastDetail);
