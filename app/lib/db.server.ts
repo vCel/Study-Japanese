@@ -1859,6 +1859,15 @@ export interface RuleChoice {
   kind: RuleKind;
   title: string;
   /**
+   * The rule's ポイント lines, in display order (empty for a rule with none).
+   *
+   * The picker shows these under each title: a rule's title is a name like
+   * "Polite ます-form", and which forms it actually covers is the thing a quiz
+   * builder needs to see before deciding whether to include it. Carried here
+   * rather than fetched per rule, so the picker stays a single query.
+   */
+  points: string[];
+  /**
    * The rule's tag names.
    *
    * Carried here so the builder can hide rules that fall outside the tag
@@ -1870,7 +1879,7 @@ export interface RuleChoice {
 }
 
 /**
- * Every rule the owner has, as a minimal `{id, kind, title, tags}`.
+ * Every rule the owner has, as a minimal `{id, kind, title, points, tags}`.
  *
  * The builder's rule picker needs the whole list at once — to offer "all", to
  * count the selection, and to show which are ticked — so this deliberately
@@ -1884,10 +1893,13 @@ export async function listRuleChoices(ownerId: string, limit = 500): Promise<Rul
   const [rows, tagRows] = await Promise.all([
     db
       .prepare(
-        "SELECT id, kind, title FROM rules WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
+        // `pattern` comes along for the same reason `listRules` reads it: a rule
+        // saved before `points` existed keeps its single point there, and
+        // `parseRulePoints` is the one place that knows the fallback.
+        "SELECT id, kind, title, pattern, points FROM rules WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
       )
       .bind(ownerId, limit)
-      .all<{ id: number; kind: RuleKind; title: string }>(),
+      .all<{ id: number; kind: RuleKind; title: string; pattern: string | null; points: string | null }>(),
     db
       .prepare(
         `SELECT rt.rule_id AS rule_id, t.name AS name
@@ -1912,6 +1924,7 @@ export async function listRuleChoices(ownerId: string, limit = 500): Promise<Rul
     id: row.id,
     kind: row.kind,
     title: row.title,
+    points: parseRulePoints(row.points, row.pattern),
     tags: tagMap.get(row.id) ?? [],
   }));
 }

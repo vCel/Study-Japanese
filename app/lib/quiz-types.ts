@@ -132,8 +132,16 @@ export const QUIZ_DISTRIBUTION_HINTS: Record<QuizDistribution, string> = {
   random: "The AI decides the mix as it goes — some types may dominate.",
 };
 
-/** Question counts offered on the builder. */
-export const QUIZ_SIZES = [5, 10, 15, 20, 30];
+/**
+ * The question-count ladder the builder's slider steps through.
+ *
+ * A ladder rather than a free 1–50 range, for the same reason the seconds and
+ * difficulty controls are ladders: every stop is a sensible size for one quiz,
+ * and the slider can never land between two of them. The count is snapped back
+ * onto this list on load (see `normalizeConfig`), so a stale or hand-edited
+ * value can't leave the slider without a position.
+ */
+export const QUIZ_SIZES = [5, 10, 15, 20, 25, 30];
 
 /** Time limits per question, in seconds. 0 = the toggle is off. */
 export const QUIZ_TIME_LIMITS = [15, 30, 45, 60, 75, 90];

@@ -1,7 +1,12 @@
 /** Client-side quiz preferences and saved sessions. */
 
 import type { QuizConfig } from "~/lib/quiz-types";
-import { DEFAULT_QUIZ_CONFIG, QUIZ_SOURCE_KINDS, QUIZ_TIME_LIMITS } from "~/lib/quiz-types";
+import {
+  DEFAULT_QUIZ_CONFIG,
+  QUIZ_SIZES,
+  QUIZ_SOURCE_KINDS,
+  QUIZ_TIME_LIMITS,
+} from "~/lib/quiz-types";
 
 const CONFIG_KEY = "jv:quiz:config";
 const SESSIONS_KEY = "jv:quiz:sessions";
@@ -88,10 +93,12 @@ export function normalizeConfig(raw: Partial<QuizConfig>): QuizConfig {
     ruleIds: Array.isArray(raw.ruleIds)
       ? raw.ruleIds.filter((id): id is number => typeof id === "number")
       : null,
-    questionCount:
-      typeof raw.questionCount === "number" && raw.questionCount > 0
-        ? Math.min(Math.max(Math.round(raw.questionCount), 1), 50)
-        : DEFAULT_QUIZ_CONFIG.questionCount,
+    // Snapped to the ladder the builder's slider steps through, so a value
+    // saved when the ladder was different (or hand-edited) can never leave the
+    // slider without a position — `QUIZ_SIZES.indexOf` would return -1.
+    questionCount: QUIZ_SIZES.includes(raw.questionCount as number)
+      ? (raw.questionCount as number)
+      : DEFAULT_QUIZ_CONFIG.questionCount,
     timeLimitEnabled: raw.timeLimitEnabled !== false,
     // Snapped to the ladder the builder's slider offers, so a hand-edited or
     // long-stale value can never leave the slider without a position.

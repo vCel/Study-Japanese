@@ -5,7 +5,6 @@ import { Check, FolderOpen, ListChecks, Minus, Save, Search, Sparkles } from "lu
 import type { RuleChoice, TagInfo, WordListSummary } from "~/lib/db.server";
 import { useStarredIds, type StarredIds } from "~/lib/use-stars";
 import { useQuizStats } from "~/lib/use-quiz-stats";
-import { SelectField } from "~/components/select-field";
 import { SettingLabel } from "~/components/setting-label";
 import { Badge } from "~/components/lightswind/badge";
 import { Button } from "~/components/lightswind/button";
@@ -75,10 +74,8 @@ const RULE_KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "sentence", label: "Sentence rules" },
 ];
 
-const QUIZ_SIZE_OPTIONS = QUIZ_SIZES.map((size) => ({
-  value: String(size),
-  label: `${size} questions`,
-}));
+/** How many tags a rule row shows before the rest collapse into "+x". */
+const MAX_VISIBLE_RULE_TAGS = 3;
 
 const pill = (active: boolean) =>
   cn(
@@ -258,6 +255,8 @@ function QuizPanel({
   }, [tags, ruleTags, wantsLists, wantsRules]);
 
   const [tagQuery, setTagQuery] = React.useState("");
+  /** Narrows the rule *list*, never the quiz — see `shownRules`. */
+  const [ruleQuery, setRuleQuery] = React.useState("");
   const tagsActive = config.tags.length > 0 || config.excludedTags.length > 0;
 
   const tagModeOf = (name: string): "off" | "include" | "exclude" =>
@@ -396,6 +395,26 @@ function QuizPanel({
     [rules, config.ruleKind, matchesTagFilter]
   );
   const visibleRuleIds = React.useMemo(() => visibleRules.map((rule) => rule.id), [visibleRules]);
+
+  /**
+   * The rules the list actually draws: `visibleRules` narrowed by the search
+   * box, matching a title or any of the rule's points.
+   *
+   * Display only — deliberately not folded into `visibleRules`. That list is
+   * the scope (what the quiz can draw from, what "select all" ticks, what the
+   * counts and the session query are measured against), and a search that
+   * quietly rewrote it would shrink the quiz to whatever happened to be typed
+   * in the box. Searching is a way to find a rule, not a way to exclude one.
+   */
+  const shownRules = React.useMemo(() => {
+    const query = ruleQuery.trim().toLowerCase();
+    if (!query) return visibleRules;
+    return visibleRules.filter(
+      (rule) =>
+        rule.title.toLowerCase().includes(query) ||
+        rule.points.some((point) => point.toLowerCase().includes(query))
+    );
+  }, [visibleRules, ruleQuery]);
 
   /**
    * `null` means "every rule" — the default, and the representation that stays
@@ -853,31 +872,133 @@ function QuizPanel({
               : "No rules of this type."}
         </p>
       ) : (
-        <ScrollArea maxHeight={220} className="pr-1">
-          <div className="flex flex-wrap gap-1.5">
-            {visibleRules.map((rule) => {
-              const active = config.ruleIds === null || config.ruleIds.includes(rule.id);
-              return (
-                <button
-                  key={rule.id}
-                  type="button"
-                  onClick={() => toggleRule(rule.id)}
-                  aria-pressed={active}
-                  title={rule.title}
-                  data-slot="quiz-rule"
-                  className={cn(
-                    "max-w-full cursor-pointer truncate rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                    active
-                      ? "border-primarylw bg-primarylw/15 text-primarylw"
-                      : "border-border text-muted-foreground hover:border-primarylw/40 hover:text-foreground"
-                  )}
-                >
-                  {rule.title}
-                </button>
-              );
-            })}
+        <div className="space-y-2">
+          {/* Offered whenever there is anything to search, like the tag chips'
+              box above: a rule title and its points are both searchable, and
+              the list can run to hundreds of rows. */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={ruleQuery}
+              onChange={(event) => setRuleQuery(event.target.value)}
+              placeholder="Search rules… (title or points)"
+              aria-label="Search rules"
+              data-slot="quiz-rule-search"
+              className="w-full rounded-[var(--radius)] border border-border bg-background py-2 pr-3 pl-9 text-sm outline-none focus:border-primarylw"
+            />
           </div>
-        </ScrollArea>
+
+          {/* The search hides rows, so it says so: a list that silently drops
+              entries while the header keeps counting them all reads as a bug. */}
+          {ruleQuery.trim() !== "" && (
+            <p className="text-xs text-muted-foreground">
+              {shownRules.length === 0
+                ? `No rules match “${ruleQuery.trim()}”.`
+                : `Showing ${shownRules.length} of ${visibleRules.length} — searching only narrows this list, not the quiz.`}
+            </p>
+          )}
+
+          {shownRules.length > 0 && (
+            <ScrollArea maxHeight={280} className="pr-1">
+              <ul className="space-y-1.5">
+                {shownRules.map((rule) => {
+                  const active = config.ruleIds === null || config.ruleIds.includes(rule.id);
+                  return (
+                    <li key={rule.id}>
+                      {/*
+                        One row per rule rather than a chip in a wrapped cloud:
+                        the title is a name ("Polite ます-form") and which forms
+                        it actually covers is its ポイント lines, so both belong
+                        on the same line the user is deciding about. The old
+                        chips truncated that title and showed none of the points.
+                      */}
+                      <button
+                        type="button"
+                        onClick={() => toggleRule(rule.id)}
+                        aria-pressed={active}
+                        data-slot="quiz-rule"
+                        className={cn(
+                          "flex w-full cursor-pointer items-start gap-3 rounded-[var(--radius)] border p-3 text-left transition-colors",
+                          active
+                            ? "border-primarylw/60 bg-primarylw/10"
+                            : "border-border hover:border-primarylw/40"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                            active
+                              ? "border-primarylw bg-primarylw text-white"
+                              : "border-muted-foreground/50"
+                          )}
+                        >
+                          {active && <Check className="h-3 w-3" />}
+                        </span>
+
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-sm font-medium">{rule.title}</span>
+                            {/* The kind is only news when the picker is not
+                                already narrowed to one of the two. */}
+                            {!config.ruleKind && (
+                              <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+                                {rule.kind === "sentence" ? "Sentence" : "Word"}
+                              </span>
+                            )}
+                          </span>
+
+                          {rule.points.length > 0 && (
+                            <span className="mt-1.5 flex flex-wrap items-center gap-1">
+                              <span className="text-[10px] font-bold tracking-wide text-muted-foreground/70">
+                                ポイント
+                              </span>
+                              {rule.points.map((point, index) => (
+                                // `title` carries the whole point: the chip is
+                                // clamped to one line so a long pattern cannot
+                                // make one row taller than the rest.
+                                <span
+                                  key={index}
+                                  title={point}
+                                  className="max-w-[18rem] truncate rounded-[4px] border border-dashed border-muted-foreground/40 px-1.5 py-0.5 text-xs text-muted-foreground"
+                                >
+                                  {point}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </span>
+
+                        {rule.tags.length > 0 && (
+                          <span className="hidden shrink-0 flex-wrap justify-end gap-1 sm:flex">
+                            {rule.tags.slice(0, MAX_VISIBLE_RULE_TAGS).map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
+                              >
+                                #{tag}
+                              </span>
+                            ))}
+                            {rule.tags.length > MAX_VISIBLE_RULE_TAGS && (
+                              <span
+                                title={rule.tags
+                                  .slice(MAX_VISIBLE_RULE_TAGS)
+                                  .map((tag) => `#${tag}`)
+                                  .join(", ")}
+                                className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted-foreground"
+                              >
+                                +{rule.tags.length - MAX_VISIBLE_RULE_TAGS}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </ScrollArea>
+          )}
+        </div>
       )}
     </section>
   );
@@ -1097,23 +1218,6 @@ function QuizPanel({
 
             <div className={settingRow}>
               <SettingLabel
-                label="Number of questions"
-                hint="How many questions the AI should write for this quiz."
-              />
-              <SelectField
-                ariaLabel="Number of questions"
-                triggerClassName="w-40"
-                options={QUIZ_SIZE_OPTIONS}
-                value={String(config.questionCount)}
-                onValueChange={(value) => {
-                  const size = Number.parseInt(value, 10);
-                  if (!Number.isNaN(size)) onChange({ questionCount: size });
-                }}
-              />
-            </div>
-
-            <div className={settingRow}>
-              <SettingLabel
                 label="Time limit per question"
                 hint="When on, each question is timed and auto-submits when the clock runs out. Turn it off to answer at your own pace."
               />
@@ -1152,6 +1256,39 @@ function QuizPanel({
                 </div>
               </div>
             )}
+
+            {/* Length and difficulty are the two "how much / how hard" dials,
+                so they sit together at the end of the card, both sliders over a
+                fixed ladder. The count used to be a Select up with the toggles;
+                as a ladder slider it reads the same way as its neighbours. */}
+            <div className={settingRow}>
+              <SettingLabel
+                label="Number of questions"
+                hint="How many questions the AI should write for this quiz."
+              />
+              <div className="flex items-center gap-3 sm:shrink-0">
+                <Slider
+                  className="w-36 flex-1 sm:w-52 sm:flex-none"
+                  aria-label="Number of questions"
+                  aria-valuetext={`${config.questionCount} questions`}
+                  // `Math.max(0, …)`: an off-ladder value (a config saved before
+                  // the ladder changed) would otherwise give index -1 and put
+                  // the thumb off the track. `normalizeConfig` snaps on load;
+                  // this is the belt to its braces.
+                  value={[Math.max(0, QUIZ_SIZES.indexOf(config.questionCount))]}
+                  min={0}
+                  max={QUIZ_SIZES.length - 1}
+                  step={1}
+                  onValueChange={([index]) => {
+                    const size = QUIZ_SIZES[index];
+                    if (size !== undefined) onChange({ questionCount: size });
+                  }}
+                />
+                <span className="w-14 text-right text-sm font-medium text-primarylw">
+                  {config.questionCount}
+                </span>
+              </div>
+            </div>
 
             {/* Difficulty sits on the label's line, like every other row: the
                 slider to the right of the name, with its current step beside it. */}

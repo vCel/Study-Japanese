@@ -260,22 +260,37 @@ test.describe("quiz builder", () => {
     await expect(page.getByRole("button", { name: "Generate quiz" })).toBeVisible();
   });
 
-  test("the question count is a select and the question types are pills", async ({ page }) => {
+  test("the question count is a slider above difficulty, and types are pills", async ({ page }) => {
     await stubConvex(page);
     await page.goto("/study/quizzes");
     await expectHydrated(page);
 
-    // The count is a Select, so its trigger shows the chosen option's label.
-    // `exact` matters: the row's info tooltip is labelled "About Number of
-    // questions", which a substring match would also hit.
-    const count = page.getByRole("button", { name: "Number of questions", exact: true });
-    await expect(count).toContainText("10 questions");
+    // The count is a slider over the builder's ladder (5…30 in fives), starting
+    // on 10 — the second rung. `aria-valuetext` carries the unit, so assistive
+    // tech announces "10 questions" rather than a bare index.
+    const count = page.getByRole("slider", { name: "Number of questions" });
+    await expect(count).toBeVisible();
+    await expect(count).toHaveAttribute("aria-valuemin", "0");
+    await expect(count).toHaveAttribute("aria-valuemax", "5");
+    await expect(count).toHaveAttribute("aria-valuenow", "1");
+    await expect(count).toHaveAttribute("aria-valuetext", "10 questions");
 
-    await count.click();
-    await page.getByRole("option", { name: "20 questions" }).click();
-    await expect(page.getByRole("button", { name: "Number of questions", exact: true })).toContainText(
-      "20 questions"
+    // Arrow keys step it — the accessible way to drive it. The thumb is
+    // re-created on each commit, so re-query rather than reuse the handle.
+    await count.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("slider", { name: "Number of questions" })).toHaveAttribute(
+      "aria-valuetext",
+      "15 questions"
     );
+
+    // …and it sits directly above difficulty, which is the pair it belongs
+    // with: how many questions, and how hard they are.
+    const countBox = await page.getByRole("slider", { name: "Number of questions" }).boundingBox();
+    const difficultyBox = await page.getByRole("slider", { name: "Difficulty" }).boundingBox();
+    expect(countBox, "count slider").not.toBeNull();
+    expect(difficultyBox, "difficulty slider").not.toBeNull();
+    expect(countBox!.y).toBeLessThan(difficultyBox!.y);
 
     // Types stay multi-select pills: multiple-choice + fill-blanks by default.
     await expect(page.getByRole("button", { name: "Multiple choice" })).toHaveAttribute(
@@ -544,6 +559,65 @@ test.describe("quiz builder", () => {
     await jlpt.click();
     await expect(jlpt).toHaveAttribute("data-tag-mode", "off");
     await expect(page.getByText(/Click a tag to include it/)).toBeVisible();
+  });
+
+  test("the rule picker shows each rule's points, and searches them", async ({ page }) => {
+    await stubConvex(page);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    const rows = page.locator("[data-slot='quiz-rule']");
+    // One row per rule, and each carries its ポイント lines — the seeded rules
+    // have one apiece, from the legacy `pattern` column.
+    await expect(rows).toHaveCount(3);
+    await expect(rows.filter({ hasText: "ポイント" })).toHaveCount(3);
+    await expect(page.getByText("Verb stem + ます")).toBeVisible();
+
+    // Every rule starts included (`ruleIds === null` is the "all" sentinel), so
+    // the first click on a row *deselects* it — the whole row is the target,
+    // there is no separate checkbox to hunt for.
+    const polite = rows.filter({ hasText: "Polite ます-form" });
+    await expect(polite).toHaveAttribute("aria-pressed", "true");
+    await polite.click();
+    await expect(polite).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByText(/2 of 3 rules selected\./)).toBeVisible();
+
+    // Re-ticking everything collapses back to the sentinel, so rules added
+    // later are picked up without revisiting this screen.
+    await polite.click();
+    await expect(polite).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText(/Every rule is included \(3\)\./)).toBeVisible();
+
+    const search = page.getByLabel("Search rules");
+
+    // Title, case-insensitively.
+    await search.fill("POLITE");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("Polite ます-form");
+
+    // …and a rule's *points*, which is the half a title search cannot reach:
+    // "くない" appears in no title, only in the い-adjective rule's pattern.
+    await search.fill("くない");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("Adjective conjugation");
+
+    // Searching narrows the list, never the quiz: the header keeps counting all
+    // three, because a search that silently shrank the selection would be a
+    // filter the user never asked for.
+    await expect(page.getByText(/Every rule is included \(3\)\./)).toBeVisible();
+    await expect(page.getByText(/searching only narrows this list/)).toBeVisible();
+
+    // A query that matches nothing says so rather than showing an empty box.
+    await search.fill("zzz");
+    await expect(rows).toHaveCount(0);
+    await expect(page.getByText("No rules match “zzz”.")).toBeVisible();
+
+    // Clearing it brings the whole list back, and the row keeps its tick — a
+    // search is a way to find a rule, not a way to change the selection.
+    await search.fill("");
+    await expect(rows).toHaveCount(3);
+    await expect(polite).toHaveAttribute("aria-pressed", "true");
   });
 
   test("a tag hides the rules that do not carry it, in both directions", async ({ page }) => {
