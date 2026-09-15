@@ -772,7 +772,8 @@ export async function generateWithFallback(
         continue;
       }
 
-      if (Date.now() >= deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
         lastDetail = "Ran out of time before any model answered.";
         break;
       }
@@ -786,7 +787,16 @@ export async function generateWithFallback(
 
       const started = Date.now();
       try {
-        const text = await callModel(spec, messages, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS));
+        // Clamped to what is left, so the last attempt cannot run past the
+        // deadline. Without it an attempt could start with 1ms remaining and
+        // still take its full ceiling, which made the budget a floor — measured
+        // at 100.0s against 95s. Clamped rather than skipped, because most rows
+        // answer in about a second, so a small remainder is still worth trying.
+        const text = await callModel(
+          spec,
+          messages,
+          AbortSignal.timeout(Math.min(ATTEMPT_TIMEOUT_MS, remaining))
+        );
 
         // A 200 is not proof of a usable answer — see `accept` in
         // GenerateOptions. Treat an unusable one as a failed attempt, because
