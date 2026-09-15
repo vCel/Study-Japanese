@@ -7,13 +7,15 @@
  *
  * What "the same way" means is per-provider, and the difference is load
  * bearing. Gemini and GLM cap the *account* — a 429 there means the sibling
- * models will fail too, so the walk leaves the provider. AIHubMix and
- * OpenRouter are aggregators whose free tiers are capped per *model*
- * (AIHubMix meters `xiaomi-mimo-v2.5-free` at 5 rpm / 100 rpd on its own), so
- * a 429 there costs one row and says nothing about the provider's other
- * models. Treating both as account-level is how you silently lose a healthy
- * fallback — the same shape of bug as the GLM `1305` mix-up documented in
- * `classifyGlm`.
+ * models will fail too, so the walk leaves the provider. The four
+ * OpenAI-compatible providers are the other kind: their free tiers are capped
+ * per *model*, so a 429 there costs one row and says nothing about the
+ * provider's other models. AIHubMix meters `xiaomi-mimo-v2.5-free` at 5 rpm /
+ * 100 rpd on its own, OpenRouter forwards to a single upstream per free model,
+ * and Groq's limits are published per model (which matters, because both Groq
+ * and Comet hold two rows here). Treating those as account-level is how you
+ * silently lose a healthy fallback — the same shape of bug as the GLM `1305`
+ * mix-up documented in `classifyGlm`.
  *
  * Runs in the Worker (`env` from `cloudflare:workers`), never in the browser —
  * the keys must not reach the client bundle.
@@ -21,14 +23,12 @@
 
 import { env } from "cloudflare:workers";
 
-import type { GenerationAttempt } from "./quiz-types";
+import type { GenerationAttempt, Provider } from "./quiz-types";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
-
-type Provider = "gemini" | "glm" | "aihubmix" | "openrouter";
 
 /** One entry in the fallback chain. */
 interface ModelSpec {
@@ -38,16 +38,20 @@ interface ModelSpec {
    * Extra fields merged into the request body, for OpenAI-compatible
    * providers only (Gemini builds its own body and ignores this).
    *
-   * Exists for one reason: switching off a model's thinking mode. See the
-   * `xiaomi-mimo-v2.5-free` entry below.
+   * Exists for one reason: controlling how much a model thinks. See the
+   * `xiaomi-mimo-v2.5-free` and `gpt-oss-20b-free` entries below.
    */
   extraBody?: Record<string, unknown>;
 }
 
 /**
- * Ordered exactly as specified: the AIHubMix free model first, then Gemini
- * newest-first down to 3.5, then GLM, then the two remaining fallbacks.
- * Everything shares the same interface so the walk below stays one loop.
+ * Ordered as specified: the AIHubMix free model first, then Gemini newest-first
+ * down to 3.5, then the three Comet/Groq rows, then the two remaining
+ * fallbacks, with Comet's `gpt-5-nano` last.
+ *
+ * The GLM rows are commented out, not deleted — see the note at their old
+ * position. Everything shares the same interface so the walk below stays one
+ * loop.
  */
 export const MODEL_CHAIN: ModelSpec[] = [
   {
@@ -70,10 +74,52 @@ export const MODEL_CHAIN: ModelSpec[] = [
   { model: "gemini-3.7-flash", provider: "gemini" },
   { model: "gemini-3.6-flash", provider: "gemini" },
   { model: "gemini-3.5-flash", provider: "gemini" },
-  { model: "glm-4.7-flash", provider: "glm" },
-  { model: "glm-4.5-flash", provider: "glm" },
+  {
+    model: "gpt-oss-20b-free",
+    provider: "comet",
+    // A reasoning model. Measured 2026-09-15 on a trivial one-item request: it
+    // spent 1010 characters of `reasoning_content` and 11.4s to emit a
+    // 172-character answer, and on a 200-token budget it produced **no content
+    // at all** — the reasoning consumed everything. `reasoning_effort: "low"`
+    // cuts it to 124 reasoning characters and 3.4s, which is the difference
+    // between fitting the 25s ceiling and not. Accepted by all three reasoning
+    // rows here, so it is a documented param rather than a guess.
+    extraBody: { reasoning_effort: "low" },
+  },
+  {
+    model: "openai/gpt-oss-20b",
+    provider: "groq",
+    // Same family as the row above, same treatment. Fast either way (783ms
+    // unforced, 387ms at "low") — set for consistency, since the token spend it
+    // saves is real even when the latency is not.
+    extraBody: { reasoning_effort: "low" },
+  },
+  {
+    model: "qwen/qwen3.8-27b",
+    provider: "groq",
+    // No `reasoning_effort` here on purpose: this row answered in 321ms with
+    // `reasoning_content: 0`, i.e. it does not think by default, and sending a
+    // param a model has not been shown to accept is how you turn a healthy row
+    // into a 400.
+  },
+  // GLM is commented out at the owner's request — `glm-4.7-flash` and
+  // `glm-4.5-flash` are hybrid reasoning models with dynamic thinking on by
+  // default, and the rows never switched it off. Leaving them in the chain
+  // while that is unresolved spends a 25s timeout to learn nothing. Restore
+  // them (and re-add `glm` to the header's provider list) once their thinking
+  // is either disabled like `xiaomi-mimo-v2.5-free` or measured to fit.
+  // { model: "glm-4.7-flash", provider: "glm" },
+  // { model: "glm-4.5-flash", provider: "glm" },
   { model: "hy3-free", provider: "aihubmix" },
   { model: "inclusionai/ling-3.0-flash-vl:free", provider: "openrouter" },
+  {
+    model: "gpt-5-nano",
+    provider: "comet",
+    // Also a reasoning model, and the slowest of the four new rows without
+    // help: 7.1s and 779 completion tokens for one trivial item, versus 3.7s
+    // and 160 at `reasoning_effort: "low"`.
+    extraBody: { reasoning_effort: "low" },
+  },
 ];
 
 /** Per-attempt ceiling. Long enough for a full question set, short enough that
@@ -221,13 +267,14 @@ function classifyGlm(status: number, code: string | undefined, body: string): Fa
 }
 
 /**
- * AIHubMix and OpenRouter, which both document the same status ladder.
+ * The OpenAI-compatible providers, which all document the same status ladder.
  *
  * A 429 is deliberately **model**-scoped here. AIHubMix meters each free model
- * on its own (`xiaomi-mimo-v2.5-free`: 5 rpm / 100 rpd) and OpenRouter forwards
- * to a single upstream provider per free model, so neither 429 tells us the
- * account is out. Escalating it would let a rate limit on the *first* row skip
- * `hy3-free` seven rows later.
+ * on its own (`xiaomi-mimo-v2.5-free`: 5 rpm / 100 rpd), OpenRouter forwards to
+ * a single upstream provider per free model, and Groq publishes its RPM/TPM/RPD
+ * per model — so none of their 429s tell us the account is out. Escalating it
+ * would let a rate limit on the *first* row skip a sibling rows later, which
+ * now matters for three providers: AIHubMix holds two rows, Groq two, Comet two.
  */
 function classifyOpenAiCompatible(status: number, body: string): FailureKind {
   if (status === 429) return "ratelimit";
@@ -344,13 +391,23 @@ function openrouterKey(): string {
   return (env.OPENROUTER_API_KEY ?? "").trim();
 }
 
+function cometKey(): string {
+  return (env.COMET_API_KEY ?? "").trim();
+}
+
+function groqKey(): string {
+  return (env.GROQ_API_KEY ?? "").trim();
+}
+
 /** True when at least one provider has a key, so the route can fail early. */
 export function isAiConfigured(): boolean {
   return (
     geminiKey().length > 0 ||
     glmKey().length > 0 ||
     aihubmixKey().length > 0 ||
-    openrouterKey().length > 0
+    openrouterKey().length > 0 ||
+    cometKey().length > 0 ||
+    groqKey().length > 0
   );
 }
 
@@ -487,15 +544,29 @@ function extractGlmCode(body: string): string | undefined {
   }
 }
 
-/** Where each aggregator's OpenAI-compatible chat-completions endpoint lives. */
-const AGGREGATOR_ENDPOINTS: Record<"aihubmix" | "openrouter", string> = {
+/** The providers that speak OpenAI's chat-completions wire format. */
+type OpenAiCompatibleProvider = Exclude<Provider, "gemini" | "glm">;
+
+/** Where each OpenAI-compatible provider's chat-completions endpoint lives. */
+const AGGREGATOR_ENDPOINTS: Record<OpenAiCompatibleProvider, string> = {
   aihubmix: "https://aihubmix.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  comet: "https://api.cometapi.com/v1/chat/completions",
+  // Groq's OpenAI-compatible face lives under a path prefix, unlike the others.
+  groq: "https://api.groq.com/openai/v1/chat/completions",
+};
+
+/** The key each of those reads. Thunks, so the env is read per attempt. */
+const AGGREGATOR_KEYS: Record<OpenAiCompatibleProvider, () => string> = {
+  aihubmix: aihubmixKey,
+  openrouter: openrouterKey,
+  comet: cometKey,
+  groq: groqKey,
 };
 
 /**
- * Chat-completions transport for AIHubMix and OpenRouter, which share a wire
- * format and a status ladder.
+ * Chat-completions transport for AIHubMix, OpenRouter, Comet and Groq, which
+ * share a wire format and a status ladder.
  *
  * No `response_format`: the prompt already asks for JSON and the parser is
  * tolerant, and asking anyway is not free — OpenRouter answers a
@@ -512,8 +583,8 @@ async function callOpenAiCompatible(
   messages: ChatMessage[],
   signal: AbortSignal
 ): Promise<string> {
-  const provider = spec.provider as "aihubmix" | "openrouter";
-  const key = provider === "aihubmix" ? aihubmixKey() : openrouterKey();
+  const provider = spec.provider as OpenAiCompatibleProvider;
+  const key = AGGREGATOR_KEYS[provider]();
   if (!key) {
     throw new GenerationError("error", `${provider.toUpperCase()}_API_KEY is not set.`);
   }

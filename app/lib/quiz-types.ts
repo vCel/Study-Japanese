@@ -269,10 +269,24 @@ export interface QuizQuestion {
   sourceKind?: "word" | "rule";
 }
 
+/**
+ * Every provider the fallback chain can route to.
+ *
+ * Lives here rather than in `ai.server.ts` so the client-side
+ * `GenerationAttempt` below can share the one definition. A duplicated union
+ * drifts silently and did: it rejected `comet` and `groq` the moment they were
+ * added to the chain.
+ *
+ * The direction matters — `ai.server.ts` imports this, not the other way round,
+ * because that module reaches for `cloudflare:workers` and must never be pulled
+ * into the client bundle.
+ */
+export type Provider = "gemini" | "glm" | "aihubmix" | "openrouter" | "comet" | "groq";
+
 /** One step of the model-fallback walk, reported back so the UI can narrate it. */
 export interface GenerationAttempt {
   model: string;
-  provider: "gemini" | "glm" | "aihubmix" | "openrouter";
+  provider: Provider;
   outcome: "ok" | "timeout" | "ratelimit" | "overloaded" | "error";
   /** Human-readable detail, surfaced in the loading panel. */
   detail?: string;

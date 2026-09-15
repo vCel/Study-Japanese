@@ -10,10 +10,11 @@ import { expectHydrated, seedStarterPack, stubConvex, wordIdByTitle } from "./he
  * togglable buttons, so a single quiz can draw on any combination of them. The
  * panel below shows only the steps that apply to what is switched on.
  *
- * The generation endpoint is always stubbed: the real thing calls out to Gemini
- * and GLM, which would make these specs slow, non-deterministic, and would
- * spend the account's quota. What is under test here is the UI and the client's
- * handling of the response — the providers themselves are not.
+ * The generation endpoint is always stubbed: the real thing calls out to Gemini,
+ * Comet, Groq and the aggregators, which would make these specs slow,
+ * non-deterministic, and would spend the account's quota. What is under test
+ * here is the UI and the client's handling of the response — the providers
+ * themselves are not.
  *
  * Convex is stubbed too (see `stubConvex`): the builder renders inside
  * `ConvexClientProvider`, so if the convex.cloud websocket never opens, React
@@ -837,9 +838,10 @@ test.describe("quiz session", () => {
   test("reports a skipped model when Gemini is rate limited", async ({ page }) => {
     await stubConvex(page);
     // This mirrors what the server returns when a Gemini 429 short-circuits the
-    // chain: the remaining Gemini models are marked as skipped, and GLM answers.
+    // chain: the remaining Gemini models are marked as skipped, and the next
+    // row — Comet's `gpt-oss-20b-free` — answers.
     await stubGeneration(page, sampleQuestions(), {
-      model: "glm-4.7-flash",
+      model: "gpt-oss-20b-free",
       attempts: [
         {
           model: "gemini-3.8-flash",
@@ -850,7 +852,7 @@ test.describe("quiz session", () => {
         },
         { model: "gemini-3.7-flash", provider: "gemini", outcome: "error", detail: "skipped", ms: 0 },
         { model: "gemini-3.6-flash", provider: "gemini", outcome: "error", detail: "skipped", ms: 0 },
-        { model: "glm-4.7-flash", provider: "glm", outcome: "ok", ms: 1200 },
+        { model: "gpt-oss-20b-free", provider: "comet", outcome: "ok", ms: 1200 },
       ],
     });
 
@@ -858,7 +860,7 @@ test.describe("quiz session", () => {
     await expectHydrated(page);
 
     // The model that actually answered is named in the header.
-    await expect(page.getByText("glm-4.7-flash")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("gpt-oss-20b-free")).toBeVisible({ timeout: 15_000 });
   });
 
   test("surfaces a friendly error when generation fails", async ({ page }) => {
@@ -958,7 +960,7 @@ test.describe("quiz session", () => {
       // other spec, and a client that choked on an unknown event would fail the
       // wait below rather than silently losing the quiz.
       const events = [
-        { type: "attempt", model: "gemini-3.8-flash", index: 1, total: 9 },
+        { type: "attempt", model: "gemini-3.8-flash", index: 1, total: 11 },
         {
           type: "attemptDone",
           attempt: {
@@ -969,7 +971,7 @@ test.describe("quiz session", () => {
             ms: 300,
           },
         },
-        { type: "attempt", model: "inclusionai/ling-3.0-flash-vl:free", index: 8, total: 9 },
+        { type: "attempt", model: "inclusionai/ling-3.0-flash-vl:free", index: 9, total: 11 },
         {
           type: "attemptDone",
           attempt: {
@@ -981,7 +983,7 @@ test.describe("quiz session", () => {
           },
         },
         { type: "round", round: 2, totalRounds: 2, detail: "no model answered on the first pass" },
-        { type: "attempt", model: "gemini-3.6-flash", index: 3, total: 9 },
+        { type: "attempt", model: "gemini-3.6-flash", index: 3, total: 11 },
         {
           type: "result",
           questions: sampleQuestions(),

@@ -243,8 +243,8 @@ export async function action({ request, context }: Route.ActionArgs): Promise<Re
     return Response.json(
       {
         error:
-          "AI generation is not configured. Set GEMINI_API_KEY, GLM_API_KEY, " +
-          "AIHUBMIX_API_KEY or OPENROUTER_API_KEY.",
+          "AI generation is not configured. Set any one of GEMINI_API_KEY, " +
+          "AIHUBMIX_API_KEY, OPENROUTER_API_KEY, COMET_API_KEY or GROQ_API_KEY.",
       },
       { status: 503 }
     );
