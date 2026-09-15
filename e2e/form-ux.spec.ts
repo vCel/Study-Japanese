@@ -177,22 +177,31 @@ test.describe("toasts", () => {
     await expect(toast).toHaveAttribute("data-variant", "success");
   });
 
-  // NOTE: this test used to assert the *error* variant, on the premise that the
-  // server rejects a save "because the test browser has no auth token". Owner
-  // scoping retired that premise: a signed-out device owner is a real owner and
-  // may edit its own words (server-actions.spec.ts asserts exactly that), so the
-  // save now succeeds.
-  //
-  // The action's remaining error branches are all hard to trigger
-  // deterministically from e2e:
-  //   - "You can only edit words in your own library." needs a foreign-owned row,
-  //     and the loader 404s before the form ever renders.
-  //   - "Word not found." (row deleted mid-edit) makes the loader revalidate into
-  //     an error boundary, so no toast is shown at all.
-  //   - "Too many requests." would work, but UPLOAD_LIMITER is 10 writes/minute
-  //     keyed by client IP, and the suite runs in parallel — exhausting it here
-  //     would start failing other specs for up to a minute.
-  //
-  // So the error variant has no e2e coverage right now. The right home for it is
-  // a component-level test of the toast itself, not a contrived end-to-end path.
+  /**
+   * The error variant, reached through a different form.
+   *
+   * An error toast needs an action that returns `ok: false` *and* leaves the
+   * reader on the page, so there is somewhere for the toast to render. The word
+   * edit action can't provide that: its error branches all either 404 in the
+   * loader before the form mounts ("You can only edit words in your own
+   * library.", "Word not found.") or need the rate limiter exhausted, which
+   * would break the parallel suite for a minute (UPLOAD_LIMITER is 10 writes a
+   * minute and the whole suite shares one bucket).
+   *
+   * Adding phrases with nothing filled in does: the action rejects it by
+   * validation, stays put, and `phrase-form.tsx` runs the result through
+   * `useActionToast`. It costs a single limiter token.
+   */
+  test("a rejected save surfaces an error toast", async ({ page }) => {
+    await gotoHydrated(page, "/phrases/new");
+
+    // Never wait for this button to vanish — its label flips to "Adding…" while
+    // the action is in flight, so an absence check passes mid-submit.
+    await page.getByRole("button", { name: "Add phrases" }).click();
+
+    const toast = page.locator('[data-slot="toast"]');
+    await expect(toast).toBeVisible();
+    await expect(toast).toHaveAttribute("data-variant", "error");
+    await expect(toast).toContainText("Add at least one phrase");
+  });
 });
