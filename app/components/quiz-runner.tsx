@@ -469,9 +469,6 @@ export function QuizRunner({
   );
 }
 
-/** Number of models in the chain, for the loading bar's segments. */
-const CHAIN_LENGTH = 11;
-
 /**
  * Display names for the loading bar, **in `MODEL_CHAIN` order** — the index in
  * the server's `attempt` event is a position in that array. `?? progress.model`
@@ -494,6 +491,14 @@ const CHAIN_LABELS = [
   "NVIDIA Nemotron 3 Ultra",
   "Comet GPT-5 Nano",
 ];
+
+/**
+ * Number of models in the chain, for the loading bar's segments.
+ *
+ * Derived from `CHAIN_LABELS` rather than kept as a second literal, so the bar
+ * and the labels cannot disagree about how long the chain is.
+ */
+const CHAIN_LENGTH = CHAIN_LABELS.length;
 
 /**
  * The waiting screen. Because the fallback walk can take a while, this doubles
