@@ -246,6 +246,85 @@ function classifyOpenAiCompatible(status: number, body: string): FailureKind {
 }
 
 // ---------------------------------------------------------------------------
+// What to tell the user
+// ---------------------------------------------------------------------------
+
+/**
+ * A failed provider call, in one line a person can act on.
+ *
+ * The attempt list is the only place a user sees *why* generation failed, and
+ * `HTTP 429: {"error":{"code":429,"message":"You exceeded your current quota..."}}`
+ * does not answer the question they are actually asking — is this me, or is
+ * this them? Known signatures get a sentence; anything unrecognised keeps a
+ * trimmed snippet, because for a novel failure the raw text is the only useful
+ * thing there is.
+ */
+function describeFailure(status: number, body: string): string {
+  if (/insufficient|no resource package|arrears|balance/.test(body)) {
+    return "no credit left on the account";
+  }
+  if (/exceeded your current quota|resource_exhausted|quota/i.test(body)) {
+    return "quota exhausted";
+  }
+  if (/no_available_channel/i.test(body)) return "this model has no upstream right now";
+  if (/overload|busy|try again|unavailable/i.test(body)) return "provider is overloaded";
+  if (status === 402) return "no credit left on the account";
+  if (status === 429) return "rate limited";
+  if (status >= 500) return `provider unavailable (${status})`;
+  const snippet = body.replace(/\s+/g, " ").trim().slice(0, 120);
+  return snippet ? `HTTP ${status}: ${snippet}` : `HTTP ${status}`;
+}
+
+/**
+ * The aggregators answer a **200 with a plain-text notice** instead of a
+ * completion when the account cannot be used at all. AIHubMix's free tier says
+ * so in as many words: "accounts that have not been recharged can only try 10
+ * times."
+ *
+ * Left to the generic paths this surfaced as "returned a non-JSON response",
+ * which tells the user nothing, and classified as a model-scoped `error` — so
+ * the walk went on to try the provider's *other* row against an account that is
+ * dead for both. It is an account-level failure and is reported as one.
+ *
+ * Returns null when the body is not a notice, so the caller can carry on.
+ */
+function accountNotice(body: string): string | null {
+  const notice =
+    /prevent abuse|recharged|insufficient[_ ]?(user[_ ])?(balance|quota)|no resource package|arrears/i.test(
+      body
+    );
+  if (!notice) return null;
+  if (/recharged|prevent abuse|free resources/i.test(body)) {
+    return "free-trial allowance used up — the account needs a top-up";
+  }
+  return "no credit left on the account";
+}
+
+/**
+ * The aggregator pair: `classifyOpenAiCompatible` plus the one signal that
+ * ladder structurally cannot see — an account-level **notice in the body**.
+ *
+ * AIHubMix and OpenRouter are the only providers that can answer `200` with a
+ * notice instead of a completion. The ladder above is written against statuses,
+ * so it cannot catch a `200` carrying "accounts that have not been recharged can
+ * only try 10 times". It also cannot catch a `429` whose body says the balance is
+ * gone — it reads the status and calls that a model-scoped rate limit, which is
+ * the wrong reading of a dead account.
+ *
+ * A notice is more specific than a status, so it wins. Both cases are
+ * account-level: the walk should stop spending this provider's other rows on it.
+ */
+function classifyAggregator(status: number, body: string): FailureKind {
+  if (accountNotice(body)) return "provider-ratelimit";
+  return classifyOpenAiCompatible(status, body);
+}
+
+/** The matching one-line reason, notice first for the same reason as above. */
+function describeAggregator(status: number, body: string): string {
+  return accountNotice(body) ?? describeFailure(status, body);
+}
+
+// ---------------------------------------------------------------------------
 // Providers
 // ---------------------------------------------------------------------------
 
@@ -315,7 +394,7 @@ async function callGemini(
     const body = await response.text().catch(() => "");
     throw new GenerationError(
       classifyGemini(response.status, body),
-      `HTTP ${response.status}: ${body.slice(0, 200)}`
+      describeFailure(response.status, body)
     );
   }
 
@@ -366,7 +445,7 @@ async function callGlm(
   if (!response.ok) {
     throw new GenerationError(
       classifyGlm(response.status, extractGlmCode(body), body),
-      `HTTP ${response.status}: ${body.slice(0, 200)}`
+      describeFailure(response.status, body)
     );
   }
 
@@ -377,7 +456,11 @@ async function callGlm(
   try {
     json = JSON.parse(body) as typeof json;
   } catch {
-    throw new GenerationError("error", "GLM returned a non-JSON response.");
+    // Z.AI's account-level codes (1113, 1001, 1003, 1005) are read by
+    // `classifyGlm` from a *JSON* body, so there is no notice to look for here
+    // the way there is for the aggregators. Keep the raw body in the message
+    // instead of dropping it: a non-JSON 200 is otherwise unexplainable.
+    throw new GenerationError("error", describeFailure(response.status, body));
   }
 
   // Errors can also ride a 200 body.
@@ -453,8 +536,8 @@ async function callOpenAiCompatible(
 
   if (!response.ok) {
     throw new GenerationError(
-      classifyOpenAiCompatible(response.status, body),
-      `HTTP ${response.status}: ${body.slice(0, 200)}`
+      classifyAggregator(response.status, body),
+      describeAggregator(response.status, body)
     );
   }
 
@@ -465,14 +548,26 @@ async function callOpenAiCompatible(
   try {
     json = JSON.parse(body) as typeof json;
   } catch {
-    throw new GenerationError("error", `${provider} returned a non-JSON response.`);
+    // Read the notice *before* falling through to the generic message: this is
+    // the AIHubMix shape, a 200 whose body is a plain-text account notice. It
+    // must not be reported as a model-scoped parse failure, or the walk carries
+    // on to `hy3-free` against an account that is dead for both rows.
+    const notice = accountNotice(body);
+    if (notice) throw new GenerationError("provider-ratelimit", notice);
+    throw new GenerationError("error", describeFailure(response.status, body));
   }
 
   // OpenRouter in particular can ride an error on an otherwise 200 body.
   if (json.error) {
+    // The provider's own message is already a sentence, so only a notice
+    // replaces it — `HTTP 200: insufficient balance` would read as noise. The
+    // notice is still worth looking for: `classifyOpenAiCompatible` reads the
+    // status, and a 200 tells it nothing, so an account-wide message here would
+    // otherwise be filed as a model-scoped `error`.
+    const notice = accountNotice(body);
     throw new GenerationError(
-      classifyOpenAiCompatible(response.status, json.error.message ?? body),
-      json.error.message ?? `${provider} error`
+      notice ? "provider-ratelimit" : classifyOpenAiCompatible(response.status, json.error.message ?? body),
+      notice ?? json.error.message ?? `${provider} error`
     );
   }
 
