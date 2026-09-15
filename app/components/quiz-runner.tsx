@@ -466,7 +466,7 @@ export function QuizRunner({
 }
 
 /** Number of models in the chain, for the loading bar's segments. */
-const CHAIN_LENGTH = 13;
+const CHAIN_LENGTH = 11;
 
 /**
  * Display names for the loading bar, **in `MODEL_CHAIN` order** — the index in
@@ -483,9 +483,7 @@ const CHAIN_LABELS = [
   "Gemini 3.7 Flash",
   "Gemini 3.6 Flash",
   "Gemini 3.5 Flash",
-  "Comet GPT-OSS 20B",
-  "NVIDIA GPT-OSS 20B",
-  "Groq GPT-OSS 20B",
+  "OpenRouter Gemma 4 26B",
   "Groq Qwen 3.8 27B",
   "Hunyuan Hy3",
   "Ling 3.0 Flash VL",

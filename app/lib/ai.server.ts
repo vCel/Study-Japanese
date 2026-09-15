@@ -7,15 +7,15 @@
  *
  * What "the same way" means is per-provider, and the difference is load
  * bearing. Gemini and GLM cap the *account* — a 429 there means the sibling
- * models will fail too, so the walk leaves the provider. The four
+ * models will fail too, so the walk leaves the provider. The five
  * OpenAI-compatible providers are the other kind: their free tiers are capped
  * per *model*, so a 429 there costs one row and says nothing about the
  * provider's other models. AIHubMix meters `xiaomi-mimo-v2.5-free` at 5 rpm /
  * 100 rpd on its own, OpenRouter forwards to a single upstream per free model,
- * and Groq publishes its limits per model. Four providers now hold two rows
- * each (AIHubMix, Comet, Groq, NVIDIA), so this distinction has teeth: treating
- * those as account-level is how you silently lose a healthy fallback — the same
- * shape of bug as the GLM `1305` mix-up documented in `classifyGlm`.
+ * and Groq publishes its limits per model. AIHubMix and OpenRouter each hold
+ * two rows here, so this distinction has teeth: treating those as account-level
+ * is how you silently lose a healthy fallback — the same shape of bug as the
+ * GLM `1305` mix-up documented in `classifyGlm`.
  *
  * Runs in the Worker (`env` from `cloudflare:workers`), never in the browser —
  * the keys must not reach the client bundle.
@@ -39,15 +39,15 @@ interface ModelSpec {
    * providers only (Gemini builds its own body and ignores this).
    *
    * Exists for one reason: controlling how much a model thinks. See the
-   * `xiaomi-mimo-v2.5-free` and `gpt-oss-20b-free` entries below.
+   * `xiaomi-mimo-v2.5-free` and `gpt-5-nano` entries below.
    */
   extraBody?: Record<string, unknown>;
 }
 
 /**
  * Ordered as specified: the AIHubMix free model first, then Gemini newest-first
- * down to 3.5, then the Comet/Groq block, then the two remaining fallbacks, with
- * Comet's `gpt-5-nano` last.
+ * down to 3.5, then OpenRouter's Gemma, then the Groq Qwen row, then the two
+ * remaining fallbacks, with Comet's `gpt-5-nano` last.
  *
  * Two pairs of rows are commented out, not deleted — GLM's two and NVIDIA's two.
  * Both notes are at their old positions and say what has to change before they
@@ -92,34 +92,29 @@ export const MODEL_CHAIN: ModelSpec[] = [
   { model: "gemini-3.6-flash", provider: "gemini" },
   { model: "gemini-3.5-flash", provider: "gemini" },
   {
-    model: "gpt-oss-20b-free",
-    provider: "comet",
-    // A reasoning model. Measured 2026-09-15 on a trivial one-item request: it
-    // spent 1010 characters of `reasoning_content` and 11.4s to emit a
-    // 172-character answer, and on a 200-token budget it produced **no content
-    // at all** — the reasoning consumed everything. `reasoning_effort: "low"`
-    // cuts it to 124 reasoning characters and 3.4s, which is the difference
-    // between fitting the 25s ceiling and not. Accepted by all three reasoning
-    // rows here, so it is a documented param rather than a guess.
-    extraBody: { reasoning_effort: "low" },
-  },
-  {
-    model: "openai/gpt-oss-20b",
-    provider: "nvidia",
-    // The same model as the Groq row below, on a different host — hence its own
-    // entry rather than a comment on that one. NVIDIA's deployment is markedly
-    // slower to think: 17.6s and 1491 reasoning characters unforced, versus
-    // 6.6s and 693 at `reasoning_effort: "low"`. The unforced figure fits the
-    // 25s ceiling only barely, so the param is not optional here.
-    extraBody: { reasoning_effort: "low" },
-  },
-  {
-    model: "openai/gpt-oss-20b",
-    provider: "groq",
-    // Same family as the row above, same treatment. Fast either way (783ms
-    // unforced, 387ms at "low") — set for consistency, since the token spend it
-    // saves is real even when the latency is not.
-    extraBody: { reasoning_effort: "low" },
+    model: "google/gemma-4-26b-a4b-it:free",
+    provider: "openrouter",
+    // Replaced the three `gpt-oss-20b` rows (Comet, NVIDIA, Groq) at the
+    // owner's request on 2026-09-15: the model produced questions that were
+    // answerable without knowing the material — a giveaway distractor, a
+    // particle typo (`んが` for `のが`), and literal `**asterisks**` in its
+    // values. The prompt now guards against all three, but a model that emits
+    // them is the wrong model for a knowledge quiz, and the same host is
+    // already reached through the OpenRouter rows below, so nothing is lost by
+    // dropping the whole family.
+    //
+    // No `reasoning_effort`: Gemma is not a reasoning model, and per the rule
+    // used for the Qwen and Nemotron rows, a param a model has not been shown
+    // to accept is how you turn a healthy row into a 400. Measured 2026-09-15:
+    // 1254ms and 1351ms on two calls, both with `reasoning_content: 0` and
+    // valid JSON — i.e. it answers well inside the 25s ceiling with nothing
+    // extra set.
+    //
+    // One caveat, measured on the same run: a third call returned `429
+    // Provider returned error`, i.e. the free upstream is saturated. That is
+    // exactly the case the per-model classification exists for — it costs this
+    // row and says nothing about `inclusionai/ling-3.0-flash-vl:free` on the
+    // same provider, so the walk carries on rather than abandoning OpenRouter.
   },
   {
     model: "qwen/qwen3.8-27b",
@@ -166,9 +161,9 @@ const ATTEMPT_TIMEOUT_MS = 25_000;
  * request still returns a response when a slow cascade fails everywhere.
  *
  * This is what decides whether the second pass happens at all, and it is why the
- * pass is only reachable when the first one failed *fast*: nine rows that each
- * burn the full 25s ceiling need 225s on their own, whereas a 429/503 storm is
- * over in a couple of seconds and leaves the budget almost untouched. Raising
+ * pass is only reachable when the first one failed *fast*: the eleven rows that
+ * each burn the full 25s ceiling need 275s on their own, whereas a 429/503 storm
+ * is over in a couple of seconds and leaves the budget almost untouched. Raising
  * this is a product decision, not a bug fix — see `AI.md`.
  */
 const TOTAL_BUDGET_MS = 95_000;
