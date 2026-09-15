@@ -158,6 +158,17 @@ function furiganaQuestions(): StubQuestion[] {
 // Builder
 // ---------------------------------------------------------------------------
 
+/**
+ * A tag chip, found by the name it carries rather than by its state — the whole
+ * point of the cycle is that the same chip is clicked more than once.
+ *
+ * The seeded tags are disjoint enough that a substring match is unambiguous:
+ * `#n5` is not inside `#jlpt`, and neither appears in another chip's count.
+ */
+function tagChip(page: Page, name: string) {
+  return page.locator("[data-tag-mode]", { hasText: name });
+}
+
 test.describe("quiz builder", () => {
   test("offers words, phrases and rules as togglable sources", async ({ page }) => {
     await stubConvex(page);
@@ -458,6 +469,152 @@ test.describe("quiz builder", () => {
     await expect(page.getByText(/Every list is included \(\d+\)\./)).toBeVisible();
     await expect(daily).toHaveAttribute("aria-pressed", "true");
     await expect(pill).toHaveCount(0);
+  });
+
+  test("the tags step is second, and its search narrows the chips", async ({ page }) => {
+    await stubConvex(page);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    // Tags come before the lists and rules they narrow. Choosing them first is
+    // what stops the pickers below offering something the next step would then
+    // silently take away.
+    await expect(page.getByText("1 · What to quiz on")).toBeVisible();
+    await expect(page.getByText("2 · Tags (optional)")).toBeVisible();
+    await expect(page.getByText("3 · Rules")).toBeVisible();
+
+    // The chips are the union of the two tag registries, so the list tags only
+    // appear once words or phrases are in scope — a tag that can filter nothing
+    // is not offered. Switching them on also makes the search worth testing:
+    // eight chips rather than the five the rule registry alone carries.
+    await page.getByRole("button", { name: "Words", exact: true }).click();
+    await page.getByRole("button", { name: "Phrases", exact: true }).click();
+
+    const search = page.getByLabel("Search tags");
+    await expect(tagChip(page, "#conversation")).toBeVisible();
+    await expect(tagChip(page, "#particles")).toBeVisible();
+
+    // Substring, not prefix, and case-insensitive: "JLPT" has to find "#jlpt".
+    await search.fill("JLPT");
+    await expect(tagChip(page, "#jlpt")).toBeVisible();
+    await expect(tagChip(page, "#conversation")).toHaveCount(0);
+    await expect(page.getByText(/No tags match/)).toHaveCount(0);
+
+    // A query that matches nothing says so rather than showing an empty box.
+    await search.fill("zzz");
+    await expect(page.getByText("No tags match “zzz”.")).toBeVisible();
+
+    // Clearing the query brings the whole registry back.
+    await search.fill("");
+    await expect(tagChip(page, "#conversation")).toBeVisible();
+  });
+
+  test("clicking a tag cycles include, exclude, off", async ({ page }) => {
+    await stubConvex(page);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    const jlpt = tagChip(page, "#jlpt");
+    await expect(jlpt).toHaveAttribute("data-tag-mode", "off");
+    await expect(page.getByText(/Click a tag to include it/)).toBeVisible();
+
+    await jlpt.click();
+    await expect(jlpt).toHaveAttribute("data-tag-mode", "include");
+    await expect(page.getByText(/1 included · 0 excluded/)).toBeVisible();
+
+    await jlpt.click();
+    await expect(jlpt).toHaveAttribute("data-tag-mode", "exclude");
+    await expect(page.getByText(/0 included · 1 excluded/)).toBeVisible();
+
+    // Back to off — and the hint returns with it, rather than leaving a stale
+    // "1 included" line above an unfiltered picker.
+    await jlpt.click();
+    await expect(jlpt).toHaveAttribute("data-tag-mode", "off");
+    await expect(page.getByText(/Click a tag to include it/)).toBeVisible();
+  });
+
+  test("a tag hides the rules that do not carry it, in both directions", async ({ page }) => {
+    await stubConvex(page);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    const ruleChips = page.locator("[data-slot='quiz-rule']");
+    // The three seeded rules: verbs+jlpt, particles+jlpt, adjectives+jlpt+n5.
+    await expect(ruleChips).toHaveCount(3);
+
+    // Including narrows to a union — #particles is on exactly one of them.
+    await tagChip(page, "#particles").click();
+    await expect(ruleChips).toHaveCount(1);
+    await expect(page.getByText(/Every rule is included \(1\)\./)).toBeVisible();
+
+    await page.locator("[data-slot='quiz-tag-clear']").click();
+    await expect(ruleChips).toHaveCount(3);
+
+    // Excluding subtracts, and it applies even to a rule that matched an
+    // include: every seeded rule carries #jlpt, so excluding it empties the
+    // picker rather than leaving the three behind.
+    await tagChip(page, "#jlpt").click(); // include
+    await tagChip(page, "#jlpt").click(); // exclude
+    await expect(ruleChips).toHaveCount(0);
+    await expect(page.getByText("No rules match the selected tags.")).toBeVisible();
+  });
+
+  test("a tag hides the lists that do not carry it", async ({ page }) => {
+    await stubConvex(page);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+    await page.getByRole("button", { name: "Words", exact: true }).click();
+    await page.getByRole("button", { name: "Phrases", exact: true }).click();
+
+    // Three seeded lists: JLPT N5 Starter (#jlpt #n5), Daily Conversation
+    // (#daily #conversation), Everyday Phrases (#phrases).
+    await expect(page.getByRole("button", { name: /JLPT N5 Starter/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Daily Conversation/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Everyday Phrases/ })).toBeVisible();
+
+    await tagChip(page, "#phrases").click();
+    await expect(page.getByRole("button", { name: /Everyday Phrases/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Daily Conversation/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /JLPT N5 Starter/ })).toHaveCount(0);
+
+    // Exclusion alone is a working filter: "everything except #daily" leaves
+    // the two lists that do not carry it, which is the case the old code could
+    // not express at all — with no include tags it filtered nothing.
+    await page.locator("[data-slot='quiz-tag-clear']").click();
+    await tagChip(page, "#daily").click();
+    await tagChip(page, "#daily").click();
+    await expect(page.getByRole("button", { name: /Daily Conversation/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /JLPT N5 Starter/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Everyday Phrases/ })).toBeVisible();
+  });
+
+  test("hands both tag directions to the session", async ({ page }) => {
+    await stubConvex(page);
+    const getRequest = await stubGeneration(page, [sampleQuestions()[0]]);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    await tagChip(page, "#particles").click(); // include
+    await tagChip(page, "#n5").click(); // include
+    await tagChip(page, "#n5").click(); // exclude
+
+    await page.getByRole("button", { name: "Generate quiz" }).click();
+
+    // The URL carries both, so a reload or a bookmark reproduces the filter.
+    await expect(page).toHaveURL(/excludedTags=n5/);
+    expect(new URL(page.url()).searchParams.get("tags")).toBe("particles");
+
+    // And they survive the round trip into the generate call. Dropping them
+    // here is what used to count rules with the tag filter and then draw them
+    // without it.
+    await expect
+      .poll(() => getRequest())
+      .toMatchObject({ config: { tags: ["particles"], excludedTags: ["n5"] } });
   });
 });
 

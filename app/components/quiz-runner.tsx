@@ -29,6 +29,15 @@ export interface QuizRunConfig {
   pos: string | null;
   listIds: number[];
   /**
+   * Tag names to include, and tag names to exclude.
+   *
+   * Sent on to the generate call rather than being folded into `listIds` here:
+   * the loader already applied them to the lists, but rules are filtered in the
+   * generate route, so the tags have to survive the round trip.
+   */
+  tags: string[];
+  excludedTags: string[];
+  /**
    * Scope the quiz to starred items only. Sent explicitly rather than inferred
    * from `starredIds` being non-empty, so starring something can never narrow a
    * quiz on its own.
@@ -304,7 +313,8 @@ export function QuizRunner({
             sources: config.sources,
             focus: config.focus,
             lists: config.listIds,
-            tags: [],
+            tags: config.tags,
+            excludedTags: config.excludedTags,
             pos: config.pos ?? "",
             ruleKind: config.ruleKind ?? "",
             ruleIds: config.ruleIds,

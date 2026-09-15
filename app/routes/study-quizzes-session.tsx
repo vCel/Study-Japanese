@@ -117,10 +117,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const ruleIds = ruleIdsParam === null ? null : parseIds(ruleIdsParam);
 
   const explicitLists = parseIds(url.searchParams.get("lists"));
-  const tagNames = (url.searchParams.get("tags") ?? "")
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter((part) => part.length > 0);
+  /**
+   * Two tag lists, because a tag can be a filter in either direction. `tags`
+   * keeps its original meaning — names to *include* — so a bookmarked URL from
+   * before exclusion existed still resolves to the same quiz.
+   */
+  const parseTags = (value: string | null): string[] =>
+    (value ?? "")
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0);
+  const tagNames = parseTags(url.searchParams.get("tags"));
+  const excludedTagNames = parseTags(url.searchParams.get("excludedTags"));
+  const tagsActive = tagNames.length > 0 || excludedTagNames.length > 0;
 
   /**
    * Misses win over stars. `null` means no id scoping at all; an empty list
@@ -148,15 +157,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       ownerId,
       ruleKind,
       intersect(scopeFor(missedRuleIds), ruleIds),
-      tagNames
+      tagNames,
+      excludedTagNames
     );
   }
 
   if (wantsWords || wantsPhrases) {
     if (explicitLists.length > 0) {
       listIds = explicitLists;
-    } else if (tagNames.length > 0) {
-      listIds = await listIdsByTags(ownerId, tagNames);
+    } else if (tagsActive) {
+      listIds = await listIdsByTags(ownerId, tagNames, excludedTagNames);
     } else {
       listIds = await listAllListIds(ownerId);
     }
@@ -186,6 +196,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ruleIds,
     pos,
     listIds,
+    // Carried through to the generate call rather than resolved away here.
+    // `listIds` above is the tag filter already applied to lists, but rules are
+    // filtered inside the generate route — so dropping the tags at this point
+    // counted rules with the tag filter and then drew them without it. The
+    // header would promise "3 rules" and the quiz would ask about the other
+    // forty.
+    tags: tagNames,
+    excludedTags: excludedTagNames,
     starredOnly,
     retryMissed,
     missedWordIds: retryMissed ? missedWordIds : [],

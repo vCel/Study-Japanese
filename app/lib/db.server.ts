@@ -657,20 +657,58 @@ export async function listAllLists(ownerId: string): Promise<WordListSummary[]> 
   }));
 }
 
-/** Ids of lists carrying ANY of the given tag names. */
-export async function listIdsByTags(ownerId: string, tagNames: string[]): Promise<number[]> {
-  if (tagNames.length === 0) return [];
+/** Normalise tag names the way the join tables store them. */
+function cleanTagNames(names: string[] | null | undefined): string[] {
+  if (!names) return [];
+  return names
+    .map((tag) => tag.trim().toLowerCase())
+    .filter((tag) => tag.length > 0);
+}
+
+/**
+ * Ids of lists matching the tag filter.
+ *
+ * `include` is a union: a list carrying *any* of the named tags is in. `exclude`
+ * is a subtraction applied afterwards, so a list tagged both `#n5` and
+ * `#archived` is dropped by excluding `#archived` even when `#n5` was asked
+ * for. With no include tags this is "every list except the excluded ones" —
+ * which is the whole point of offering exclusion on its own.
+ */
+export async function listIdsByTags(
+  ownerId: string,
+  include: string[],
+  exclude: string[] = []
+): Promise<number[]> {
+  const wanted = cleanTagNames(include);
+  const unwanted = cleanTagNames(exclude);
+  if (wanted.length === 0 && unwanted.length === 0) return [];
+
   const db = getDb();
-  const placeholders = tagNames.map(() => "?").join(", ");
+  const params: (string | number)[] = [ownerId];
+  const clauses: string[] = ["wl.owner_id = ?1"];
+
+  if (wanted.length > 0) {
+    params.push(...wanted);
+    clauses.push(
+      `EXISTS (SELECT 1 FROM word_list_tags wlt JOIN tags t ON t.id = wlt.tag_id
+               WHERE wlt.list_id = wl.id AND t.name IN (${wanted.map(() => "?").join(", ")}))`
+    );
+  }
+  if (unwanted.length > 0) {
+    params.push(...unwanted);
+    clauses.push(
+      `NOT EXISTS (SELECT 1 FROM word_list_tags wlt JOIN tags t ON t.id = wlt.tag_id
+                   WHERE wlt.list_id = wl.id AND t.name IN (${unwanted.map(() => "?").join(", ")}))`
+    );
+  }
+
   const { results } = await db
     .prepare(
-      `SELECT DISTINCT wlt.list_id AS id
-       FROM word_list_tags wlt
-       JOIN tags t ON t.id = wlt.tag_id
-       JOIN word_lists wl ON wl.id = wlt.list_id
-       WHERE wl.owner_id = ?1 AND t.name IN (${placeholders})`
+      `SELECT wl.id AS id FROM word_lists wl
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY wl.id ASC`
     )
-    .bind(ownerId, ...tagNames)
+    .bind(...params)
     .all<{ id: number }>();
   return (results ?? []).map((r) => r.id);
 }
@@ -756,17 +794,43 @@ function cardIdClause(ids: CardIdFilter, params: (string | number)[]): string | 
 }
 
 /**
- * `EXISTS (…)` narrowing rules to those carrying any of the given tags. Returns
- * null when no tags are selected, and a clause that deliberately matches
- * nothing when the tag list is non-empty but contains no usable names.
+ * The tag half of a rules `WHERE`, as a single clause.
+ *
+ * `EXISTS (…)` narrows to rules carrying any of the included tags; the
+ * `NOT EXISTS (…)` that follows drops any rule carrying an excluded one, so
+ * excluding a tag removes a rule even when it matched an include. Both halves
+ * are pushed onto `params` in the order they appear in the string, which is
+ * what keeps the positional placeholders lined up.
+ *
+ * Returns null when neither list names a usable tag, so the caller can leave
+ * the clause out rather than filter on nothing. A list that is present but
+ * entirely blank counts as "no filter" rather than "match nothing": it can only
+ * arrive from a malformed client, and silently emptying the quiz is a worse
+ * answer than ignoring it.
  */
-function ruleTagClause(tags: string[] | null | undefined, params: (string | number)[]): string | null {
-  if (tags == null) return null;
-  const clean = tags.map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0);
-  // No tags selected = no tag filter at all.
-  if (clean.length === 0) return null;
-  params.push(...clean);
-  return `EXISTS (SELECT 1 FROM rule_tags rt JOIN tags t ON t.id = rt.tag_id WHERE rt.rule_id = rules.id AND t.name IN (${clean.map(() => "?").join(", ")}))`;
+function ruleTagClause(
+  tags: string[] | null | undefined,
+  excludedTags: string[] | null | undefined,
+  params: (string | number)[]
+): string | null {
+  const wanted = cleanTagNames(tags);
+  const unwanted = cleanTagNames(excludedTags);
+  const parts: string[] = [];
+
+  if (wanted.length > 0) {
+    params.push(...wanted);
+    parts.push(
+      `EXISTS (SELECT 1 FROM rule_tags rt JOIN tags t ON t.id = rt.tag_id WHERE rt.rule_id = rules.id AND t.name IN (${wanted.map(() => "?").join(", ")}))`
+    );
+  }
+  if (unwanted.length > 0) {
+    params.push(...unwanted);
+    parts.push(
+      `NOT EXISTS (SELECT 1 FROM rule_tags rt JOIN tags t ON t.id = rt.tag_id WHERE rt.rule_id = rules.id AND t.name IN (${unwanted.map(() => "?").join(", ")}))`
+    );
+  }
+
+  return parts.length > 0 ? parts.join(" AND ") : null;
 }
 
 /** How many cards of the given kind exist across the given lists. */
@@ -1745,7 +1809,8 @@ export async function countRules(
   ownerId: string,
   kind?: RuleKind | null,
   starredIds?: CardIdFilter,
-  tags?: string[] | null
+  tags?: string[] | null,
+  excludedTags?: string[] | null
 ): Promise<number> {
   const db = getDb();
   const params: (string | number)[] = [ownerId];
@@ -1756,7 +1821,7 @@ export async function countRules(
   }
   const idClause = cardIdClause(starredIds, params);
   if (idClause) clauses.push(idClause);
-  const tagClause = ruleTagClause(tags, params);
+  const tagClause = ruleTagClause(tags, excludedTags, params);
   if (tagClause) clauses.push(tagClause);
   const where = `WHERE ${clauses.join(" AND ")}`;
   const row = await db
@@ -1793,10 +1858,19 @@ export interface RuleChoice {
   id: number;
   kind: RuleKind;
   title: string;
+  /**
+   * The rule's tag names.
+   *
+   * Carried here so the builder can hide rules that fall outside the tag
+   * filter. The server applies the same filter when it draws the quiz, so
+   * without this the picker would offer rules the quiz can never use — the
+   * mismatch that makes a builder lie about what it is going to ask.
+   */
+  tags: string[];
 }
 
 /**
- * Every rule the owner has, as a minimal `{id, kind, title}`.
+ * Every rule the owner has, as a minimal `{id, kind, title, tags}`.
  *
  * The builder's rule picker needs the whole list at once — to offer "all", to
  * count the selection, and to show which are ticked — so this deliberately
@@ -1805,13 +1879,41 @@ export interface RuleChoice {
  */
 export async function listRuleChoices(ownerId: string, limit = 500): Promise<RuleChoice[]> {
   const db = getDb();
-  const { results } = await db
-    .prepare(
-      "SELECT id, kind, title FROM rules WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
-    )
-    .bind(ownerId, limit)
-    .all<{ id: number; kind: RuleKind; title: string }>();
-  return (results ?? []).map((row) => ({ id: row.id, kind: row.kind, title: row.title }));
+  // The rows and their tags do not depend on each other, so they go out
+  // together rather than as two sequential round-trips.
+  const [rows, tagRows] = await Promise.all([
+    db
+      .prepare(
+        "SELECT id, kind, title FROM rules WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
+      )
+      .bind(ownerId, limit)
+      .all<{ id: number; kind: RuleKind; title: string }>(),
+    db
+      .prepare(
+        `SELECT rt.rule_id AS rule_id, t.name AS name
+         FROM rule_tags rt
+         JOIN tags t ON t.id = rt.tag_id
+         JOIN rules r ON r.id = rt.rule_id
+         WHERE r.owner_id = ?1
+         ORDER BY t.name ASC`
+      )
+      .bind(ownerId)
+      .all<{ rule_id: number; name: string }>(),
+  ]);
+
+  const tagMap = new Map<number, string[]>();
+  for (const row of tagRows.results ?? []) {
+    const existing = tagMap.get(row.rule_id);
+    if (existing) existing.push(row.name);
+    else tagMap.set(row.rule_id, [row.name]);
+  }
+
+  return (rows.results ?? []).map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    title: row.title,
+    tags: tagMap.get(row.id) ?? [],
+  }));
 }
 
 /** A random deck of rules (with their examples) for the forms study tab. */
@@ -1820,7 +1922,8 @@ export async function getRuleStudyDeck(
   limit = 40,
   kind?: RuleKind | null,
   starredIds?: CardIdFilter,
-  tags?: string[] | null
+  tags?: string[] | null,
+  excludedTags?: string[] | null
 ): Promise<RuleDetail[]> {
   const db = getDb();
   const params: (string | number)[] = [ownerId];
@@ -1831,7 +1934,7 @@ export async function getRuleStudyDeck(
   }
   const idClause = cardIdClause(starredIds, params);
   if (idClause) clauses.push(idClause);
-  const tagClause = ruleTagClause(tags, params);
+  const tagClause = ruleTagClause(tags, excludedTags, params);
   if (tagClause) clauses.push(tagClause);
   const where = `WHERE ${clauses.join(" AND ")}`;
   const { results } = await db

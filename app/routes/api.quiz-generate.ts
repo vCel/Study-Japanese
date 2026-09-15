@@ -81,6 +81,9 @@ function readConfig(raw: unknown): QuizConfig | null {
     tags: Array.isArray(config.tags)
       ? config.tags.filter((tag): tag is string => typeof tag === "string")
       : [],
+    excludedTags: Array.isArray(config.excludedTags)
+      ? config.excludedTags.filter((tag): tag is string => typeof tag === "string")
+      : [],
     pos: typeof config.pos === "string" ? config.pos : "",
     ruleKind: config.ruleKind === "word" || config.ruleKind === "sentence" ? config.ruleKind : "",
     // `null` = every rule, an empty list = none. Only an explicit array counts
@@ -161,8 +164,8 @@ async function loadSourceItems(
       config.ruleKind === "word" || config.ruleKind === "sentence" ? config.ruleKind : null;
     const filter = intersect(scopeFor(filters.missedRuleIds), config.ruleIds);
     const [count, deck] = await Promise.all([
-      countRules(ownerId, ruleKind, filter, config.tags),
-      getRuleStudyDeck(ownerId, MAX_SOURCE_ITEMS, ruleKind, filter, config.tags),
+      countRules(ownerId, ruleKind, filter, config.tags, config.excludedTags),
+      getRuleStudyDeck(ownerId, MAX_SOURCE_ITEMS, ruleKind, filter, config.tags, config.excludedTags),
     ]);
     totalAvailable += count;
     rules = deck;
@@ -173,8 +176,10 @@ async function loadSourceItems(
     let listIds: number[];
     if (config.lists.length > 0) {
       listIds = config.lists;
-    } else if (config.tags.length > 0) {
-      listIds = await listIdsByTags(ownerId, config.tags);
+    } else if (config.tags.length > 0 || config.excludedTags.length > 0) {
+      // Exclusion counts on its own: "everything except #archived" is a filter,
+      // so the all-lists fallback must not swallow it.
+      listIds = await listIdsByTags(ownerId, config.tags, config.excludedTags);
     } else {
       listIds = await listAllListIds(ownerId);
     }

@@ -61,6 +61,18 @@ export function normalizeConfig(raw: Partial<QuizConfig>): QuizConfig {
       ? raw.difficulty
       : DEFAULT_QUIZ_CONFIG.difficulty;
 
+  // The builder's chip cycle keeps these disjoint by construction, but a
+  // hand-edited or half-written value can name the same tag in both — and a tag
+  // that both includes and excludes is not a filter, it is a contradiction.
+  // Exclude wins, because that is the narrower reading of the two.
+  const excludedTags = Array.isArray(raw.excludedTags)
+    ? raw.excludedTags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+  const tags = (Array.isArray(raw.tags)
+    ? raw.tags.filter((tag): tag is string => typeof tag === "string")
+    : []
+  ).filter((tag) => !excludedTags.includes(tag));
+
   return {
     sources: sources.length > 0 ? sources : [...DEFAULT_QUIZ_CONFIG.sources],
     focus: ["all", "meaning", "reading", "kanji", "usage"].includes(raw.focus as string)
@@ -69,9 +81,8 @@ export function normalizeConfig(raw: Partial<QuizConfig>): QuizConfig {
     lists: Array.isArray(raw.lists)
       ? raw.lists.filter((id): id is number => typeof id === "number")
       : [],
-    tags: Array.isArray(raw.tags)
-      ? raw.tags.filter((tag): tag is string => typeof tag === "string")
-      : [],
+    tags,
+    excludedTags,
     pos: typeof raw.pos === "string" ? raw.pos : "",
     ruleKind: raw.ruleKind === "word" || raw.ruleKind === "sentence" ? raw.ruleKind : "",
     ruleIds: Array.isArray(raw.ruleIds)

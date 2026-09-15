@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router";
-import { FolderOpen, ListChecks, Save, Sparkles } from "lucide-react";
+import { Check, FolderOpen, ListChecks, Minus, Save, Search, Sparkles } from "lucide-react";
 
 import type { RuleChoice, TagInfo, WordListSummary } from "~/lib/db.server";
 import { useStarredIds, type StarredIds } from "~/lib/use-stars";
@@ -112,8 +112,15 @@ function describeQuiz(config: QuizConfig): string {
 
   if (hasLists && config.lists.length > 0) {
     parts.push(`${config.lists.length} list${config.lists.length === 1 ? "" : "s"}`);
-  } else if (config.tags.length > 0) {
+  }
+  // Both directions are worth naming: "#n5" and "not #archived" describe
+  // different quizzes, and a saved session is only recognisable if it says
+  // which one it is.
+  if (config.tags.length > 0) {
     parts.push(`tags: ${config.tags.map((tag) => `#${tag}`).join(" ")}`);
+  }
+  if (config.excludedTags.length > 0) {
+    parts.push(`without: ${config.excludedTags.map((tag) => `#${tag}`).join(" ")}`);
   }
   parts.push(listWords(kinds.map((kind) => QUIZ_SOURCE_KIND_LABELS[kind].toLowerCase())));
   if (hasLists && config.focus !== "all") parts.push(config.focus);
@@ -237,18 +244,66 @@ function QuizPanel({
   const wantsLists = wantsWords || wantsPhrases;
 
   // The tag chips: list tags and rule tags are separate registries, so a quiz
-  // spanning both shows the union and each query filters within its own domain.
+  // spanning both shows the union. A name in both registries has its counts
+  // summed rather than deduped — the chip is answering "how much is tagged
+  // this?", and either one alone would understate it.
   const panelTags = React.useMemo(() => {
-    const seen = new Map<string, number>();
+    const counts = new Map<string, number>();
     const add = (list: TagInfo[]) => {
-      for (const tag of list) {
-        if (!seen.has(tag.name)) seen.set(tag.name, tag.listCount);
-      }
+      for (const tag of list) counts.set(tag.name, (counts.get(tag.name) ?? 0) + tag.listCount);
     };
     if (wantsLists) add(tags);
     if (wantsRules) add(ruleTags);
-    return [...seen].map(([name, listCount]) => ({ name, listCount }));
+    return [...counts].map(([name, listCount]) => ({ name, listCount }));
   }, [tags, ruleTags, wantsLists, wantsRules]);
+
+  const [tagQuery, setTagQuery] = React.useState("");
+  const tagsActive = config.tags.length > 0 || config.excludedTags.length > 0;
+
+  /** The chips to draw: the whole registry, narrowed by what was typed. */
+  const visibleTags = React.useMemo(() => {
+    const query = tagQuery.trim().toLowerCase();
+    if (!query) return panelTags;
+    return panelTags.filter((tag) => tag.name.toLowerCase().includes(query));
+  }, [panelTags, tagQuery]);
+
+  /**
+   * Whether an item is in scope under the tag filter.
+   *
+   * Include is a union — any one of the named tags is enough — and exclude is a
+   * subtraction applied afterwards, so excluding a tag removes an item that
+   * matched an include. With no include tags this is "everything except the
+   * excluded ones", which is why exclusion alone has to be a working filter
+   * rather than a no-op.
+   */
+  const matchesTagFilter = React.useCallback(
+    (itemTags: string[]): boolean => {
+      if (config.tags.length > 0 && !itemTags.some((tag) => config.tags.includes(tag))) {
+        return false;
+      }
+      return !itemTags.some((tag) => config.excludedTags.includes(tag));
+    },
+    [config.tags, config.excludedTags]
+  );
+
+  const tagModeOf = (name: string): "off" | "include" | "exclude" =>
+    config.excludedTags.includes(name) ? "exclude" : config.tags.includes(name) ? "include" : "off";
+
+  /**
+   * One click per state, in the order the user is likely to want them: off →
+   * include → exclude → off. Both lists are rebuilt without the tag first, so
+   * the two can never end up naming it at once.
+   */
+  const cycleTag = (name: string) => {
+    const mode = tagModeOf(name);
+    const nextTags = config.tags.filter((tag) => tag !== name);
+    const nextExcluded = config.excludedTags.filter((tag) => tag !== name);
+    if (mode === "off") nextTags.push(name);
+    else if (mode === "include") nextExcluded.push(name);
+    onChange({ tags: nextTags, excludedTags: nextExcluded });
+  };
+
+  const clearTags = () => onChange({ tags: [], excludedTags: [] });
 
   /**
    * The lists on offer, merged by id. A list can hold both words and phrases,
@@ -277,10 +332,34 @@ function QuizPanel({
     }));
   }, [wordLists, phraseLists, wantsWords, wantsPhrases]);
 
-  const tagFiltered =
-    config.tags.length === 0
-      ? mergedLists
-      : mergedLists.filter((list) => list.tags.some((tag) => config.tags.includes(tag)));
+  const tagFiltered = mergedLists.filter((list) => matchesTagFilter(list.tags));
+
+  /**
+   * How many rules of each kind survive the tag filter.
+   *
+   * Counted here rather than asked of the server, because the rule-kind pills
+   * and the match total are drawn while the user is still moving tags around —
+   * a round-trip per click would make the number lag the chip it belongs to.
+   * `rules` is the full list the picker already holds, so this is the same
+   * arithmetic the picker does.
+   */
+  const taggedRuleCounts = React.useMemo(() => {
+    const tagged = rules.filter((rule) => matchesTagFilter(rule.tags));
+    return {
+      all: tagged.length,
+      word: tagged.filter((rule) => rule.kind === "word").length,
+      sentence: tagged.filter((rule) => rule.kind === "sentence").length,
+    };
+  }, [rules, matchesTagFilter]);
+
+  /**
+   * `ruleCounts` from the loader is an unfiltered count of the whole
+   * collection, so it is only the honest answer while nothing is filtering the
+   * rules. With tags on, the tagged counts are what the quiz can actually draw
+   * from — and showing the untagged number beside an active filter is how a
+   * builder ends up promising questions it cannot ask.
+   */
+  const effectiveRuleCounts = tagsActive ? taggedRuleCounts : ruleCounts;
 
   const eligible =
     config.lists.length > 0
@@ -292,13 +371,19 @@ function QuizPanel({
   /**
    * The rules the picker offers.
    *
-   * Scoped to the selected rule type, so what the user ticks is exactly what
-   * the quiz can draw on: a picker listing sentence rules while the type filter
-   * says "word rules" could only ever produce an empty quiz.
+   * Scoped to the selected rule type *and* the tag filter, so what the user
+   * ticks is exactly what the quiz can draw on. Both narrowings matter for the
+   * same reason: a picker listing sentence rules while the type filter says
+   * "word rules" — or rules the tag filter has already excluded — could only
+   * ever produce a quiz that does not match what the builder promised.
    */
   const visibleRules = React.useMemo(
-    () => rules.filter((rule) => !config.ruleKind || rule.kind === config.ruleKind),
-    [rules, config.ruleKind]
+    () =>
+      rules.filter(
+        (rule) =>
+          (!config.ruleKind || rule.kind === config.ruleKind) && matchesTagFilter(rule.tags)
+      ),
+    [rules, config.ruleKind, matchesTagFilter]
   );
   const visibleRuleIds = React.useMemo(() => visibleRules.map((rule) => rule.id), [visibleRules]);
 
@@ -337,10 +422,10 @@ function QuizPanel({
     ? 0
     : config.ruleIds === null
       ? config.ruleKind === "word"
-        ? ruleCounts.word
+        ? effectiveRuleCounts.word
         : config.ruleKind === "sentence"
-          ? ruleCounts.sentence
-          : ruleCounts.all
+          ? effectiveRuleCounts.sentence
+          : effectiveRuleCounts.all
       : selectedRuleCount;
 
   const matchCount = listsMatch + rulesMatch;
@@ -372,13 +457,6 @@ function QuizPanel({
   const noun = config.sources.length === 1 ? kindNames[0].replace(/s$/, "") : "item";
 
   const suggestedName = `${listWords(kindNames)} · ${config.questionCount} questions`;
-
-  const toggleTag = (tag: string) =>
-    onChange({
-      tags: config.tags.includes(tag)
-        ? config.tags.filter((t) => t !== tag)
-        : [...config.tags, tag],
-    });
 
   const toggleList = (id: number) => {
     // An empty `lists` means "every list" and every card reads as selected, so
@@ -521,6 +599,7 @@ function QuizPanel({
     if (config.timeLimitEnabled) qs.set("seconds", String(config.timeLimitSeconds));
     if (wantsLists && config.lists.length > 0) qs.set("lists", config.lists.join(","));
     if (config.tags.length > 0) qs.set("tags", config.tags.join(","));
+    if (config.excludedTags.length > 0) qs.set("excludedTags", config.excludedTags.join(","));
     if (wantsRules && config.ruleKind) qs.set("ruleKind", config.ruleKind);
     // No `ruleIds` param at all means "every rule"; an empty value is an
     // explicit "none", and the session route tells the two apart.
@@ -546,30 +625,90 @@ function QuizPanel({
     navigate(`/study/quizzes/session?${qs.toString()}`);
   };
 
+  const tagChipClass = (mode: "off" | "include" | "exclude") =>
+    cn(
+      "inline-flex cursor-pointer items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+      mode === "include"
+        ? "border-primarylw bg-primarylw/15 text-primarylw"
+        : mode === "exclude"
+          ? "border-red-500/60 bg-red-500/10 text-red-600 dark:text-red-400"
+          : "border-border text-muted-foreground hover:border-primarylw/40 hover:text-foreground"
+    );
+
+  const tagModeHint = (mode: "off" | "include" | "exclude") =>
+    mode === "include"
+      ? "Included — click to exclude it instead"
+      : mode === "exclude"
+        ? "Excluded — click to clear it"
+        : "Click to include this tag";
+
+  const activeTagCount = config.tags.length + config.excludedTags.length;
+
   const tagsStepBody =
     panelTags.length === 0 ? (
       <p className="text-xs text-muted-foreground">No tags in the collection yet.</p>
     ) : (
-      <div className="flex flex-wrap gap-1.5">
-        {panelTags.map((tag) => {
-          const active = config.tags.includes(tag.name);
-          return (
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={tagQuery}
+            onChange={(event) => setTagQuery(event.target.value)}
+            placeholder="Search tags…"
+            aria-label="Search tags"
+            data-slot="quiz-tag-search"
+            className="w-full rounded-[var(--radius)] border border-border bg-background py-2 pr-3 pl-9 text-sm outline-none focus:border-primarylw"
+          />
+        </div>
+
+        {visibleTags.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No tags match “{tagQuery.trim()}”.
+          </p>
+        ) : (
+          <ScrollArea maxHeight={200} className="pr-1">
+            <div className="flex flex-wrap gap-1.5">
+              {visibleTags.map((tag) => {
+                const mode = tagModeOf(tag.name);
+                return (
+                  <button
+                    key={tag.name}
+                    type="button"
+                    onClick={() => cycleTag(tag.name)}
+                    aria-pressed={mode !== "off"}
+                    // The three states are also the three test hooks — a chip's
+                    // mode is what the specs assert on, not its colour.
+                    data-tag-mode={mode}
+                    title={tagModeHint(mode)}
+                    className={tagChipClass(mode)}
+                  >
+                    {mode === "include" && <Check className="h-3 w-3 shrink-0" />}
+                    {mode === "exclude" && <Minus className="h-3 w-3 shrink-0" />}
+                    #{tag.name} <span className="opacity-60">{tag.listCount}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        )}
+
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            {activeTagCount === 0
+              ? "Click a tag to include it, again to exclude it, again to clear it."
+              : `${config.tags.length} included · ${config.excludedTags.length} excluded — items without the included tags are hidden, and any carrying an excluded one are dropped.`}
+          </p>
+          {activeTagCount > 0 && (
             <button
-              key={tag.name}
               type="button"
-              onClick={() => toggleTag(tag.name)}
-              aria-pressed={active}
-              className={cn(
-                "cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                active
-                  ? "border-primarylw bg-primarylw/15 text-primarylw"
-                  : "border-border text-muted-foreground hover:border-primarylw/40 hover:text-foreground"
-              )}
+              onClick={clearTags}
+              data-slot="quiz-tag-clear"
+              className="shrink-0 cursor-pointer text-xs text-muted-foreground hover:text-foreground"
             >
-              #{tag.name} <span className="opacity-60">{tag.listCount}</span>
+              Clear tags
             </button>
-          );
-        })}
+          )}
+        </div>
       </div>
     );
 
@@ -686,10 +825,10 @@ function QuizPanel({
             {option.label}
             <span className="ml-1.5 opacity-60">
               {option.value === "word"
-                ? ruleCounts.word
+                ? effectiveRuleCounts.word
                 : option.value === "sentence"
-                  ? ruleCounts.sentence
-                  : ruleCounts.all}
+                  ? effectiveRuleCounts.sentence
+                  : effectiveRuleCounts.all}
             </span>
           </button>
         ))}
@@ -699,7 +838,9 @@ function QuizPanel({
         <p className="text-xs text-muted-foreground">
           {rules.length === 0
             ? "No rules yet — create one and it appears here."
-            : "No rules of this type."}
+            : tagsActive
+              ? "No rules match the selected tags."
+              : "No rules of this type."}
         </p>
       ) : (
         <ScrollArea maxHeight={220} className="pr-1">
@@ -760,7 +901,14 @@ function QuizPanel({
     ),
   });
 
-  // 2. Which lists and which rules — one container, one section each.
+  // 2. Tags. Placed directly after the sources because they are the broadest
+  // filter the user has — a tag narrows every source at once, so choosing it
+  // before the lists and rules means the pickers below already show only what
+  // is still in scope, instead of the user picking from a list that the next
+  // step would then silently shrink.
+  steps.push({ title: "Tags (optional)", body: tagsStepBody });
+
+  // 3. Which lists and which rules — one container, one section each.
   if (wantsLists || wantsRules) {
     steps.push({
       title: wantsLists && wantsRules ? "Lists & rules" : wantsLists ? "Lists" : "Rules",
@@ -816,8 +964,6 @@ function QuizPanel({
       ),
     });
   }
-
-  steps.push({ title: "Tags (optional)", body: tagsStepBody });
 
   return (
     <div className="space-y-6">

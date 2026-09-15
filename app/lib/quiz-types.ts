@@ -149,7 +149,22 @@ export interface QuizConfig {
   focus: WordQuizFocus;
   /** Source scope, mirroring `StudyConfig`. */
   lists: number[];
+  /**
+   * Tag names to *include*: an item must carry at least one of them to be in
+   * scope. Empty means no include filter — which is why the default is `[]`
+   * rather than "every tag".
+   */
   tags: string[];
+  /**
+   * Tag names to *exclude*: an item carrying any of them is out of scope, even
+   * if it matched an include tag.
+   *
+   * A second array rather than one `{name, mode}[]`, because the wire formats
+   * this has to survive — the session URL, a saved session in localStorage —
+   * already carry `tags` as a plain list of names. Keeping that meaning intact
+   * is what lets every existing saved quiz and bookmark load unchanged.
+   */
+  excludedTags: string[];
   /** Part of speech filter — words only ("" = all types). */
   pos: string;
   /** Rule kind filter — rules only ("" = every rule). */
@@ -197,6 +212,7 @@ export const DEFAULT_QUIZ_CONFIG: QuizConfig = {
   focus: "all",
   lists: [],
   tags: [],
+  excludedTags: [],
   pos: "",
   ruleKind: "",
   ruleIds: null,
