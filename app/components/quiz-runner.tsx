@@ -477,15 +477,30 @@ export function QuizRunner({
  *
  * The commented-out GLM and NVIDIA rows are absent here too — an entry left in
  * would shift every label after it by one.
+ *
+ * The four OpenCode rows are listed even though they cannot answer. They are
+ * first in the chain, so they are what the bar shows for the first moment of
+ * every generation, and the panel would otherwise fall back to raw model ids
+ * like `deepseek-v4-flash-free`. They report as a skipped provider, which is
+ * accurate and is exactly what the attempt list is for.
  */
 const CHAIN_LABELS = [
+  "OpenCode DeepSeek V4 Flash",
+  "OpenCode MiMo V2.5",
+  "OpenCode Muse Spark 1.3",
+  "OpenCode Muse Spark 1.2",
   "Xiaomi MiMo V2.5",
   "Gemini 3.8 Flash",
   "Gemini 3.7 Flash",
   "Gemini 3.6 Flash",
   "Gemini 3.5 Flash",
-  "OpenRouter Gemma 4 26B",
+  // Groq's Qwen row now precedes the OpenRouter Gemma row — the owner swapped
+  // the two in `MODEL_CHAIN` on 2026-09-15. The order here is positional, so a
+  // swap on the server silently mislabels both rows in the loading bar unless
+  // this list follows. `chain-parity.mjs` now checks label↔model correspondence,
+  // not just the count.
   "Groq Qwen 3.8 27B",
+  "OpenRouter Gemma 4 26B",
   "Hunyuan Hy3",
   "Ling 3.0 Flash VL",
   "NVIDIA Nemotron 3 Ultra",

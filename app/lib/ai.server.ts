@@ -7,15 +7,20 @@
  *
  * What "the same way" means is per-provider, and the difference is load
  * bearing. Gemini and GLM cap the *account* — a 429 there means the sibling
- * models will fail too, so the walk leaves the provider. The five
- * OpenAI-compatible providers are the other kind: their free tiers are capped
- * per *model*, so a 429 there costs one row and says nothing about the
- * provider's other models. AIHubMix meters `xiaomi-mimo-v2.5-free` at 5 rpm /
- * 100 rpd on its own, OpenRouter forwards to a single upstream per free model,
- * and Groq publishes its limits per model. AIHubMix and OpenRouter each hold
- * two rows here, so this distinction has teeth: treating those as account-level
- * is how you silently lose a healthy fallback — the same shape of bug as the
- * GLM `1305` mix-up documented in `classifyGlm`.
+ * models will fail too, so the walk leaves the provider. The OpenAI-compatible
+ * providers are usually the other kind: their free tiers are capped per
+ * *model*, so a 429 there costs one row and says nothing about the provider's
+ * other models. AIHubMix meters `xiaomi-mimo-v2.5-free` at 5 rpm / 100 rpd on
+ * its own, OpenRouter forwards to a single upstream per free model, and Groq
+ * publishes its limits per model. AIHubMix and OpenRouter each hold two rows
+ * here, so this distinction has teeth: treating those as account-level is how
+ * you silently lose a healthy fallback — the same shape of bug as the GLM
+ * `1305` mix-up documented in `classifyGlm`.
+ *
+ * OpenCode Zen is the exception that proves the split is per-provider rather
+ * than per-transport. It speaks chat-completions like the rest, but its entire
+ * free tier is refused on client identity, so all four of its rows fail
+ * together and it belongs on the account-gated side. See `opencodeTierGate`.
  *
  * Runs in the Worker (`env` from `cloudflare:workers`), never in the browser —
  * the keys must not reach the client bundle.
@@ -45,9 +50,10 @@ interface ModelSpec {
 }
 
 /**
- * Ordered as specified: the AIHubMix free model first, then Gemini newest-first
- * down to 3.5, then OpenRouter's Gemma, then the Groq Qwen row, then the two
- * remaining fallbacks, with Comet's `gpt-5-nano` last.
+ * Ordered as specified: OpenCode's four free models first, then the AIHubMix
+ * free model, then Gemini newest-first down to 3.5, then OpenRouter's Gemma,
+ * then the Groq Qwen row, then the two remaining fallbacks, with Comet's
+ * `gpt-5-nano` last.
  *
  * Two pairs of rows are commented out, not deleted — GLM's two and NVIDIA's two.
  * Both notes are at their old positions and say what has to change before they
@@ -55,6 +61,45 @@ interface ModelSpec {
  * loop.
  */
 export const MODEL_CHAIN: ModelSpec[] = [
+  // --- OpenCode Zen. First, as specified, and expected to fail. ---
+  //
+  // These four rows cannot answer from a Worker. They are here at the owner's
+  // explicit request as placeholders for whenever the gate opens, so the next
+  // person to read this does not re-run the whole investigation.
+  //
+  // Measured 2026-09-15 against the live API, and the request is *not* the
+  // problem: the endpoint and ids are exactly what the docs specify
+  // (`https://opencode.ai/zen/v1/chat/completions`, the bare id, a plain
+  // OpenAI-compatible body), and all four ids appear in `/zen/v1/models`. The
+  // answer is still
+  //
+  //   400 {"type":"error","error":{"type":"MissingSessionID","message":
+  //        "Error from provider (Console): OpenCode's free tier can only be
+  //        used in OpenCode"}}
+  //
+  // The Zen docs document no session or client-identity header anywhere, and
+  // describe auth only as pasting a key into their TUI via `/connect`. So this
+  // is not a request we can fix: the free tier is a promotion for their own
+  // client. Paid ids on the same key return `401 Insufficient balance`, which
+  // is how we know the key itself authenticates and this is a tier gate.
+  // Deliberately not worked around by spoofing a client identity.
+  //
+  // `opencodeTierGate` is what keeps this affordable. It reads the refusal as
+  // account-scoped, so the *first* row marks the provider exhausted and the
+  // other three are skipped instead of each paying a round-trip on both passes.
+  // Without it these four cost eight attempts per generation and buy nothing.
+  //
+  // Check the ordering consequence before trusting a slow generation: with a
+  // 95s budget and 15 rows, the OpenCode group is now the first thing the walk
+  // spends time on.
+  { model: "deepseek-v4-flash-free", provider: "opencode" },
+  { model: "mimo-v2.5-free", provider: "opencode" },
+  // Muse Spark is doubly out: beyond the tier gate, the docs route the GPT /
+  // Grok / Muse-Spark family to `/responses` (OpenAI Responses API), which this
+  // transport does not speak. Even with balance on the account it would need
+  // new transport code, not just a row.
+  { model: "muse-spark-1.3-contributor-free", provider: "opencode" },
+  { model: "muse-spark-1.2-contributor-free", provider: "opencode" },
   // NVIDIA's `deepseek-v4-flash-0731` and `moonshotai/kimi-k3` were specified
   // for the top of the chain, ahead of `xiaomi-mimo-v2.5-free`, and are
   // commented out at the owner's request.
@@ -91,40 +136,8 @@ export const MODEL_CHAIN: ModelSpec[] = [
   { model: "gemini-3.7-flash", provider: "gemini" },
   { model: "gemini-3.6-flash", provider: "gemini" },
   { model: "gemini-3.5-flash", provider: "gemini" },
-  {
-    model: "google/gemma-4-26b-a4b-it:free",
-    provider: "openrouter",
-    // Replaced the three `gpt-oss-20b` rows (Comet, NVIDIA, Groq) at the
-    // owner's request on 2026-09-15: the model produced questions that were
-    // answerable without knowing the material — a giveaway distractor, a
-    // particle typo (`んが` for `のが`), and literal `**asterisks**` in its
-    // values. The prompt now guards against all three, but a model that emits
-    // them is the wrong model for a knowledge quiz, and the same host is
-    // already reached through the OpenRouter rows below, so nothing is lost by
-    // dropping the whole family.
-    //
-    // No `reasoning_effort`: Gemma is not a reasoning model, and per the rule
-    // used for the Qwen and Nemotron rows, a param a model has not been shown
-    // to accept is how you turn a healthy row into a 400. Measured 2026-09-15:
-    // 1254ms and 1351ms on two calls, both with `reasoning_content: 0` and
-    // valid JSON — i.e. it answers well inside the 25s ceiling with nothing
-    // extra set.
-    //
-    // One caveat, measured on the same run: a third call returned `429
-    // Provider returned error`, i.e. the free upstream is saturated. That is
-    // exactly the case the per-model classification exists for — it costs this
-    // row and says nothing about `inclusionai/ling-3.0-flash-vl:free` on the
-    // same provider, so the walk carries on rather than abandoning OpenRouter.
-  },
-  {
-    model: "qwen/qwen3.8-27b",
-    provider: "groq",
-    // No `reasoning_effort` here on purpose: this row answered in 321ms with
-    // `reasoning_content: 0`, i.e. it does not think by default, and sending a
-    // param a model has not been shown to accept is how you turn a healthy row
-    // into a 400.
-  },
-  // GLM is commented out at the owner's request — `glm-4.7-flash` and
+  { model: "qwen/qwen3.8-27b", provider: "groq" },
+  { model: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", },
   // `glm-4.5-flash` are hybrid reasoning models with dynamic thinking on by
   // default, and the rows never switched it off. Leaving them in the chain
   // while that is unresolved spends a 25s timeout to learn nothing. Restore
@@ -161,10 +174,14 @@ const ATTEMPT_TIMEOUT_MS = 25_000;
  * request still returns a response when a slow cascade fails everywhere.
  *
  * This is what decides whether the second pass happens at all, and it is why the
- * pass is only reachable when the first one failed *fast*: the eleven rows that
- * each burn the full 25s ceiling need 275s on their own, whereas a 429/503 storm
+ * pass is only reachable when the first one failed *fast*: the fifteen rows that
+ * each burn the full 25s ceiling need 375s on their own, whereas a 429/503 storm
  * is over in a couple of seconds and leaves the budget almost untouched. Raising
  * this is a product decision, not a bug fix — see `AI.md`.
+ *
+ * The four OpenCode rows at the top do not strain this, because they fail in
+ * about a fifth of a second and only the first of them costs anything — see
+ * `opencodeTierGate`.
  */
 const TOTAL_BUDGET_MS = 95_000;
 
@@ -379,6 +396,35 @@ function accountNotice(body: string): string | null {
 }
 
 /**
+ * OpenCode Zen refuses its entire free tier to anything that is not OpenCode's
+ * own client, with a structured error naming the missing session:
+ *
+ *   400 {"type":"error","error":{"type":"MissingSessionID","message":
+ *        "Error from provider (Console): OpenCode's free tier can only be used
+ *        in OpenCode"}}
+ *
+ * Deliberately *not* folded into `accountNotice`. That function is about credit
+ * and quota notices and returns a sentence about topping up; this is a different
+ * species — nothing to do with billing, and no action available to the user.
+ * Keeping them apart keeps both messages honest.
+ *
+ * Matched on the message rather than on the provider because the phrase is
+ * unique to OpenCode and the classifier has no provider in hand.
+ *
+ * Catching it at all is the point: `classifyOpenAiCompatible` reads a 400 as a
+ * model-scoped `error`, which would let all four OpenCode rows be walked on both
+ * passes — eight round-trips per generation to be told the same thing four
+ * times. Account-scoped means the first row exhausts the provider for the rest
+ * of the walk.
+ *
+ * Returns the reason to show, or null when this is not the gate.
+ */
+function opencodeTierGate(body: string): string | null {
+  if (!/free tier can only be used in OpenCode/i.test(body)) return null;
+  return "OpenCode's free tier only works inside OpenCode's own client";
+}
+
+/**
  * The aggregator pair: `classifyOpenAiCompatible` plus the one signal that
  * ladder structurally cannot see — an account-level **notice in the body**.
  *
@@ -391,15 +437,19 @@ function accountNotice(body: string): string | null {
  *
  * A notice is more specific than a status, so it wins. Both cases are
  * account-level: the walk should stop spending this provider's other rows on it.
+ *
+ * The OpenCode tier gate is checked here for that same reason. It arrives as a
+ * 400, which the ladder reads as model-scoped, so leaving it out would spend
+ * four attempts per pass learning one account-level fact.
  */
 function classifyAggregator(status: number, body: string): FailureKind {
-  if (accountNotice(body)) return "provider-ratelimit";
+  if (opencodeTierGate(body) || accountNotice(body)) return "provider-ratelimit";
   return classifyOpenAiCompatible(status, body);
 }
 
 /** The matching one-line reason, notice first for the same reason as above. */
 function describeAggregator(status: number, body: string): string {
-  return accountNotice(body) ?? describeFailure(status, body);
+  return opencodeTierGate(body) ?? accountNotice(body) ?? describeFailure(status, body);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +484,19 @@ function nvidiaKey(): string {
   return (env.NVIDIA_API_KEY ?? "").trim();
 }
 
-/** True when at least one provider has a key, so the route can fail early. */
+function opencodeKey(): string {
+  return (env.OPENCODE_API_KEY ?? "").trim();
+}
+
+/**
+ * True when at least one provider has a key, so the route can fail early.
+ *
+ * `OPENCODE_API_KEY` is deliberately *not* part of this. Every OpenCode row is
+ * refused on client identity (see `opencodeTierGate`), so a deployment holding
+ * only that key could not generate a quiz — and reporting "AI is configured"
+ * for it would turn a clear early error into a walk that fails fifteen times.
+ * Add it here only once a row can actually answer.
+ */
 export function isAiConfigured(): boolean {
   return (
     geminiKey().length > 0 ||
@@ -591,6 +653,10 @@ const AGGREGATOR_ENDPOINTS: Record<OpenAiCompatibleProvider, string> = {
   // Groq's OpenAI-compatible face lives under a path prefix, unlike the others.
   groq: "https://api.groq.com/openai/v1/chat/completions",
   nvidia: "https://integrate.api.nvidia.com/v1/chat/completions",
+  // OpenCode Zen's docs row reads exactly this: bare model id, this path,
+  // `@ai-sdk/openai-compatible`. Verified byte-for-byte against the live API on
+  // 2026-09-15, so the rows above fail on the tier gate rather than on a URL.
+  opencode: "https://opencode.ai/zen/v1/chat/completions",
 };
 
 /** The key each of those reads. Thunks, so the env is read per attempt. */
@@ -600,11 +666,12 @@ const AGGREGATOR_KEYS: Record<OpenAiCompatibleProvider, () => string> = {
   comet: cometKey,
   groq: groqKey,
   nvidia: nvidiaKey,
+  opencode: opencodeKey,
 };
 
 /**
- * Chat-completions transport for AIHubMix, OpenRouter, Comet, Groq and NVIDIA,
- * which share a wire format and a status ladder.
+ * Chat-completions transport for AIHubMix, OpenRouter, Comet, Groq, NVIDIA and
+ * OpenCode, which share a wire format and a status ladder.
  *
  * No `response_format`: the prompt already asks for JSON and the parser is
  * tolerant, and asking anyway is not free — OpenRouter answers a
