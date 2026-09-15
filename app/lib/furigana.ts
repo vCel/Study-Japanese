@@ -68,6 +68,23 @@ export function stripFurigana(text: string): string {
   return text.replace(pairPattern(), "$1").replace(new RegExp(LONE_READING_SOURCE, "g"), "");
 }
 
+/**
+ * The `**bold**` markers the models emit, removed.
+ *
+ * Same reasoning as the readings, and the same class of bug if skipped: the
+ * prompt asks for plain text, but the free tiers reliably write
+ * `**学生《がくせい》**` in an explanation and sometimes in an answer, and a
+ * user typing the plain `学生` would then be marked wrong. Display keeps the
+ * markers — `RichText` renders them as bold — so this is for *comparison* only.
+ *
+ * Only the doubled form is handled. A single `*` or `_` is left alone on
+ * purpose: both occur in ordinary Japanese prose far more often than they are
+ * meant as emphasis, and guessing wrong there would corrupt the text.
+ */
+export function stripEmphasis(text: string): string {
+  return text.replace(/\*\*([^*]+)\*\*/g, "$1");
+}
+
 /** One run of text, and the reading the model gave it if there was one. */
 export interface FuriganaSegment {
   /** The text as written — a kanji run, or the kana and punctuation between them. */

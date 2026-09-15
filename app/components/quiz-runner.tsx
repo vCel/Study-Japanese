@@ -5,9 +5,9 @@ import { Check, ExternalLink, Loader2, RotateCcw, Sparkles, Timer, X } from "luc
 
 import type { GenerationAttempt, QuizQuestion, QuizSourceKind } from "~/lib/quiz-types";
 import { QUIZ_SOURCE_KIND_LABELS, QUIZ_TYPE_LABELS } from "~/lib/quiz-types";
-import { anyHasFurigana, stripFurigana } from "~/lib/furigana";
+import { anyHasFurigana, stripEmphasis, stripFurigana } from "~/lib/furigana";
 import { useQuizStats } from "~/lib/use-quiz-stats";
-import { FuriganaProvider, FuriganaToggle, Ruby } from "~/components/furigana";
+import { FuriganaProvider, FuriganaToggle, RichText } from "~/components/furigana";
 import { Button, buttonVariants } from "~/components/lightswind/button";
 import { Badge } from "~/components/lightswind/badge";
 import { Card, CardContent } from "~/components/lightswind/card";
@@ -73,17 +73,21 @@ type Phase = "generating" | "question" | "feedback" | "complete" | "error";
 
 /**
  * Loose answer comparison: trim, case-fold, ignore Japanese punctuation, and
- * drop the ruby annotations.
+ * drop the ruby annotations and any `**emphasis**`.
  *
  * The annotation step is not optional. `question.answer` arrives annotated —
  * `学生《がくせい》` — while the user types the plain `学生`, so comparing the
  * two as-is would mark every kanji answer wrong. `stripFurigana` is applied to
  * both sides and to the alternatives, so the comparison is always plain text
  * against plain text.
+ *
+ * `stripEmphasis` is there for the same reason, one layer out: the models
+ * sometimes bold the answer, and `**学生《がくせい》**` must still match a typed
+ * `学生`.
  */
 function answersMatch(given: string, question: QuizQuestion): boolean {
   const normalize = (value: string) =>
-    stripFurigana(value)
+    stripEmphasis(stripFurigana(value))
       .trim()
       .toLowerCase()
       // Full-width spaces and the sentence-final 。 are never the point of a
@@ -107,7 +111,7 @@ function answersMatch(given: string, question: QuizQuestion): boolean {
  */
 function sameChoice(a: string | null | undefined, b: string | null | undefined): boolean {
   if (a === null || a === undefined || b === null || b === undefined) return false;
-  return stripFurigana(a) === stripFurigana(b);
+  return stripEmphasis(stripFurigana(a)) === stripEmphasis(stripFurigana(b));
 }
 
 /** Whether a question carries any ruby annotation worth offering a toggle for. */
@@ -781,7 +785,7 @@ function QuestionFlow({
             <CardContent className="p-6 md:p-8">
               <div className="mb-4 flex items-start justify-between gap-4">
                 <p className="text-lg leading-relaxed font-medium whitespace-pre-line">
-                  <Ruby>{question.prompt}</Ruby>
+                  <RichText>{question.prompt}</RichText>
                 </p>
                 {timeLimitSeconds !== null && !submitted && (
                   <span
@@ -833,10 +837,10 @@ function QuestionFlow({
  * gap shows what the user put (green when right, red when wrong).
  *
  * The sentence around the gaps is annotated Japanese like everything else, so
- * it goes through `Ruby`; the gap contents are options lifted straight out of
- * the question, so they are annotated too. The green/red decision compares the
- * two with `sameChoice`, which strips the readings — an option and the answer
- * can be the same word written with the annotation only once.
+ * it goes through `RichText`; the gap contents are options lifted straight out
+ * of the question, so they are annotated too. The green/red decision compares
+ * the two with `sameChoice`, which strips the readings — an option and the
+ * answer can be the same word written with the annotation only once.
  */
 function renderSentence(
   sentence: string,
@@ -844,7 +848,7 @@ function renderSentence(
   answer: string | null
 ): React.ReactNode {
   const parts = sentence.split(/_{2,}/g);
-  if (parts.length === 1) return <Ruby>{sentence}</Ruby>;
+  if (parts.length === 1) return <RichText>{sentence}</RichText>;
 
   const givenParts = given ? given.split(/\s*,\s*/) : [];
   const answerParts = answer ? answer.split(/\s*,\s*/) : [];
@@ -853,7 +857,7 @@ function renderSentence(
     const isLast = index === parts.length - 1;
     return (
       <React.Fragment key={index}>
-        <Ruby>{part}</Ruby>
+        <RichText>{part}</RichText>
         {!isLast && (
           <span
             className={cn(
@@ -872,7 +876,7 @@ function renderSentence(
               // chips below carry — and nothing else.
               <span className="text-xs font-normal opacity-40">{index + 1}</span>
             ) : (
-              <Ruby>{givenParts[index] ?? "—"}</Ruby>
+              <RichText>{givenParts[index] ?? "—"}</RichText>
             )}
           </span>
         )}
@@ -945,7 +949,7 @@ function QuestionInput({
               )}
             >
               <span className="text-sm font-medium">
-                <Ruby>{labels[index]}</Ruby>
+                <RichText>{labels[index]}</RichText>
               </span>
               {submitted !== null && isCorrect && (
                 <Check className="h-4 w-4 shrink-0 text-emerald-500" />
@@ -979,7 +983,7 @@ function QuestionInput({
               className="rounded-[var(--radius)] border border-dashed border-primarylw/60 px-4 py-2 text-sm font-semibold text-primarylw"
             >
               {picked[index] ? (
-                <Ruby>{picked[index]}</Ruby>
+                <RichText>{picked[index]}</RichText>
               ) : (
                 // An unfilled slot shows its number, faintly — the same marker
                 // the sentence itself uses, so the two read as the same slot.
@@ -1006,7 +1010,7 @@ function QuestionInput({
                       : "cursor-pointer border-border hover:border-primarylw/50 hover:bg-muted"
                   )}
                 >
-                  <Ruby>{option}</Ruby>
+                  <RichText>{option}</RichText>
                 </button>
               );
             })}
@@ -1103,12 +1107,12 @@ function Feedback({
         <p className="mt-2 text-sm">
           <span className="text-muted-foreground">Correct answer: </span>
           <span className="font-semibold">
-            <Ruby>{question.answer}</Ruby>
+            <RichText>{question.answer}</RichText>
           </span>
           {given.trim().length > 0 && (
             <span className="text-muted-foreground">
               {" · you said “"}
-              <Ruby>{given}</Ruby>
+              <RichText>{given}</RichText>
               {"”"}
             </span>
           )}
@@ -1117,7 +1121,7 @@ function Feedback({
 
       {question.explanation && (
         <p className="mt-2 text-sm text-muted-foreground">
-          <Ruby>{question.explanation}</Ruby>
+          <RichText>{question.explanation}</RichText>
         </p>
       )}
 
@@ -1215,19 +1219,19 @@ function ResultsPanel({
                 className="rounded-[var(--radius)] border border-border p-3 text-sm"
               >
                 <p className="font-medium whitespace-pre-line">
-                  <Ruby>{answer.question.prompt}</Ruby>
+                  <RichText>{answer.question.prompt}</RichText>
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Correct answer:{" "}
                   <span className="text-foreground">
-                    <Ruby>{answer.question.answer}</Ruby>
+                    <RichText>{answer.question.answer}</RichText>
                   </span>
                   {answer.timedOut ? (
                     " · timed out"
                   ) : (
                     <>
                       {" · you said “"}
-                      <Ruby>{answer.given}</Ruby>
+                      <RichText>{answer.given}</RichText>
                       {"”"}
                     </>
                   )}

@@ -101,6 +101,46 @@ export function Ruby({ children }: { children?: string | null }) {
 }
 
 /**
+ * Model prose: `**bold**` rendered, and the kana readings applied.
+ *
+ * The prompt asks for plain text and most of the chain complies, but the free
+ * tiers write `**bold**` into an explanation anyway — `gpt-oss` did it often
+ * enough to be dropped from the chain over it, and the replacement models are
+ * no more trustworthy on this point — and a literal asterisk pair mid-sentence
+ * reads as a bug in the app rather than as a formatting hint. Rendering it is
+ * the honest fix: it costs one split, and a string with no markers takes the
+ * `Ruby` path unchanged.
+ *
+ * The readings still apply *inside* a bold run, so `**学生《がくせい》**` is bold
+ * with the kana above the kanji rather than one or the other.
+ *
+ * Only `**` is treated as emphasis — see `stripEmphasis` for why the single
+ * forms are left alone.
+ */
+export function RichText({ children }: { children?: string | null }) {
+  if (!children) return null;
+
+  // The capture group keeps the delimiters, so the array alternates
+  // plain / bold / plain. A string with no markers splits to a single part.
+  const parts = children.split(/(\*\*[^*\n]+\*\*)/g);
+  if (parts.length === 1) return <Ruby>{children}</Ruby>;
+
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.length > 4 && part.startsWith("**") && part.endsWith("**") ? (
+          <strong key={index} className="font-semibold text-foreground">
+            <Ruby>{part.slice(2, -2)}</Ruby>
+          </strong>
+        ) : (
+          <Ruby key={index}>{part}</Ruby>
+        )
+      )}
+    </>
+  );
+}
+
+/**
  * The toggle itself.
  *
  * Labelled in English, not Japanese: the person who needs this cannot read the

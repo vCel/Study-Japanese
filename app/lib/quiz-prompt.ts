@@ -127,6 +127,13 @@ const DISTRACTOR_QUALITY = [
   "- A distractor must be wrong, not merely unlikely. \"Probably not what they meant\" is not wrong enough.",
   "- Never use a synonym, a paraphrase, or another conjugation of the answer as a distractor.",
   "- With several gaps, every option must be wrong in every gap it could plausibly fill — except where it is the answer.",
+  "",
+  "### The opposite failure: a giveaway",
+  "A question also breaks by being too *easy*. If the item under test appears verbatim in the question, the only option that repeats it is obviously the answer, and the learner scores without knowing any Japanese — which is worse than a hard question, because it teaches nothing and looks careless.",
+  "- The answer must never be the only option that shares a word, a character, or a reading with the question or the sentence.",
+  "- Where the question quotes Japanese, every option must be a plausible continuation or replacement of that quotation, so simply recognising the quoted text does not pick one out.",
+  "  Asking 「学生《がくせい》」 を使った文を選びなさい where only one option contains 学生 is a giveaway. Make every option usable in the sentence and let the grammar decide which is right.",
+  "- Keep the options the same kind of thing — same word class, same conjugation, similar length — so the answer cannot be identified by its shape alone.",
 ].join("\n");
 
 /**
@@ -235,8 +242,16 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     'Write the question itself in English: "prompt" and "explanation" are English sentences, and Japanese appears only as the material under test, quoted inside them. The learner must be able to tell what is being asked without reading a word of Japanese.',
     "You are given a fixed set of library items. Write questions about THOSE items only — never invent rules, words or readings that are not supported by the material.",
     "All Japanese must be natural, correctly spelled and grammatical (except where a true/false question deliberately contains one error).",
+    // Kana errors are the ones a learner cannot catch: they have no reference
+    // to compare against, so a wrong particle is simply learned wrong. Called
+    // out specifically because the free tiers produced `んが` for `のが`.
+    "Kana must be exact, character for character. Never substitute a similar kana and never approximate a particle: の is の and never ん, は is は and never わ, を is を and never お. If you are unsure of a spelling or a reading, use the one from the given material rather than reconstructing it.",
     "Every question that offers a set of options must have exactly ONE defensible answer — no distractor may also be grammatical and plausible in the given context.",
     "Reply with raw JSON only. No markdown, no code fences, no commentary before or after.",
+    // The line above is read as being about the *envelope*, so the free tiers
+    // happily put `**bold**` inside an explanation. The distinction has to be
+    // spelled out: plain prose is a property of the strings, not of the reply.
+    'Every string inside the JSON is plain prose. Do not use Markdown anywhere in a value — no **bold**, no *italics*, no `backticks`, no headings, no bullet characters. There is no way to emphasise text in this format, so write the sentence so it does not need it.',
   ].join(" ");
 
   const sections: string[] = [];
@@ -298,8 +313,9 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     '- For any question with "options", the options MUST be listed in an arbitrary, shuffled order — the correct answer must NOT reliably come first.',
     '- Never reveal the answer inside the "prompt" text.',
     offersOptions
-      ? "- Before returning, re-read every question with options and confirm that exactly one option is defensible. Rewrite any question where a second option also fits."
+      ? "- Before returning, re-read every question with options twice: once to confirm that exactly one option is defensible, and once to confirm that the answer is not the only option that repeats a word from the question. Rewrite any question that fails either check."
       : "",
+    '- No Markdown in any value: no **bold**, no *italics*, no `backticks`, no headings.',
     wantsRules
       ? "- Stay faithful to the given rules' explanations and examples; reuse their vocabulary where it fits."
       : "",
