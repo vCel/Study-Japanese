@@ -236,7 +236,11 @@ export async function action({ request, context }: Route.ActionArgs): Promise<Re
 
   if (!isAiConfigured()) {
     return Response.json(
-      { error: "AI generation is not configured. Set GEMINI_API_KEY and/or GLM_API_KEY." },
+      {
+        error:
+          "AI generation is not configured. Set GEMINI_API_KEY, GLM_API_KEY, " +
+          "AIHUBMIX_API_KEY or OPENROUTER_API_KEY.",
+      },
       { status: 503 }
     );
   }
@@ -322,6 +326,18 @@ function streamGeneration(
             retryInMs: info.retryInMs,
           }),
         onAttemptDone: (attempt) => send({ type: "attemptDone", attempt }),
+        // The same parser the route runs below, as a gate: an answer we cannot
+        // read is not an answer, so the walk should try the next model rather
+        // than stop here. Parsing twice is cheap and keeps the format knowledge
+        // in one place — `ai.server.ts` only sees a boolean.
+        accept: (text) => {
+          try {
+            parseQuizQuestions(text, config.questionCount);
+            return true;
+          } catch {
+            return false;
+          }
+        },
       });
 
       let parsed;

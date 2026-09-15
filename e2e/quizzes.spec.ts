@@ -668,7 +668,7 @@ test.describe("quiz session", () => {
     // would never see the result, and the wait below would time out.
     await page.route("**/api/quiz/generate", async (route: Route) => {
       const events = [
-        { type: "attempt", model: "gemini-3.8-flash", index: 0, total: 5 },
+        { type: "attempt", model: "gemini-3.8-flash", index: 0, total: 8 },
         {
           type: "attemptDone",
           attempt: {
@@ -679,7 +679,7 @@ test.describe("quiz session", () => {
             ms: 300,
           },
         },
-        { type: "attempt", model: "gemini-3.6-flash", index: 2, total: 5 },
+        { type: "attempt", model: "gemini-3.6-flash", index: 2, total: 8 },
         {
           type: "result",
           questions: sampleQuestions(),

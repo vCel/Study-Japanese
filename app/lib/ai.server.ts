@@ -3,9 +3,17 @@
  *
  * The chain is walked in order; each attempt gets its own timeout and the walk
  * aborts early when the failure tells us every remaining model on a provider
- * would fail the same way. Specifically: a Gemini **429** means the whole
- * Google account is out of quota, so all three Gemini models are skipped and
- * the walk jumps straight to GLM.
+ * would fail the same way.
+ *
+ * What "the same way" means is per-provider, and the difference is load
+ * bearing. Gemini and GLM cap the *account* — a 429 there means the sibling
+ * models will fail too, so the walk leaves the provider. AIHubMix and
+ * OpenRouter are aggregators whose free tiers are capped per *model*
+ * (AIHubMix meters `xiaomi-mimo-v2.5-free` at 5 rpm / 100 rpd on its own), so
+ * a 429 there costs one row and says nothing about the provider's other
+ * models. Treating both as account-level is how you silently lose a healthy
+ * fallback — the same shape of bug as the GLM `1305` mix-up documented in
+ * `classifyGlm`.
  *
  * Runs in the Worker (`env` from `cloudflare:workers`), never in the browser —
  * the keys must not reach the client bundle.
@@ -20,39 +28,80 @@ export interface ChatMessage {
   content: string;
 }
 
+type Provider = "gemini" | "glm" | "aihubmix" | "openrouter";
+
 /** One entry in the fallback chain. */
 interface ModelSpec {
   model: string;
-  provider: "gemini" | "glm";
+  provider: Provider;
+  /**
+   * Extra fields merged into the request body, for OpenAI-compatible
+   * providers only (Gemini builds its own body and ignores this).
+   *
+   * Exists for one reason: switching off a model's thinking mode. See the
+   * `xiaomi-mimo-v2.5-free` entry below.
+   */
+  extraBody?: Record<string, unknown>;
 }
 
 /**
- * Ordered exactly as specified: newest Gemini first, then GLM. Everything
- * shares the same interface so the walk below stays one loop.
+ * Ordered exactly as specified: the AIHubMix free model first, then newest
+ * Gemini, then GLM, then the two remaining fallbacks. Everything shares the
+ * same interface so the walk below stays one loop.
  */
 export const MODEL_CHAIN: ModelSpec[] = [
+  {
+    model: "xiaomi-mimo-v2.5-free",
+    provider: "aihubmix",
+    // Thinking is on by default here, and on a realistic 3-question request
+    // this model spends ~1900-3700 reasoning tokens on top of a ~470-character
+    // answer. Measured 2026-09-15: 42s and 78s on two runs — i.e. every attempt
+    // would blow the 25s ceiling and hand the chain nothing but a wasted
+    // timeout. With thinking off the same request answers in ~8.5s with
+    // `reasoning_tokens: 0` and valid JSON.
+    //
+    // `thinking.type` is the documented switch. The chat-completions face has
+    // no `reasoning.effort` (that is responses-API only), and the two
+    // undocumented spellings that also worked — `chat_template_kwargs` and a
+    // top-level `enable_thinking` — are not worth depending on.
+    extraBody: { thinking: { type: "disabled" } },
+  },
   { model: "gemini-3.8-flash", provider: "gemini" },
   { model: "gemini-3.7-flash", provider: "gemini" },
   { model: "gemini-3.6-flash", provider: "gemini" },
   { model: "glm-4.7-flash", provider: "glm" },
   { model: "glm-4.5-flash", provider: "glm" },
+  { model: "hy3-free", provider: "aihubmix" },
+  { model: "inclusionai/ling-3.0-flash-vl:free", provider: "openrouter" },
 ];
 
 /** Per-attempt ceiling. Long enough for a full question set, short enough that
- * five attempts can't outlive the request. */
+ * the chain can't outlive the request. */
 const ATTEMPT_TIMEOUT_MS = 25_000;
 
-/** Ceiling for the whole walk, so a slow cascade still returns a response. */
+/**
+ * Ceiling for the whole walk, so a slow cascade still returns a response.
+ *
+ * Deliberately unchanged at 95s while the chain grew from five rows to eight:
+ * Gemini alone can burn ~70s before GLM gets a turn, so the last two rows are
+ * only reached when the models above them fail fast. Raising this is a product
+ * decision, not a bug fix — see `AI.md`.
+ */
 const TOTAL_BUDGET_MS = 95_000;
 
 /**
  * How a failed attempt should affect the walk.
- *  * `ratelimit`  → the account is out of quota; skip the rest of the provider
- *  * `overloaded` → transient provider-wide load; worth one retry
- *  * `timeout`    → this attempt stalled; try the next model
- *  * `error`      → anything else (bad request, bad key, bad output)
+ *  * `ratelimit`          → *this model* is out of quota; siblings may be fine
+ *  * `provider-ratelimit` → the *account* is out; skip the provider's siblings
+ *  * `overloaded`         → transient provider-wide load; worth one retry,
+ *                           unless the provider already answered that way
+ *  * `timeout`            → this attempt stalled; try the next model
+ *  * `error`              → anything else (bad request, bad key, bad output)
+ *
+ * The two rate-limit kinds exist because only some providers can answer the
+ * question "are your siblings out too?" — see the file header.
  */
-type FailureKind = "ratelimit" | "overloaded" | "timeout" | "error";
+type FailureKind = "ratelimit" | "provider-ratelimit" | "overloaded" | "timeout" | "error";
 
 class GenerationError extends Error {
   constructor(
@@ -84,6 +133,20 @@ export interface GenerateOptions {
    * it is over, which is too late for a progress panel.
    */
   onAttemptDone?: (attempt: GenerationAttempt) => void;
+  /**
+   * Decide whether an answer is usable, so a model that returns HTTP 200 with
+   * output the caller cannot read doesn't end the walk.
+   *
+   * This is not hypothetical: AIHubMix answers a free request from an account
+   * that has used up its trials with **200** and the plain text "Sorry, to
+   * prevent abuse of free resources, accounts that have not been recharged can
+   * only try 10 times." Returning that would stop the chain on its first row
+   * and take every Gemini fallback down with it.
+   *
+   * A predicate rather than a parser: the caller owns the format, so
+   * `ai.server.ts` stays ignorant of quizzes.
+   */
+  accept?: (text: string) => boolean;
 }
 
 export interface GenerateOutcome {
@@ -102,8 +165,8 @@ export interface GenerateOutcome {
  * about — it means every Gemini model will fail, so we leave the provider.
  */
 function classifyGemini(status: number, body: string): FailureKind {
-  if (status === 429) return "ratelimit";
-  if (/RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(body)) return "ratelimit";
+  if (status === 429) return "provider-ratelimit";
+  if (/RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(body)) return "provider-ratelimit";
   if (status === 503 || /UNAVAILABLE|overloaded/i.test(body)) return "overloaded";
   return "error";
 }
@@ -142,14 +205,39 @@ function classifyGlm(status: number, code: string | undefined, body: string): Fa
     case "1001":
     case "1003":
     case "1005":
-      return "ratelimit";
+      return "provider-ratelimit";
     case "1305":
       return "overloaded";
   }
 
-  if (status === 429) return "ratelimit";
+  if (status === 429) return "provider-ratelimit";
   if (status === 503) return "overloaded";
   if (/overload|busy|try again/i.test(body)) return "overloaded";
+  return "error";
+}
+
+/**
+ * AIHubMix and OpenRouter, which both document the same status ladder.
+ *
+ * A 429 is deliberately **model**-scoped here. AIHubMix meters each free model
+ * on its own (`xiaomi-mimo-v2.5-free`: 5 rpm / 100 rpd) and OpenRouter forwards
+ * to a single upstream provider per free model, so neither 429 tells us the
+ * account is out. Escalating it would let a rate limit on the *first* row skip
+ * `hy3-free` seven rows later.
+ */
+function classifyOpenAiCompatible(status: number, body: string): FailureKind {
+  if (status === 429) return "ratelimit";
+  // OpenRouter: no credits left. Account-wide, so the provider is done.
+  if (status === 402) return "provider-ratelimit";
+  // AIHubMix: `insufficient_user_quota` on the key, or a suspended account.
+  if (status === 403 && /quota|suspend/i.test(body)) return "provider-ratelimit";
+  // 503 is AIHubMix's "no channel can serve this / upstream is throttling" and
+  // OpenRouter's "upstream is down". Both are worth the single retry.
+  if (status >= 500) return "overloaded";
+  if (/overload|try again|temporarily/i.test(body)) return "overloaded";
+  // 400 and 404 land here, which is what we want for AIHubMix's
+  // `no_available_channel`: it means *this model* has no upstream right now, so
+  // the walk should move on rather than abandon the provider.
   return "error";
 }
 
@@ -165,9 +253,22 @@ function glmKey(): string {
   return (env.GLM_API_KEY ?? "").trim();
 }
 
+function aihubmixKey(): string {
+  return (env.AIHUBMIX_API_KEY ?? "").trim();
+}
+
+function openrouterKey(): string {
+  return (env.OPENROUTER_API_KEY ?? "").trim();
+}
+
 /** True when at least one provider has a key, so the route can fail early. */
 export function isAiConfigured(): boolean {
-  return geminiKey().length > 0 || glmKey().length > 0;
+  return (
+    geminiKey().length > 0 ||
+    glmKey().length > 0 ||
+    aihubmixKey().length > 0 ||
+    openrouterKey().length > 0
+  );
 }
 
 /**
@@ -234,7 +335,7 @@ async function callGemini(
   return text;
 }
 
-/** GLM via the OpenAI-compatible chat-completions endpoint. */
+/** GLM via the Z.AI OpenAI-compatible chat-completions endpoint. */
 async function callGlm(
   spec: ModelSpec,
   messages: ChatMessage[],
@@ -299,14 +400,96 @@ function extractGlmCode(body: string): string | undefined {
   }
 }
 
+/** Where each aggregator's OpenAI-compatible chat-completions endpoint lives. */
+const AGGREGATOR_ENDPOINTS: Record<"aihubmix" | "openrouter", string> = {
+  aihubmix: "https://aihubmix.com/v1/chat/completions",
+  openrouter: "https://openrouter.ai/api/v1/chat/completions",
+};
+
+/**
+ * Chat-completions transport for AIHubMix and OpenRouter, which share a wire
+ * format and a status ladder.
+ *
+ * No `response_format`: the prompt already asks for JSON and the parser is
+ * tolerant, and asking anyway is not free — OpenRouter answers a
+ * `json_object` request for `ling-3.0-flash-vl` with
+ * `400 ... does not support feature: structured-outputs`. A 400 there would
+ * kill an otherwise healthy attempt, so the request stays as plain as GLM's.
+ *
+ * `callGlm` above is a near-copy of this on purpose: its classifier reads a
+ * numeric `code` no other provider sends, and that path is verified against
+ * live Z.AI behaviour, so it is left alone rather than generalised into here.
+ */
+async function callOpenAiCompatible(
+  spec: ModelSpec,
+  messages: ChatMessage[],
+  signal: AbortSignal
+): Promise<string> {
+  const provider = spec.provider as "aihubmix" | "openrouter";
+  const key = provider === "aihubmix" ? aihubmixKey() : openrouterKey();
+  if (!key) {
+    throw new GenerationError("error", `${provider.toUpperCase()}_API_KEY is not set.`);
+  }
+
+  const response = await fetch(AGGREGATOR_ENDPOINTS[provider], {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model: spec.model,
+      messages,
+      temperature: 0.9,
+      max_tokens: 8000,
+      stream: false,
+      ...spec.extraBody,
+    }),
+    signal,
+  });
+
+  const body = await response.text();
+
+  if (!response.ok) {
+    throw new GenerationError(
+      classifyOpenAiCompatible(response.status, body),
+      `HTTP ${response.status}: ${body.slice(0, 200)}`
+    );
+  }
+
+  let json: {
+    choices?: { message?: { content?: string } }[];
+    error?: { code?: string | number; message?: string };
+  };
+  try {
+    json = JSON.parse(body) as typeof json;
+  } catch {
+    throw new GenerationError("error", `${provider} returned a non-JSON response.`);
+  }
+
+  // OpenRouter in particular can ride an error on an otherwise 200 body.
+  if (json.error) {
+    throw new GenerationError(
+      classifyOpenAiCompatible(response.status, json.error.message ?? body),
+      json.error.message ?? `${provider} error`
+    );
+  }
+
+  const text = json.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new GenerationError("error", `${provider} returned an empty response.`);
+  return text;
+}
+
 function callModel(
   spec: ModelSpec,
   messages: ChatMessage[],
   signal: AbortSignal
 ): Promise<string> {
-  return spec.provider === "gemini"
-    ? callGemini(spec, messages, signal)
-    : callGlm(spec, messages, signal);
+  switch (spec.provider) {
+    case "gemini":
+      return callGemini(spec, messages, signal);
+    case "glm":
+      return callGlm(spec, messages, signal);
+    default:
+      return callOpenAiCompatible(spec, messages, signal);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -320,9 +503,11 @@ function sleep(ms: number) {
 /**
  * Try each model in `MODEL_CHAIN` until one answers.
  *
- * `ratelimit` failures skip the rest of that provider and continue with the
- * next one (so a Gemini 429 lands straight on GLM); `overloaded` failures get
- * one retry with a short backoff before the walk moves on.
+ * A rate-limit failure skips ahead — how far depends on its scope: an
+ * account-level one abandons the provider (so a Gemini 429 lands straight on
+ * GLM), a model-level one costs only that row. `overloaded` failures get one
+ * retry with a short backoff, but only while there is still reason to think the
+ * load is transient — see `overloadedProvider`.
  */
 export async function generateWithFallback(
   messages: ChatMessage[],
@@ -330,8 +515,25 @@ export async function generateWithFallback(
 ): Promise<GenerateOutcome> {
   const attempts: GenerationAttempt[] = [];
   const deadline = Date.now() + TOTAL_BUDGET_MS;
-  /** Providers already known to be rate-limited this request. */
+  /** Providers whose *account* is already known to be rate limited. */
   const exhausted = new Set<string>();
+  /**
+   * The provider whose most recent attempt failed `overloaded`, or null when
+   * the walk's last attempt failed some other way.
+   *
+   * Retrying is only worth ~25s of the budget if the overload might be a blip
+   * on one model. When the *next* model on the same provider answers
+   * `overloaded` too, the load is the provider's, and the retry is spent on a
+   * model that has just been told the same thing — Gemini 503s all three of its
+   * models together. Measured 2026-09-15: a retry costs 20s + 1.5s backoff + 4s,
+   * and three of them put the walk over `TOTAL_BUDGET_MS` at row 5, so rows 6-8
+   * were never attempted at all.
+   *
+   * Keyed on the *previous attempt's* provider rather than "any earlier row",
+   * because AIHubMix holds two non-adjacent rows (1 and 7) — a stale entry from
+   * row 1 must not suppress a retry six rows later.
+   */
+  let overloadedProvider: Provider | null = null;
   let lastDetail = "No model in the fallback chain answered.";
 
   /** Keep the collected list and any live listener in step. */
@@ -350,7 +552,7 @@ export async function generateWithFallback(
         model: spec.model,
         provider: spec.provider,
         outcome: "ratelimit",
-        detail: `${spec.provider} account is rate limited — skipped.`,
+        detail: `${spec.provider} is out of quota — skipped.`,
         ms: 0,
       });
       continue;
@@ -364,6 +566,12 @@ export async function generateWithFallback(
     // Two passes on the same model: the second is the retry after a transient
     // overload. Only `overloaded` earns the retry.
     for (let pass = 0; pass < 2; pass++) {
+      // Read before this attempt can overwrite it: a provider-wide overload
+      // makes the retry below pointless, and this attempt is about to become
+      // the most recent one.
+      const providerAlreadyOverloaded = overloadedProvider === spec.provider;
+      overloadedProvider = null;
+
       options.onAttempt?.({
         model: spec.model,
         provider: spec.provider,
@@ -374,6 +582,23 @@ export async function generateWithFallback(
       const started = Date.now();
       try {
         const text = await callModel(spec, messages, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS));
+
+        // A 200 is not proof of a usable answer — see `accept` in
+        // GenerateOptions. Treat an unusable one as a failed attempt, because
+        // returning it would end the walk on a model that has nothing to say.
+        if (options.accept && !options.accept(text)) {
+          const detail = "answered with output we could not use";
+          record({
+            model: spec.model,
+            provider: spec.provider,
+            outcome: "error",
+            detail,
+            ms: Date.now() - started,
+          });
+          lastDetail = `${spec.model}: ${detail}`;
+          break; // move to the next model
+        }
+
         record({
           model: spec.model,
           provider: spec.provider,
@@ -393,7 +618,7 @@ export async function generateWithFallback(
           error instanceof Error ? error.message : "Unknown error";
 
         const outcome: GenerationAttempt["outcome"] =
-          kind === "ratelimit"
+          kind === "ratelimit" || kind === "provider-ratelimit"
             ? "ratelimit"
             : kind === "overloaded"
               ? "overloaded"
@@ -403,13 +628,20 @@ export async function generateWithFallback(
         record({ model: spec.model, provider: spec.provider, outcome, detail, ms });
         lastDetail = `${spec.model}: ${detail}`;
 
-        if (kind === "ratelimit") {
-          // Abandon the whole provider, not just this model.
-          exhausted.add(spec.provider);
+        // Remember this for the next row's retry decision.
+        if (kind === "overloaded") overloadedProvider = spec.provider;
+
+        if (kind === "ratelimit" || kind === "provider-ratelimit") {
+          // Only an account-level cap says anything about the sibling models.
+          // A per-model one (the aggregators) leaves the rest of the provider
+          // in play, which matters because AIHubMix holds two rows.
+          if (kind === "provider-ratelimit") exhausted.add(spec.provider);
           break;
         }
 
-        if (kind === "overloaded" && pass === 0) {
+        // One retry, but only if the overload still looks like a blip. If the
+        // provider's previous model said the same thing, it does not.
+        if (kind === "overloaded" && pass === 0 && !providerAlreadyOverloaded) {
           const retryInMs = 1500;
           options.onRetry?.({ model: spec.model, detail, retryInMs });
           await sleep(retryInMs);

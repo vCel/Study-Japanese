@@ -412,14 +412,23 @@ export function QuizRunner({
 }
 
 /** Number of models in the chain, for the loading bar's segments. */
-const CHAIN_LENGTH = 5;
+const CHAIN_LENGTH = 8;
 
+/**
+ * Display names for the loading bar, **in `MODEL_CHAIN` order** — the index in
+ * the server's `attempt` event is a position in that array. `?? progress.model`
+ * below is the safety net: a stale or short list falls back to the raw model id
+ * rather than mislabelling a model.
+ */
 const CHAIN_LABELS = [
+  "Xiaomi MiMo V2.5",
   "Gemini 3.8 Flash",
   "Gemini 3.7 Flash",
   "Gemini 3.6 Flash",
   "GLM 4.7 Flash",
   "GLM 4.5 Flash",
+  "Hunyuan Hy3",
+  "Ling 3.0 Flash VL",
 ];
 
 /**

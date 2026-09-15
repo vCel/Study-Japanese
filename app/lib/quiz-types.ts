@@ -256,7 +256,7 @@ export interface QuizQuestion {
 /** One step of the model-fallback walk, reported back so the UI can narrate it. */
 export interface GenerationAttempt {
   model: string;
-  provider: "gemini" | "glm";
+  provider: "gemini" | "glm" | "aihubmix" | "openrouter";
   outcome: "ok" | "timeout" | "ratelimit" | "overloaded" | "error";
   /** Human-readable detail, surfaced in the loading panel. */
   detail?: string;
