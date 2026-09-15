@@ -574,6 +574,10 @@ test.describe("quiz builder", () => {
     await expect(rows.filter({ hasText: "ポイント" })).toHaveCount(3);
     await expect(page.getByText("Verb stem + ます")).toBeVisible();
 
+    // …and how much material sits behind it: each seeded rule has two examples,
+    // which is what a question can actually be written from.
+    await expect(rows.filter({ hasText: "2 examples" })).toHaveCount(3);
+
     // Every rule starts included (`ruleIds === null` is the "all" sentinel), so
     // the first click on a row *deselects* it — the whole row is the target,
     // there is no separate checkbox to hunt for.

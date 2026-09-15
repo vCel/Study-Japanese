@@ -1868,6 +1868,14 @@ export interface RuleChoice {
    */
   points: string[];
   /**
+   * How many example sentences the rule carries.
+   *
+   * A rule's points say what it covers; its examples are the material a quiz
+   * question can actually be written from, so the picker shows both. Counted by
+   * the same correlated subquery `listRules` uses, on the same query.
+   */
+  exampleCount: number;
+  /**
    * The rule's tag names.
    *
    * Carried here so the builder can hide rules that fall outside the tag
@@ -1879,7 +1887,7 @@ export interface RuleChoice {
 }
 
 /**
- * Every rule the owner has, as a minimal `{id, kind, title, points, tags}`.
+ * Every rule the owner has, as a minimal `{id, kind, title, points, exampleCount, tags}`.
  *
  * The builder's rule picker needs the whole list at once — to offer "all", to
  * count the selection, and to show which are ticked — so this deliberately
@@ -1895,11 +1903,22 @@ export async function listRuleChoices(ownerId: string, limit = 500): Promise<Rul
       .prepare(
         // `pattern` comes along for the same reason `listRules` reads it: a rule
         // saved before `points` existed keeps its single point there, and
-        // `parseRulePoints` is the one place that knows the fallback.
-        "SELECT id, kind, title, pattern, points FROM rules WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
+        // `parseRulePoints` is the one place that knows the fallback. The
+        // example count is a correlated subquery rather than a join, so a rule
+        // with no examples still comes back (as 0) instead of dropping out.
+        `SELECT id, kind, title, pattern, points,
+                (SELECT COUNT(*) FROM rule_examples re WHERE re.rule_id = rules.id) AS example_count
+         FROM rules WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2`
       )
       .bind(ownerId, limit)
-      .all<{ id: number; kind: RuleKind; title: string; pattern: string | null; points: string | null }>(),
+      .all<{
+        id: number;
+        kind: RuleKind;
+        title: string;
+        pattern: string | null;
+        points: string | null;
+        example_count: number;
+      }>(),
     db
       .prepare(
         `SELECT rt.rule_id AS rule_id, t.name AS name
@@ -1925,6 +1944,7 @@ export async function listRuleChoices(ownerId: string, limit = 500): Promise<Rul
     kind: row.kind,
     title: row.title,
     points: parseRulePoints(row.points, row.pattern),
+    exampleCount: row.example_count,
     tags: tagMap.get(row.id) ?? [],
   }));
 }

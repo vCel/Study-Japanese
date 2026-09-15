@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router";
-import { Check, FolderOpen, ListChecks, Minus, Save, Search, Sparkles } from "lucide-react";
+import { BookMarked, Check, FolderOpen, ListChecks, Minus, Save, Search, Sparkles } from "lucide-react";
 
 import type { RuleChoice, TagInfo, WordListSummary } from "~/lib/db.server";
 import { useStarredIds, type StarredIds } from "~/lib/use-stars";
@@ -945,6 +945,15 @@ function QuizPanel({
                                 {rule.kind === "sentence" ? "Sentence" : "Word"}
                               </span>
                             )}
+                            {/* A rule's points say what it covers; its examples
+                                are the material a question can be written from.
+                                A rule with points but no examples generates far
+                                worse questions, so the count belongs on the line
+                                the user is judging the rule on. */}
+                            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <BookMarked className="h-3 w-3" />
+                              {rule.exampleCount} example{rule.exampleCount === 1 ? "" : "s"}
+                            </span>
                           </span>
 
                           {rule.points.length > 0 && (
@@ -953,13 +962,15 @@ function QuizPanel({
                                 ポイント
                               </span>
                               {rule.points.map((point, index) => (
-                                // `title` carries the whole point: the chip is
-                                // clamped to one line so a long pattern cannot
-                                // make one row taller than the rest.
+                                // Deliberately *not* clamped to one line. A
+                                // clamped chip needs a hover to reveal the rest,
+                                // and there is no hover on a touch screen — the
+                                // point simply became unreadable on a phone. The
+                                // whole reason these are on screen is to be read,
+                                // so a long one makes its row taller instead.
                                 <span
                                   key={index}
-                                  title={point}
-                                  className="max-w-[18rem] truncate rounded-[4px] border border-dashed border-muted-foreground/40 px-1.5 py-0.5 text-xs text-muted-foreground"
+                                  className="min-w-0 rounded-[4px] border border-dashed border-muted-foreground/40 px-1.5 py-0.5 text-xs break-words text-muted-foreground"
                                 >
                                   {point}
                                 </span>
