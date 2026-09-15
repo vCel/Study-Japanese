@@ -64,14 +64,10 @@ const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
       both: "overflow-auto",
     };
 
-    // `max-height` has to sit on the element that actually scrolls.
-    //
-    // Putting it on the outer wrapper (with `h-full` on the inner viewport) does
-    // not work: the outer's height is `auto` — it only has a *max*-height — so the
-    // inner's `height: 100%` resolves against an indefinite height and falls back
-    // to `auto`, making the viewport exactly as tall as its content. The outer then
-    // caps at max-height and `overflow-hidden` clips the rest, so the overflow is
-    // not scrollable — it is simply invisible and unreachable.
+    // `max-height` belongs on the element that scrolls. On the wrapper it is
+    // silently useless: the wrapper's height is `auto` (it only has a max-height),
+    // so the viewport's `h-full` resolves to `auto`, grows to fit its content, and
+    // the wrapper's `overflow-hidden` clips the overflow rather than scrolling it.
     const maxHeightStyle =
       maxHeight !== undefined
         ? typeof maxHeight === "number"
