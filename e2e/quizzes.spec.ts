@@ -553,6 +553,22 @@ test.describe("quiz session", () => {
     await expect(page.getByText(/Every model in the fallback chain failed/)).toBeVisible();
   });
 
+  test("surfaces the real server's refusal when generation is not allowed", async ({ page }) => {
+    await stubConvex(page);
+    // Deliberately NOT stubbing /api/quiz/generate — this is the only spec that
+    // talks to the real route, so it covers two things a stub never can: the
+    // route's account gate, and the client's JSON-error branch against a real
+    // response. Convex is stubbed, so this browser is signed out and the route
+    // must refuse. It refuses *before* generating, so no provider is called.
+    await page.goto("/study/quizzes/session?sources=rules&count=1&types=multiple-choice");
+    await expectHydrated(page);
+
+    await expect(page.getByText("The quiz could not be generated")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText(/Please sign in to generate a quiz/)).toBeVisible();
+  });
+
   test("refuses to generate when nothing matches the selection", async ({ page }) => {
     await stubConvex(page);
     // 422 is what the API returns when the selection resolves to no items.
