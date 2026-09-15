@@ -109,8 +109,9 @@ function classifyGemini(status: number, body: string): FailureKind {
 }
 
 /**
- * GLM (Z.AI / BigModel) reports problems in a numeric `code` on an otherwise
- * 200 body, and the code arrives as a **string** — so it is compared as one.
+ * GLM (Z.AI / BigModel) reports problems in a numeric `code`, which arrives as a
+ * **string** — so it is compared as one. The code rides either a 200 body or a
+ * 429, which is why it has to be read *before* the status is considered.
  *
  *   1302           account concurrency limit  → provider-level, skip ahead
  *   1305           platform overload          → transient, worth a retry
@@ -121,7 +122,12 @@ function classifyGemini(status: number, body: string): FailureKind {
  *   1301           content safety block        → this attempt only
  */
 function classifyGlm(status: number, code: string | undefined, body: string): FailureKind {
-  if (status === 429) return "ratelimit";
+  // The code is the more specific signal, so it wins over the status. Checking
+  // `status === 429` first made the `1305` case below unreachable — Z.AI sends
+  // 1305 *with* a 429, and a blanket 429 → ratelimit marks the whole provider
+  // exhausted, skipping a model that would have answered. Observed 2026-09-15:
+  // 3/3 probes of `glm-4.7-flash` returned 429/1305 while `glm-4.5-flash`
+  // returned 200 from the same key at the same moment.
   switch (code) {
     case "1302":
     case "1308":
@@ -132,7 +138,6 @@ function classifyGlm(status: number, code: string | undefined, body: string): Fa
     case "1319":
     case "1320":
     case "1321":
-      return "ratelimit";
     case "1113":
     case "1001":
     case "1003":
@@ -140,11 +145,12 @@ function classifyGlm(status: number, code: string | undefined, body: string): Fa
       return "ratelimit";
     case "1305":
       return "overloaded";
-    default:
-      if (status === 503) return "overloaded";
-      if (/overload|busy|try again/i.test(body)) return "overloaded";
-      return "error";
   }
+
+  if (status === 429) return "ratelimit";
+  if (status === 503) return "overloaded";
+  if (/overload|busy|try again/i.test(body)) return "overloaded";
+  return "error";
 }
 
 // ---------------------------------------------------------------------------
