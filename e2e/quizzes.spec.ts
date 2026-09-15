@@ -508,6 +508,16 @@ test.describe("quiz builder", () => {
     // Clearing the query brings the whole registry back.
     await search.fill("");
     await expect(tagChip(page, "#conversation")).toBeVisible();
+    await expect(tagChip(page, "#particles")).toBeVisible();
+
+    // An active tag stays on screen even when it does not match the query —
+    // otherwise selecting #n5 and then searching "part" leaves it filtering the
+    // quiz with nothing on screen to click to turn it off.
+    await tagChip(page, "#n5").click();
+    await search.fill("part");
+    await expect(tagChip(page, "#particles")).toBeVisible();
+    await expect(tagChip(page, "#n5")).toHaveAttribute("data-tag-mode", "include");
+    await expect(tagChip(page, "#conversation")).toHaveCount(0);
   });
 
   test("clicking a tag cycles include, exclude, off", async ({ page }) => {

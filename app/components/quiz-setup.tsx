@@ -260,12 +260,25 @@ function QuizPanel({
   const [tagQuery, setTagQuery] = React.useState("");
   const tagsActive = config.tags.length > 0 || config.excludedTags.length > 0;
 
-  /** The chips to draw: the whole registry, narrowed by what was typed. */
+  const tagModeOf = (name: string): "off" | "include" | "exclude" =>
+    config.excludedTags.includes(name) ? "exclude" : config.tags.includes(name) ? "include" : "off";
+
+  /**
+   * The chips to draw: the whole registry, narrowed by what was typed — plus
+   * any tag that is already active, matching or not.
+   *
+   * Without the second half, searching for "part" after selecting `#n5` hides
+   * the `#n5` chip while it goes on filtering the quiz, and the only trace left
+   * is a count in the summary line. A filter you cannot see is one you cannot
+   * turn off.
+   */
   const visibleTags = React.useMemo(() => {
     const query = tagQuery.trim().toLowerCase();
     if (!query) return panelTags;
-    return panelTags.filter((tag) => tag.name.toLowerCase().includes(query));
-  }, [panelTags, tagQuery]);
+    return panelTags.filter(
+      (tag) => tag.name.toLowerCase().includes(query) || tagModeOf(tag.name) !== "off"
+    );
+  }, [panelTags, tagQuery, config.tags, config.excludedTags]);
 
   /**
    * Whether an item is in scope under the tag filter.
@@ -285,9 +298,6 @@ function QuizPanel({
     },
     [config.tags, config.excludedTags]
   );
-
-  const tagModeOf = (name: string): "off" | "include" | "exclude" =>
-    config.excludedTags.includes(name) ? "exclude" : config.tags.includes(name) ? "include" : "off";
 
   /**
    * One click per state, in the order the user is likely to want them: off →
