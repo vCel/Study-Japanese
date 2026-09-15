@@ -154,6 +154,16 @@ export interface QuizConfig {
   pos: string;
   /** Rule kind filter — rules only ("" = every rule). */
   ruleKind: string;
+  /**
+   * Explicit rule ids to draw from. `null` means every rule of the selected
+   * kind — the default, and the only representation that stays correct when a
+   * rule is added later. An empty list means none, which is what "clear all"
+   * in the builder produces.
+   *
+   * Rule ids and word ids are separate sequences, so rules get their own list
+   * rather than sharing `lists` (which is word/phrase lists only).
+   */
+  ruleIds: number[] | null;
 
   questionCount: number;
   /** When false, questions are untimed and `timeLimitSeconds` is ignored. */
@@ -167,6 +177,16 @@ export interface QuizConfig {
    */
   retryMissed: boolean;
 
+  /**
+   * Scope the quiz to starred items only.
+   *
+   * **Off by default, and always sent explicitly.** The server used to infer
+   * "starred only" from *the user having any stars at all*, so starring a single
+   * word silently narrowed every quiz to the starred set with no way to opt out
+   * — the "No starred words available" dead end.
+   */
+  starredOnly: boolean;
+
   types: QuizQuestionType[];
   distribution: QuizDistribution;
   difficulty: QuizDifficulty;
@@ -179,10 +199,12 @@ export const DEFAULT_QUIZ_CONFIG: QuizConfig = {
   tags: [],
   pos: "",
   ruleKind: "",
+  ruleIds: null,
   questionCount: 10,
   timeLimitEnabled: true,
   timeLimitSeconds: 30,
   retryMissed: false,
+  starredOnly: false,
   types: ["multiple-choice", "fill-blanks"],
   distribution: "even",
   difficulty: "normal",

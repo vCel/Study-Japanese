@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-import { expectHydrated, seedStarterPack, stubConvex } from "./helpers";
+import { expectHydrated, seedStarterPack, stubConvex, wordIdByTitle } from "./helpers";
 
 /**
  * The Quizzes builder (/study/quizzes) and the session page
@@ -129,8 +129,10 @@ test.describe("quiz builder", () => {
       "aria-pressed",
       "false"
     );
-    await expect(page.getByText(/^\d+ · Rule type$/)).toBeVisible();
-    await expect(page.getByText(/^\d+ · Word lists$/)).toHaveCount(0);
+    // Rules is the only source on, so the shared source container is titled
+    // for rules alone.
+    await expect(page.getByText(/^\d+ · Rules$/)).toBeVisible();
+    await expect(page.getByText(/^\d+ · Lists & rules$/)).toHaveCount(0);
   });
 
   test("sources can be combined, and the panel follows what is switched on", async ({ page }) => {
@@ -145,20 +147,26 @@ test.describe("quiz builder", () => {
     await words.click();
     await expect(words).toHaveAttribute("aria-pressed", "true");
     await expect(rules).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText(/^\d+ · Word lists$/)).toBeVisible();
+    // Words and rules share one container, sectioned inside it — so there is a
+    // single "Lists & rules" step rather than one step per group.
+    await expect(page.getByText(/^\d+ · Lists & rules$/)).toBeVisible();
     await expect(page.getByText(/^\d+ · Types of words$/)).toBeVisible();
     await expect(page.getByText(/^\d+ · What to ask about$/)).toBeVisible();
-    await expect(page.getByText(/^\d+ · Rule type$/)).toBeVisible();
+    // …and the rule type pills sit in that same container, not in a step of
+    // their own. Nothing is seeded here, so the picker itself is empty.
+    await expect(page.getByRole("button", { name: /All rules/ })).toBeVisible();
+    await expect(page.getByText("No rules yet — create one and it appears here.")).toBeVisible();
 
-    // Phrases join the same list step rather than adding a second one.
+    // Phrases join the same list section rather than adding a second one.
     await page.getByRole("button", { name: "Phrases", exact: true }).click();
-    await expect(page.getByText(/^\d+ · Word & phrase lists$/)).toBeVisible();
-    await expect(page.getByText(/^\d+ · Word lists$/)).toHaveCount(0);
+    await expect(page.getByText(/^\d+ · Lists & rules$/)).toBeVisible();
 
-    // Turning rules off removes the rule-only step.
+    // Turning rules off retitles the container for the lists alone, and takes
+    // the rule-only controls with it.
     await rules.click();
     await expect(rules).toHaveAttribute("aria-pressed", "false");
-    await expect(page.getByText(/^\d+ · Rule type$/)).toHaveCount(0);
+    await expect(page.getByText(/^\d+ · Lists$/)).toBeVisible();
+    await expect(page.getByRole("button", { name: /All rules/ })).toHaveCount(0);
   });
 
   test("the last source cannot be deselected", async ({ page }) => {
@@ -190,16 +198,24 @@ test.describe("quiz builder", () => {
     await expect(page.getByRole("button", { name: "Generate quiz" })).toBeVisible();
   });
 
-  test("question count and question types are pill selections", async ({ page }) => {
+  test("the question count is a select and the question types are pills", async ({ page }) => {
     await stubConvex(page);
     await page.goto("/study/quizzes");
     await expectHydrated(page);
 
-    // Defaults: 10 questions, multiple-choice + fill-blanks.
-    await expect(page.getByRole("button", { name: "10", exact: true })).toHaveAttribute(
-      "aria-pressed",
-      "true"
+    // The count is a Select, so its trigger shows the chosen option's label.
+    // `exact` matters: the row's info tooltip is labelled "About Number of
+    // questions", which a substring match would also hit.
+    const count = page.getByRole("button", { name: "Number of questions", exact: true });
+    await expect(count).toContainText("10 questions");
+
+    await count.click();
+    await page.getByRole("option", { name: "20 questions" }).click();
+    await expect(page.getByRole("button", { name: "Number of questions", exact: true })).toContainText(
+      "20 questions"
     );
+
+    // Types stay multi-select pills: multiple-choice + fill-blanks by default.
     await expect(page.getByRole("button", { name: "Multiple choice" })).toHaveAttribute(
       "aria-pressed",
       "true"
@@ -209,13 +225,7 @@ test.describe("quiz builder", () => {
       "true"
     );
 
-    await page.getByRole("button", { name: "20", exact: true }).click();
-    await expect(page.getByRole("button", { name: "20", exact: true })).toHaveAttribute(
-      "aria-pressed",
-      "true"
-    );
-
-    // Types are multi-select: adding a third keeps the other two on.
+    // …and adding a third keeps the other two on.
     await page.getByRole("button", { name: "Type the answer" }).click();
     await expect(page.getByRole("button", { name: "Type the answer" })).toHaveAttribute(
       "aria-pressed",
@@ -257,9 +267,22 @@ test.describe("quiz builder", () => {
     await expect(toggle).toHaveAttribute("aria-checked", "true");
     // On by default, so the seconds row is showing.
     await expect(page.getByText("Seconds per question")).toBeVisible();
-    await expect(page.getByRole("button", { name: "30s" })).toHaveAttribute(
-      "aria-pressed",
-      "true"
+
+    // Seconds is a slider over the ladder the builder offers, starting on the
+    // second rung (30s).
+    const seconds = page.getByRole("slider", { name: "Seconds per question" });
+    await expect(seconds).toHaveAttribute("aria-valuemin", "0");
+    await expect(seconds).toHaveAttribute("aria-valuemax", "5");
+    await expect(seconds).toHaveAttribute("aria-valuenow", "1");
+    await expect(seconds).toHaveAttribute("aria-valuetext", "30 seconds");
+
+    // Arrow keys step it — the accessible way to drive it. The thumb is
+    // re-created on each commit, so re-query rather than reuse the handle.
+    await seconds.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("slider", { name: "Seconds per question" })).toHaveAttribute(
+      "aria-valuetext",
+      "45 seconds"
     );
 
     await toggle.click();
@@ -550,5 +573,87 @@ test.describe("quiz session", () => {
       timeout: 15_000,
     });
     await expect(page.getByText(/No rules matched this selection/)).toBeVisible();
+  });
+
+  test("only scopes a quiz to starred items when the quiz asks for it", async ({ page }) => {
+    await stubConvex(page);
+    const getRequest = await stubGeneration(page, [sampleQuestions()[0]]);
+
+    // A real, seeded word's id. A scope that matches nothing never reaches
+    // generation at all, so the positive case needs an id that names a row.
+    const wordId = await wordIdByTitle(page, "食べる");
+
+    // Starred ids are present but `starred=1` is not. This is the reported bug:
+    // merely *having* stars used to narrow every quiz with no way to opt out.
+    await page.goto(
+      `/study/quizzes/session?sources=words&count=1&types=multiple-choice&starredIds=${wordId}`
+    );
+    await expectHydrated(page);
+    await expect(page.getByText("What does 学生 mean?")).toBeVisible({ timeout: 15_000 });
+
+    let body = getRequest() as { config: { starredOnly: boolean } };
+    expect(body.config.starredOnly).toBe(false);
+
+    // …and with the flag, the same ids do scope it.
+    await page.goto(
+      `/study/quizzes/session?sources=words&count=1&types=multiple-choice&starredIds=${wordId}&starred=1`
+    );
+    await expectHydrated(page);
+    await expect(page.getByText("What does 学生 mean?")).toBeVisible({ timeout: 15_000 });
+
+    body = getRequest() as { config: { starredOnly: boolean } };
+    expect(body.config.starredOnly).toBe(true);
+  });
+
+  test("reads the streamed generation response", async ({ page }) => {
+    await stubConvex(page);
+    // The real route streams newline-delimited JSON so the loading panel can
+    // name the model actually in flight. Fulfilling it as one NDJSON body still
+    // exercises the parser: a client that only understood a buffered JSON body
+    // would never see the result, and the wait below would time out.
+    await page.route("**/api/quiz/generate", async (route: Route) => {
+      const events = [
+        { type: "attempt", model: "gemini-3.8-flash", index: 0, total: 5 },
+        {
+          type: "attemptDone",
+          attempt: {
+            model: "gemini-3.8-flash",
+            provider: "gemini",
+            outcome: "timeout",
+            detail: "503 UNAVAILABLE",
+            ms: 300,
+          },
+        },
+        { type: "attempt", model: "gemini-3.6-flash", index: 2, total: 5 },
+        {
+          type: "result",
+          questions: sampleQuestions(),
+          model: "gemini-3.6-flash",
+          attempts: [
+            {
+              model: "gemini-3.8-flash",
+              provider: "gemini",
+              outcome: "timeout",
+              detail: "503 UNAVAILABLE",
+              ms: 300,
+            },
+            { model: "gemini-3.6-flash", provider: "gemini", outcome: "ok", ms: 900 },
+          ],
+        },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/x-ndjson",
+        body: events.map((event) => `${JSON.stringify(event)}\n`).join(""),
+      });
+    });
+
+    await page.goto("/study/quizzes/session?sources=rules&count=3&types=multiple-choice");
+    await expectHydrated(page);
+
+    await expect(page.getByText("What does 学生 mean?")).toBeVisible({ timeout: 15_000 });
+    // The model badge comes from the stream's result event — Gemini 3.6, not
+    // the 3.8 the walk started on.
+    await expect(page.getByText("gemini-3.6-flash")).toBeVisible();
   });
 });

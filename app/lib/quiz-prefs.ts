@@ -1,7 +1,7 @@
 /** Client-side quiz preferences and saved sessions. */
 
 import type { QuizConfig } from "~/lib/quiz-types";
-import { DEFAULT_QUIZ_CONFIG, QUIZ_SOURCE_KINDS } from "~/lib/quiz-types";
+import { DEFAULT_QUIZ_CONFIG, QUIZ_SOURCE_KINDS, QUIZ_TIME_LIMITS } from "~/lib/quiz-types";
 
 const CONFIG_KEY = "jv:quiz:config";
 const SESSIONS_KEY = "jv:quiz:sessions";
@@ -74,16 +74,21 @@ export function normalizeConfig(raw: Partial<QuizConfig>): QuizConfig {
       : [],
     pos: typeof raw.pos === "string" ? raw.pos : "",
     ruleKind: raw.ruleKind === "word" || raw.ruleKind === "sentence" ? raw.ruleKind : "",
+    ruleIds: Array.isArray(raw.ruleIds)
+      ? raw.ruleIds.filter((id): id is number => typeof id === "number")
+      : null,
     questionCount:
       typeof raw.questionCount === "number" && raw.questionCount > 0
         ? Math.min(Math.max(Math.round(raw.questionCount), 1), 50)
         : DEFAULT_QUIZ_CONFIG.questionCount,
     timeLimitEnabled: raw.timeLimitEnabled !== false,
-    timeLimitSeconds:
-      typeof raw.timeLimitSeconds === "number" && raw.timeLimitSeconds > 0
-        ? raw.timeLimitSeconds
-        : DEFAULT_QUIZ_CONFIG.timeLimitSeconds,
+    // Snapped to the ladder the builder's slider offers, so a hand-edited or
+    // long-stale value can never leave the slider without a position.
+    timeLimitSeconds: QUIZ_TIME_LIMITS.includes(raw.timeLimitSeconds as number)
+      ? (raw.timeLimitSeconds as number)
+      : DEFAULT_QUIZ_CONFIG.timeLimitSeconds,
     retryMissed: raw.retryMissed === true,
+    starredOnly: raw.starredOnly === true,
     types: types.length > 0 ? types : [...DEFAULT_QUIZ_CONFIG.types],
     distribution: raw.distribution === "random" ? "random" : "even",
     difficulty,

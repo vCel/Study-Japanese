@@ -80,11 +80,16 @@ function looksLikeParticle(rule: RuleDetail): boolean {
   return /particle|助詞|は|が|を|に|で|と|も|へ|から|まで/.test(haystack);
 }
 
+/** Which of the selected types present the user with a set of options to pick from. */
+function usesOptions(type: QuizQuestionType): boolean {
+  return type === "multiple-choice" || type === "fill-blanks";
+}
+
 /** One requirement paragraph per selected question type. */
 function typeInstruction(type: QuizQuestionType, particleRules: boolean): string {
   switch (type) {
     case "multiple-choice":
-      return `- "multiple-choice": ${QUIZ_TYPE_HINTS["multiple-choice"]} Provide exactly 4 options in "options", only one of which is correct. Put the correct option in "answer".`;
+      return `- "multiple-choice": ${QUIZ_TYPE_HINTS["multiple-choice"]} Provide exactly 4 options in "options", only one of which is correct. Put the correct option in "answer". Every distractor must be clearly WRONG here — not merely unlikely, and never a near-synonym of the answer.`;
     case "input":
       return `- "input": ${QUIZ_TYPE_HINTS.input} Put the canonical answer in "answer" and any alternative accepted spellings (kana and romaji, where reasonable) in "acceptableAnswers".`;
     case "fill-blanks":
@@ -96,11 +101,33 @@ function typeInstruction(type: QuizQuestionType, particleRules: boolean): string
         particleRules
           ? `  For a question about one of the particle rules below, the gaps MUST be the particles themselves — e.g. 「私___学生です」 with the answer 「は」 — and "options" must add plausible distractor particles (が, を, に, で, と, も) so the bank is not trivially solvable. For any other item, "options" must contain the correct fillers plus plausible distractors of the same word class, in a shuffled order.`
           : `  "options" must contain the correct fillers plus plausible distractors of the same word class, in a shuffled order.`,
+        `  Every distractor must be wrong in the sentence you wrote — test each one against it before returning.`,
       ].join("\n");
     case "true-false":
       return `- "true-false": ${QUIZ_TYPE_HINTS["true-false"]} Write a Japanese sentence in "sentence" (you may show it in "prompt" instead) that is either correct or contains exactly one deliberate error, and set "answer" to "true" if the sentence is correct or "false" if it is not.`;
   }
 }
+
+/**
+ * The single most common way a generated question is broken: two options that
+ * are both grammatical and both plausible, so the user is marked wrong for an
+ * answer that was also correct.
+ *
+ * Naming the trap explicitly — with the contrastive pairs that cause it, and a
+ * worked counter-example — is what stops the model producing them; a generic
+ * "make the distractors wrong" does not.
+ */
+const DISTRACTOR_QUALITY = [
+  "## Distractor quality — the most common way these questions break",
+  "A question with two defensible answers is a broken question: the user can be marked wrong for an answer that was also correct. Before you return your JSON, go back over every question that has \"options\" and substitute each option into the sentence or context.",
+  "",
+  "- If a distractor makes a sentence that is grammatical AND whose meaning is plausible, it is invalid. Either change the sentence so the surrounding context settles which one fits, or replace the distractor.",
+  "- Contrastive and paired forms are the usual trap: にくい / やすい, ない / ある, まで / までに, は / が, に / で, へ / から, 〜た / 〜なかった, 大きい / 小さい, 上手 / 下手, 行く / 来る, 〜ている / 〜てある.",
+  "  「このペンは使い___です」 is NOT a valid question — both にくい and やすい fit. Fix it by letting the context choose one (「このペンは軽くて持ちやすく、とても使い___です」 → やすい) or by using a different pair.",
+  "- A distractor must be wrong, not merely unlikely. \"Probably not what they meant\" is not wrong enough.",
+  "- Never use a synonym, a paraphrase, or another conjugation of the answer as a distractor.",
+  "- With several gaps, every option must be wrong in every gap it could plausibly fill — except where it is the answer.",
+].join("\n");
 
 function distributionInstruction(config: QuizConfig): string {
   if (config.types.length <= 1) return "";
@@ -162,6 +189,8 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
 
   // The particle hint only makes sense where there are rules to attach it to.
   const particleRules = wantsRules && rules.some(looksLikeParticle);
+  // Only worth saying when a question will actually offer a set of options.
+  const offersOptions = config.types.some(usesOptions);
 
   const focusOption = WORD_FOCUS_OPTIONS.find((option) => option.value === config.focus);
   const focusInstruction = !wantsLists
@@ -174,6 +203,7 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     "You are a Japanese-language teacher writing a quiz.",
     "You are given a fixed set of library items. Write questions about THOSE items only — never invent rules, words or readings that are not supported by the material.",
     "All Japanese must be natural, correctly spelled and grammatical (except where a true/false question deliberately contains one error).",
+    "Every question that offers a set of options must have exactly ONE defensible answer — no distractor may also be grammatical and plausible in the given context.",
     "Reply with raw JSON only. No markdown, no code fences, no commentary before or after.",
   ].join(" ");
 
@@ -222,6 +252,7 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     distributionInstruction(config),
     spreadInstruction,
     focusInstruction,
+    offersOptions ? DISTRACTOR_QUALITY : "",
     "",
     "## Rules",
     `- Produce exactly ${config.questionCount} questions.`,
@@ -232,6 +263,9 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     '- Every question MUST include a short "explanation" that names the rule or word involved.',
     '- For any question with "options", the options MUST be listed in an arbitrary, shuffled order — the correct answer must NOT reliably come first.',
     '- Never reveal the answer inside the "prompt" text.',
+    offersOptions
+      ? "- Before returning, re-read every question with options and confirm that exactly one option is defensible. Rewrite any question where a second option also fits."
+      : "",
     wantsRules
       ? "- Stay faithful to the given rules' explanations and examples; reuse their vocabulary where it fits."
       : "",

@@ -14,14 +14,9 @@ import {
 import { ownerContext } from "~/lib/owner.server";
 import { enforceRateLimit, getClientIp } from "~/lib/ratelimit.server";
 import { generateWithFallback, isAiConfigured } from "~/lib/ai.server";
-import { buildQuizPrompt } from "~/lib/quiz-prompt";
+import { buildQuizPrompt, type BuiltPrompt } from "~/lib/quiz-prompt";
 import { parseQuizQuestions } from "~/lib/quiz-parse";
-import {
-  QUIZ_SOURCE_KINDS,
-  type GenerationAttempt,
-  type QuizConfig,
-  type QuizSourceKind,
-} from "~/lib/quiz-types";
+import { QUIZ_SOURCE_KINDS, type QuizConfig, type QuizSourceKind } from "~/lib/quiz-types";
 
 /**
  * POST /api/quiz/generate — turn a quiz configuration into questions.
@@ -88,12 +83,19 @@ function readConfig(raw: unknown): QuizConfig | null {
       : [],
     pos: typeof config.pos === "string" ? config.pos : "",
     ruleKind: config.ruleKind === "word" || config.ruleKind === "sentence" ? config.ruleKind : "",
+    // `null` = every rule, an empty list = none. Only an explicit array counts
+    // as a selection, so a missing field can never empty a quiz.
+    ruleIds: Array.isArray(config.ruleIds)
+      ? config.ruleIds.filter((id): id is number => typeof id === "number")
+      : null,
     questionCount,
     timeLimitEnabled: config.timeLimitEnabled !== false,
     timeLimitSeconds: Number(config.timeLimitSeconds) || 30,
     // The ids themselves arrive separately (see `GenerateBody`), so the prompt
     // builder only needs to know the source is a narrowed set.
     retryMissed: config.retryMissed === true,
+    // Opt-in, never inferred from `starredIds` being non-empty.
+    starredOnly: config.starredOnly === true,
     types: types as QuizConfig["types"],
     distribution: config.distribution === "random" ? "random" : "even",
     difficulty:
@@ -103,6 +105,8 @@ function readConfig(raw: unknown): QuizConfig | null {
 
 /** The ids to scope each kind to. */
 interface SourceFilters {
+  /** Whether the user actually asked for a starred-only scope. */
+  starredOnly: boolean;
   starredIds: number[];
   missedWordIds: number[];
   missedRuleIds: number[];
@@ -128,10 +132,24 @@ async function loadSourceItems(
 
   // "Retry my misses" wins over a starred-only scope. An empty miss list for a
   // kind means "nothing matched", not "no filter" — `cardIdClause` turns it
-  // into a clause that deliberately matches nothing.
-  const filterFor = (missed: number[]): number[] | undefined => {
+  // into a clause that deliberately matches nothing. `null`, rather than an
+  // empty array, is what says "no id scoping at all".
+  const scopeFor = (missed: number[]): number[] | null => {
     if (config.retryMissed) return missed;
-    return filters.starredIds.length > 0 ? filters.starredIds : undefined;
+    return filters.starredOnly ? filters.starredIds : null;
+  };
+
+  /**
+   * Narrow a scope by an explicit id list.
+   *
+   * `null` means the user asked for every id, so the scope stands as it is; an
+   * empty list means they cleared the selection, which must match nothing. The
+   * two are different questions and must not collapse into the same answer.
+   */
+  const intersect = (scope: number[] | null, explicit: number[] | null): number[] | undefined => {
+    if (explicit === null) return scope ?? undefined;
+    if (scope === null) return explicit;
+    return scope.filter((id) => explicit.includes(id));
   };
 
   let totalAvailable = 0;
@@ -141,7 +159,7 @@ async function loadSourceItems(
   if (wantsRules) {
     const ruleKind: RuleKind | null =
       config.ruleKind === "word" || config.ruleKind === "sentence" ? config.ruleKind : null;
-    const filter = filterFor(filters.missedRuleIds);
+    const filter = intersect(scopeFor(filters.missedRuleIds), config.ruleIds);
     const [count, deck] = await Promise.all([
       countRules(ownerId, ruleKind, filter, config.tags),
       getRuleStudyDeck(ownerId, MAX_SOURCE_ITEMS, ruleKind, filter, config.tags),
@@ -161,7 +179,7 @@ async function loadSourceItems(
       listIds = await listAllListIds(ownerId);
     }
 
-    const filter = filterFor(filters.missedWordIds);
+    const filter = scopeFor(filters.missedWordIds) ?? undefined;
     // The part-of-speech filter only applies to words; phrases are all
     // `pos = 'phrase'`.
     const pos = wantsWords && config.pos ? config.pos : null;
@@ -239,6 +257,7 @@ export async function action({ request, context }: Route.ActionArgs): Promise<Re
     Array.isArray(value) ? value.filter((id): id is number => typeof id === "number") : [];
 
   const items = await loadSourceItems(ownerId, config, {
+    starredOnly: config.starredOnly,
     starredIds: asIds(body.starredIds),
     missedWordIds: asIds(body.missedWordIds),
     missedRuleIds: asIds(body.missedRuleIds),
@@ -256,48 +275,103 @@ export async function action({ request, context }: Route.ActionArgs): Promise<Re
 
   const prompt = buildQuizPrompt(config, items);
 
-  let outcome;
-  try {
-    outcome = await generateWithFallback(prompt.messages);
-  } catch (error) {
-    return Response.json(
-      {
+  return streamGeneration(config, prompt, items.totalAvailable);
+}
+
+/**
+ * Run the fallback walk and stream what happens as newline-delimited JSON.
+ *
+ * The buffered version of this route could only report which model answered
+ * *after* the fact, so the loading panel had to fake a model-by-model walk on a
+ * timer — and would regularly name a model the server had already moved past.
+ * Every event below is emitted from inside the walk, so the panel describes what
+ * is actually happening.
+ *
+ * Failures raised *before* generation (rate limit, auth, bad config, "nothing
+ * matched") are still plain JSON responses — only this part streams.
+ */
+function streamGeneration(
+  config: QuizConfig,
+  prompt: BuiltPrompt,
+  totalAvailable: number
+): Response {
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+
+  /** A cancelled stream must not surface as an unhandled rejection. */
+  const send = (event: unknown) => {
+    writer.write(encoder.encode(`${JSON.stringify(event)}\n`)).catch(() => {});
+  };
+
+  void (async () => {
+    try {
+      const outcome = await generateWithFallback(prompt.messages, {
+        onAttempt: (attempt) =>
+          send({
+            type: "attempt",
+            model: attempt.model,
+            index: attempt.index,
+            total: attempt.total,
+          }),
+        onRetry: (info) =>
+          send({
+            type: "retry",
+            model: info.model,
+            detail: info.detail,
+            retryInMs: info.retryInMs,
+          }),
+        onAttemptDone: (attempt) => send({ type: "attemptDone", attempt }),
+      });
+
+      let parsed;
+      try {
+        parsed = parseQuizQuestions(outcome.text, config.questionCount);
+      } catch (error) {
+        // The model answered but produced nothing usable. Report which model,
+        // so the message is actionable rather than generic.
+        send({
+          type: "error",
+          error: `${outcome.model} returned questions we could not read (${
+            error instanceof Error ? error.message : "unknown"
+          }). Try again.`,
+          attempts: outcome.attempts,
+        });
+        return;
+      }
+
+      // Answers without a source id still work; they just won't be logged
+      // against a library item (the runner records stats only for questions
+      // that have one).
+      send({
+        type: "result",
+        questions: parsed.questions,
+        model: outcome.model,
+        attempts: outcome.attempts,
+        dropped: parsed.dropped,
+        topicSummary: prompt.topicSummary,
+        totalAvailable,
+      });
+    } catch (error) {
+      send({
+        type: "error",
         error:
           error instanceof Error
             ? `Every model in the fallback chain failed. Last error — ${error.message}`
             : "Every model in the fallback chain failed.",
-      },
-      { status: 502 }
-    );
-  }
+      });
+    } finally {
+      // Queued writes flush in order, so closing here cannot truncate them.
+      void writer.close().catch(() => {});
+    }
+  })();
 
-  let parsed;
-  try {
-    parsed = parseQuizQuestions(outcome.text, config.questionCount);
-  } catch (error) {
-    // The model answered but produced nothing usable. Report which model, so
-    // the message is actionable rather than generic.
-    return Response.json(
-      {
-        error: `${outcome.model} returned questions we could not read (${
-          error instanceof Error ? error.message : "unknown"
-        }). Try again.`,
-        attempts: outcome.attempts,
-      },
-      { status: 502 }
-    );
-  }
-
-  // Answers without a source id still work; they just won't be logged against
-  // a library item (the runner records stats only for questions that have one).
-  const attempts: GenerationAttempt[] = outcome.attempts;
-
-  return Response.json({
-    questions: parsed.questions,
-    model: outcome.model,
-    attempts,
-    dropped: parsed.dropped,
-    topicSummary: prompt.topicSummary,
-    totalAvailable: items.totalAvailable,
+  return new Response(readable, {
+    headers: {
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-store",
+      // Ask intermediaries not to buffer the stream back into a single chunk.
+      "x-accel-buffering": "no",
+    },
   });
 }

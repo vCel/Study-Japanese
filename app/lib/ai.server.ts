@@ -75,6 +75,15 @@ export interface GenerateOptions {
    * explain the pause rather than appearing stuck.
    */
   onRetry?: (info: { model: string; detail: string; retryInMs: number }) => void;
+  /**
+   * Called whenever an attempt settles — succeeded, failed, or skipped because
+   * its provider was already known to be rate limited.
+   *
+   * This is what lets a streaming caller report the walk *as it happens*. The
+   * whole chain is also returned in `GenerateOutcome.attempts`, but only once
+   * it is over, which is too late for a progress panel.
+   */
+  onAttemptDone?: (attempt: GenerationAttempt) => void;
 }
 
 export interface GenerateOutcome {
@@ -319,13 +328,19 @@ export async function generateWithFallback(
   const exhausted = new Set<string>();
   let lastDetail = "No model in the fallback chain answered.";
 
+  /** Keep the collected list and any live listener in step. */
+  const record = (attempt: GenerationAttempt) => {
+    attempts.push(attempt);
+    options.onAttemptDone?.(attempt);
+  };
+
   for (let index = 0; index < MODEL_CHAIN.length; index++) {
     const spec = MODEL_CHAIN[index];
 
     // A 429 on one Gemini model means the account is out — don't spend the
     // other two attempts finding out.
     if (exhausted.has(spec.provider)) {
-      attempts.push({
+      record({
         model: spec.model,
         provider: spec.provider,
         outcome: "ratelimit",
@@ -353,7 +368,7 @@ export async function generateWithFallback(
       const started = Date.now();
       try {
         const text = await callModel(spec, messages, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS));
-        attempts.push({
+        record({
           model: spec.model,
           provider: spec.provider,
           outcome: "ok",
@@ -379,7 +394,7 @@ export async function generateWithFallback(
               : kind === "timeout"
                 ? "timeout"
                 : "error";
-        attempts.push({ model: spec.model, provider: spec.provider, outcome, detail, ms });
+        record({ model: spec.model, provider: spec.provider, outcome, detail, ms });
         lastDetail = `${spec.model}: ${detail}`;
 
         if (kind === "ratelimit") {

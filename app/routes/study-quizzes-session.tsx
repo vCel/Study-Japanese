@@ -100,7 +100,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const missedWordIds = parseIds(url.searchParams.get("missedWordIds"));
   const missedRuleIds = parseIds(url.searchParams.get("missedRuleIds"));
   const retryMissed = missedWordIds.length > 0 || missedRuleIds.length > 0;
-  const starredOnly = !retryMissed && starredIds.length > 0;
+  /**
+   * Starred scoping is opt-in, and the flag is what says so — not the presence
+   * of starred ids. Inferring it from "this user has stars" is what used to
+   * turn starring a single word into a hard scope with no way back.
+   */
+  const starredOnly =
+    !retryMissed && url.searchParams.get("starred") === "1" && starredIds.length > 0;
+
+  /**
+   * An explicit rule selection. The param being *absent* means every rule; an
+   * empty value is a deliberate "none" — so the two are kept apart rather than
+   * both collapsing into "no filter".
+   */
+  const ruleIdsParam = url.searchParams.get("ruleIds");
+  const ruleIds = ruleIdsParam === null ? null : parseIds(ruleIdsParam);
 
   const explicitLists = parseIds(url.searchParams.get("lists"));
   const tagNames = (url.searchParams.get("tags") ?? "")
@@ -108,10 +122,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .map((part) => part.trim().toLowerCase())
     .filter((part) => part.length > 0);
 
-  /** Misses win over stars, and each kind falls back to the starred set. */
-  const filterFor = (missed: number[]): number[] | undefined => {
+  /**
+   * Misses win over stars. `null` means no id scoping at all; an empty list
+   * means "nothing matched", which `cardIdClause` turns into a clause that
+   * deliberately matches nothing.
+   */
+  const scopeFor = (missed: number[]): number[] | null => {
     if (retryMissed) return missed.length > 0 ? missed : [];
-    return starredIds.length > 0 ? starredIds : undefined;
+    return starredOnly ? starredIds : null;
+  };
+
+  /** Narrow a scope by an explicit id list; `null` leaves the scope alone. */
+  const intersect = (scope: number[] | null, explicit: number[] | null): number[] | undefined => {
+    if (explicit === null) return scope ?? undefined;
+    if (scope === null) return explicit;
+    return scope.filter((id) => explicit.includes(id));
   };
 
   // Explicit lists → lists matching tags → everything (mirrors the study route).
@@ -119,7 +144,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   let totalAvailable = 0;
 
   if (wantsRules) {
-    totalAvailable += await countRules(ownerId, ruleKind, filterFor(missedRuleIds), tagNames);
+    totalAvailable += await countRules(
+      ownerId,
+      ruleKind,
+      intersect(scopeFor(missedRuleIds), ruleIds),
+      tagNames
+    );
   }
 
   if (wantsWords || wantsPhrases) {
@@ -133,7 +163,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
     // A quiz spanning words *and* phrases draws from the same lists but a
     // different card kind, so the two counts are added rather than merged.
-    const filter = filterFor(missedWordIds);
+    const filter = scopeFor(missedWordIds) ?? undefined;
     const kinds = [
       wantsWords ? ("words" as const) : null,
       wantsPhrases ? ("phrases" as const) : null,
@@ -153,6 +183,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     distribution: url.searchParams.get("distribution") === "random" ? "random" : "even",
     focus,
     ruleKind,
+    ruleIds,
     pos,
     listIds,
     starredOnly,
@@ -194,13 +225,19 @@ export default function QuizSession({ loaderData }: Route.ComponentProps) {
 
       {totalAvailable === 0 ? (
         <div className="rounded-[var(--radius)] border border-border p-10 text-center text-muted-foreground">
-          No {config.starredOnly ? "starred " : ""}
-          {config.pos ? `${config.pos} ` : ""}
-          {listWords(kindNames)} available for this quiz.{" "}
-          <Link to={setupHref} className="text-primarylw hover:underline">
+          <p className="font-medium text-foreground">Nothing matched this quiz’s filters.</p>
+          <p className="mt-2 text-sm">
+            No {config.pos ? `${config.pos} ` : ""}
+            {listWords(kindNames)} were found to draw on.{" "}
+            {config.retryMissed
+              ? "This quiz is limited to the items you have missed before, and none are in scope."
+              : config.starredOnly
+                ? "This quiz is limited to your starred items — turn “Starred items only” off to use the whole library."
+                : "Try widening the list, rule or tag selection."}
+          </p>
+          <Link to={setupHref} className="mt-4 inline-block text-primarylw hover:underline">
             Adjust the setup
           </Link>
-          .
         </div>
       ) : (
         <QuizRunner config={config} starredIds={starredIds} />

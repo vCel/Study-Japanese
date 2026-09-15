@@ -2,9 +2,10 @@ import * as React from "react";
 import { useNavigate } from "react-router";
 import { FolderOpen, ListChecks, Save, Sparkles } from "lucide-react";
 
-import type { TagInfo, WordListSummary } from "~/lib/db.server";
+import type { RuleChoice, TagInfo, WordListSummary } from "~/lib/db.server";
 import { useStarredIds, type StarredIds } from "~/lib/use-stars";
 import { useQuizStats } from "~/lib/use-quiz-stats";
+import { SelectField } from "~/components/select-field";
 import { SettingLabel } from "~/components/setting-label";
 import { Badge } from "~/components/lightswind/badge";
 import { Button } from "~/components/lightswind/button";
@@ -74,6 +75,11 @@ const RULE_KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "sentence", label: "Sentence rules" },
 ];
 
+const QUIZ_SIZE_OPTIONS = QUIZ_SIZES.map((size) => ({
+  value: String(size),
+  label: `${size} questions`,
+}));
+
 const pill = (active: boolean) =>
   cn(
     "cursor-pointer rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
@@ -101,6 +107,10 @@ function describeQuiz(config: QuizConfig): string {
   }
   parts.push(listWords(kinds.map((kind) => QUIZ_SOURCE_KIND_LABELS[kind].toLowerCase())));
   if (hasLists && config.focus !== "all") parts.push(config.focus);
+  if (kinds.includes("rules") && config.ruleIds !== null) {
+    parts.push(`${config.ruleIds.length} rule${config.ruleIds.length === 1 ? "" : "s"}`);
+  }
+  if (config.starredOnly) parts.push("starred only");
   parts.push(`${config.questionCount} questions`);
   parts.push(`${config.types.length} type${config.types.length === 1 ? "" : "s"}`);
   parts.push(config.timeLimitEnabled ? `${config.timeLimitSeconds}s each` : "untimed");
@@ -122,6 +132,7 @@ export function QuizSetup({
   tags,
   ruleTags,
   ruleCounts,
+  rules,
   preselectedLists,
   initialSources,
 }: {
@@ -130,6 +141,7 @@ export function QuizSetup({
   tags: TagInfo[];
   ruleTags: TagInfo[];
   ruleCounts: { all: number; word: number; sentence: number };
+  rules: RuleChoice[];
   preselectedLists: number[];
   initialSources: QuizSourceKind[];
 }) {
@@ -166,6 +178,7 @@ export function QuizSetup({
       tags={tags}
       ruleTags={ruleTags}
       ruleCounts={ruleCounts}
+      rules={rules}
       config={config}
       onChange={onChange}
       starred={starred}
@@ -182,6 +195,7 @@ function QuizPanel({
   tags,
   ruleTags,
   ruleCounts,
+  rules,
   config,
   onChange,
   starred,
@@ -194,6 +208,7 @@ function QuizPanel({
   tags: TagInfo[];
   ruleTags: TagInfo[];
   ruleCounts: { all: number; word: number; sentence: number };
+  rules: RuleChoice[];
   config: QuizConfig;
   onChange: (patch: Partial<QuizConfig>) => void;
   starred: StarredIds;
@@ -264,13 +279,56 @@ function QuizPanel({
 
   const listsMatch = eligible.reduce((sum, list) => sum + list.count, 0);
 
-  const rulesMatch = wantsRules
-    ? config.ruleKind === "word"
-      ? ruleCounts.word
-      : config.ruleKind === "sentence"
-        ? ruleCounts.sentence
-        : ruleCounts.all
-    : 0;
+  /**
+   * The rules the picker offers.
+   *
+   * Scoped to the selected rule type, so what the user ticks is exactly what
+   * the quiz can draw on: a picker listing sentence rules while the type filter
+   * says "word rules" could only ever produce an empty quiz.
+   */
+  const visibleRules = React.useMemo(
+    () => rules.filter((rule) => !config.ruleKind || rule.kind === config.ruleKind),
+    [rules, config.ruleKind]
+  );
+  const visibleRuleIds = React.useMemo(() => visibleRules.map((rule) => rule.id), [visibleRules]);
+
+  /**
+   * `null` means "every rule" — the default, and the representation that stays
+   * correct when a rule is added later. An explicit list means exactly those.
+   */
+  const allRulesSelected =
+    config.ruleIds === null || visibleRuleIds.every((id) => config.ruleIds!.includes(id));
+  const selectedRuleCount =
+    config.ruleIds === null
+      ? visibleRules.length
+      : visibleRules.filter((rule) => config.ruleIds!.includes(rule.id)).length;
+
+  const toggleRule = (id: number) => {
+    // Unticking while "all" is selected starts from the full set, so it narrows
+    // the selection rather than replacing it with that single rule.
+    const current = config.ruleIds ?? visibleRuleIds;
+    const next = current.includes(id)
+      ? current.filter((value) => value !== id)
+      : [...current, id];
+    // Re-ticking everything collapses back to "all", so rules added later are
+    // picked up without the user having to revisit this screen.
+    onChange({
+      ruleIds: visibleRuleIds.every((value) => next.includes(value)) ? null : next,
+    });
+  };
+
+  /** One pill, two labels — the same "select all / clear" pattern the lists use. */
+  const toggleSelectAllRules = () => onChange({ ruleIds: allRulesSelected ? [] : null });
+
+  const rulesMatch = !wantsRules
+    ? 0
+    : config.ruleIds === null
+      ? config.ruleKind === "word"
+        ? ruleCounts.word
+        : config.ruleKind === "sentence"
+          ? ruleCounts.sentence
+          : ruleCounts.all
+      : selectedRuleCount;
 
   const matchCount = listsMatch + rulesMatch;
 
@@ -331,9 +389,14 @@ function QuizPanel({
       ? config.sources.filter((value) => value !== kind)
       : QUIZ_SOURCE_KINDS.filter((value) => value === kind || config.sources.includes(value));
     if (next.length === 0) return; // never leave the user with nothing to quiz on
-    // A filter whose section just disappeared would silently stop applying.
+    // A filter whose section just disappeared would silently stop applying, and
+    // a rule selection made against the old rule type would come back stale the
+    // next time rules are switched on.
     const patch: Partial<QuizConfig> = { sources: next };
-    if (kind === "rules" && !next.includes("rules")) patch.ruleKind = "";
+    if (kind === "rules" && !next.includes("rules")) {
+      patch.ruleKind = "";
+      patch.ruleIds = null;
+    }
     if (kind === "words" && !next.includes("words")) patch.pos = "";
     onChange(patch);
   };
@@ -422,6 +485,9 @@ function QuizPanel({
     if (wantsLists && config.lists.length > 0) qs.set("lists", config.lists.join(","));
     if (config.tags.length > 0) qs.set("tags", config.tags.join(","));
     if (wantsRules && config.ruleKind) qs.set("ruleKind", config.ruleKind);
+    // No `ruleIds` param at all means "every rule"; an empty value is an
+    // explicit "none", and the session route tells the two apart.
+    if (wantsRules && config.ruleIds !== null) qs.set("ruleIds", config.ruleIds.join(","));
     if (wantsWords && config.pos) qs.set("pos", config.pos);
     // "Only what I keep missing" narrows each source to the ids the user has
     // got wrong before. Rule ids and word ids are separate sequences, so they
@@ -433,8 +499,11 @@ function QuizPanel({
       if (wantsLists && missedWordIds.length > 0) {
         qs.set("missedWordIds", missedWordIds.join(","));
       }
-    } else if (starredIds.size > 0) {
-      // Starred ids let the server scope the source material to starred items.
+    } else if (config.starredOnly && starredIds.size > 0) {
+      // Only an explicit opt-in narrows a quiz to starred items. Starring
+      // something used to scope every quiz silently — hence the flag, sent
+      // alongside the ids rather than letting the server infer it from them.
+      qs.set("starred", "1");
       qs.set("starredIds", [...starredIds].join(","));
     }
     navigate(`/study/quizzes/session?${qs.toString()}`);
@@ -467,6 +536,162 @@ function QuizPanel({
       </div>
     );
 
+  /**
+   * One section of the shared "Sources" card. Sections are separated by a tinted
+   * panel and spacing rather than a divider, so the lists and the rules read as
+   * two groups inside one container.
+   */
+  const sectionClass = "rounded-[var(--radius)] bg-muted/40 p-4";
+
+  const listsSection: React.ReactNode = !wantsLists ? null : (
+    <section className={sectionClass}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">
+            {wantsWords && wantsPhrases
+              ? "Word & phrase lists"
+              : wantsPhrases
+                ? "Phrase lists"
+                : "Word lists"}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {config.lists.length === 0
+              ? `Every list is included (${tagFiltered.length}).`
+              : `${config.lists.length} of ${tagFiltered.length} lists selected.`}
+          </p>
+        </div>
+        {selectAllPill(
+          allListsSelected,
+          toggleSelectAllLists,
+          "Select all lists",
+          selectableLists.length === 0
+        )}
+      </div>
+
+      {tagFiltered.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {mergedLists.length === 0
+            ? "No lists yet — create one and it appears here."
+            : "No lists match the selected tags."}
+        </p>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {tagFiltered.map((list) => {
+            const active = config.lists.includes(list.id);
+            const disabled = list.count === 0;
+            return (
+              <button
+                key={list.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => toggleList(list.id)}
+                aria-pressed={active}
+                className={cn(
+                  "flex items-center justify-between gap-2 rounded-[var(--radius)] border p-3 text-left transition-colors",
+                  disabled
+                    ? "cursor-not-allowed opacity-40"
+                    : active
+                      ? "cursor-pointer border-primarylw/60 bg-primarylw/10"
+                      : "cursor-pointer border-border hover:border-primarylw/40"
+                )}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{list.title}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {list.tags.map((tag) => `#${tag}`).join(" ") || "no tags"}
+                  </span>
+                </span>
+                <Badge variant="secondary" className="shrink-0">
+                  {list.count}
+                </Badge>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+
+  const rulesSection: React.ReactNode = !wantsRules ? null : (
+    <section className={sectionClass}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Rules</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {config.ruleIds === null
+              ? `Every ${config.ruleKind ? `${config.ruleKind} ` : ""}rule is included (${visibleRules.length}).`
+              : `${selectedRuleCount} of ${visibleRules.length} rules selected.`}
+          </p>
+        </div>
+        {selectAllPill(
+          allRulesSelected,
+          toggleSelectAllRules,
+          "Select all rules",
+          visibleRules.length === 0
+        )}
+      </div>
+
+      {/* Rule type belongs with the rules it filters, not in a step of its own. */}
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {RULE_KIND_OPTIONS.map((option) => (
+          <button
+            key={option.value || "all"}
+            type="button"
+            // Changing the type changes which rules exist to pick from, so the
+            // selection resets to "all of them" rather than keeping ids that
+            // are no longer on screen.
+            onClick={() => onChange({ ruleKind: option.value, ruleIds: null })}
+            aria-pressed={config.ruleKind === option.value}
+            className={pill(config.ruleKind === option.value)}
+          >
+            {option.label}
+            <span className="ml-1.5 opacity-60">
+              {option.value === "word"
+                ? ruleCounts.word
+                : option.value === "sentence"
+                  ? ruleCounts.sentence
+                  : ruleCounts.all}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {visibleRules.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {rules.length === 0
+            ? "No rules yet — create one and it appears here."
+            : "No rules of this type."}
+        </p>
+      ) : (
+        <ScrollArea maxHeight={220} className="pr-1">
+          <div className="flex flex-wrap gap-1.5">
+            {visibleRules.map((rule) => {
+              const active = config.ruleIds === null || config.ruleIds.includes(rule.id);
+              return (
+                <button
+                  key={rule.id}
+                  type="button"
+                  onClick={() => toggleRule(rule.id)}
+                  aria-pressed={active}
+                  title={rule.title}
+                  data-slot="quiz-rule"
+                  className={cn(
+                    "max-w-full cursor-pointer truncate rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    active
+                      ? "border-primarylw bg-primarylw/15 text-primarylw"
+                      : "border-border text-muted-foreground hover:border-primarylw/40 hover:text-foreground"
+                  )}
+                >
+                  {rule.title}
+                </button>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      )}
+    </section>
+  );
+
   const steps: { title: string; body: React.ReactNode; action?: React.ReactNode }[] = [];
 
   // 1. What to quiz on — the only step that is always present.
@@ -496,62 +721,16 @@ function QuizPanel({
     ),
   });
 
-  if (wantsLists) {
+  // 2. Which lists and which rules — one container, one section each.
+  if (wantsLists || wantsRules) {
     steps.push({
-      title:
-        wantsWords && wantsPhrases
-          ? "Word & phrase lists"
-          : wantsPhrases
-            ? "Phrase lists"
-            : "Word lists",
-      action: selectAllPill(
-        allListsSelected,
-        toggleSelectAllLists,
-        "Select all lists",
-        selectableLists.length === 0
+      title: wantsLists && wantsRules ? "Lists & rules" : wantsLists ? "Lists" : "Rules",
+      body: (
+        <div className="space-y-3">
+          {listsSection}
+          {rulesSection}
+        </div>
       ),
-      body:
-        tagFiltered.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {mergedLists.length === 0
-              ? "No lists yet — create one and it appears here."
-              : "No lists match the selected tags."}
-          </p>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {tagFiltered.map((list) => {
-              const active = config.lists.includes(list.id);
-              const disabled = list.count === 0;
-              return (
-                <button
-                  key={list.id}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => toggleList(list.id)}
-                  aria-pressed={active}
-                  className={cn(
-                    "flex items-center justify-between gap-2 rounded-[var(--radius)] border p-3 text-left transition-colors",
-                    disabled
-                      ? "cursor-not-allowed opacity-40"
-                      : active
-                        ? "cursor-pointer border-primarylw/60 bg-primarylw/10"
-                        : "cursor-pointer border-border hover:border-primarylw/40"
-                  )}
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{list.title}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {list.tags.map((tag) => `#${tag}`).join(" ") || "no tags"}
-                    </span>
-                  </span>
-                  <Badge variant="secondary" className="shrink-0">
-                    {list.count}
-                  </Badge>
-                </button>
-              );
-            })}
-          </div>
-        ),
     });
   }
 
@@ -593,34 +772,6 @@ function QuizPanel({
                 {option.label}
               </button>
             </Tooltip>
-          ))}
-        </div>
-      ),
-    });
-  }
-
-  if (wantsRules) {
-    steps.push({
-      title: "Rule type",
-      body: (
-        <div className="flex flex-wrap gap-1.5">
-          {RULE_KIND_OPTIONS.map((option) => (
-            <button
-              key={option.value || "all"}
-              type="button"
-              onClick={() => onChange({ ruleKind: option.value })}
-              aria-pressed={config.ruleKind === option.value}
-              className={pill(config.ruleKind === option.value)}
-            >
-              {option.label}
-              <span className="ml-1.5 opacity-60">
-                {option.value === "word"
-                  ? ruleCounts.word
-                  : option.value === "sentence"
-                    ? ruleCounts.sentence
-                    : ruleCounts.all}
-              </span>
-            </button>
           ))}
         </div>
       ),
@@ -723,24 +874,47 @@ function QuizPanel({
               </div>
             )}
 
+            {/*
+              Only offered when there is something starred to scope to. Off by
+              default: starring an item is a bookmark, not a request to narrow
+              every future quiz.
+            */}
+            {starredIds.size > 0 && (
+              <div className="flex items-center justify-between gap-4">
+                <SettingLabel
+                  label="Starred items only"
+                  hint={
+                    <>
+                      Draw this quiz only from the {listWords(kindNames)} you have starred —{" "}
+                      {starredIds.size} starred. Off by default, so starring something never
+                      narrows a quiz on its own.
+                    </>
+                  }
+                />
+                <Switch
+                  checked={config.starredOnly}
+                  onCheckedChange={(next) => onChange({ starredOnly: next })}
+                  disabled={config.retryMissed}
+                  aria-label="Starred items only"
+                />
+              </div>
+            )}
+
             <div className="flex items-center justify-between gap-4">
               <SettingLabel
                 label="Number of questions"
                 hint="How many questions the AI should write for this quiz."
               />
-              <div className="flex flex-wrap justify-end gap-1.5">
-                {QUIZ_SIZES.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => onChange({ questionCount: size })}
-                    aria-pressed={config.questionCount === size}
-                    className={pill(config.questionCount === size)}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
+              <SelectField
+                ariaLabel="Number of questions"
+                triggerClassName="w-40"
+                options={QUIZ_SIZE_OPTIONS}
+                value={String(config.questionCount)}
+                onValueChange={(value) => {
+                  const size = Number.parseInt(value, 10);
+                  if (!Number.isNaN(size)) onChange({ questionCount: size });
+                }}
+              />
             </div>
 
             <div className="flex items-center justify-between gap-4">
@@ -755,24 +929,31 @@ function QuizPanel({
               />
             </div>
 
+            {/* Seconds sits on the label's line like difficulty: slider right,
+                current step beside it. */}
             {config.timeLimitEnabled && (
               <div className="flex items-center justify-between gap-4">
                 <SettingLabel
                   label="Seconds per question"
                   hint="How long to allow for each question."
                 />
-                <div className="flex flex-wrap justify-end gap-1.5">
-                  {QUIZ_TIME_LIMITS.map((seconds) => (
-                    <button
-                      key={seconds}
-                      type="button"
-                      onClick={() => onChange({ timeLimitSeconds: seconds })}
-                      aria-pressed={config.timeLimitSeconds === seconds}
-                      className={pill(config.timeLimitSeconds === seconds)}
-                    >
-                      {seconds}s
-                    </button>
-                  ))}
+                <div className="flex shrink-0 items-center gap-3">
+                  <Slider
+                    className="w-36 sm:w-52"
+                    aria-label="Seconds per question"
+                    aria-valuetext={`${config.timeLimitSeconds} seconds`}
+                    value={[Math.max(0, QUIZ_TIME_LIMITS.indexOf(config.timeLimitSeconds))]}
+                    min={0}
+                    max={QUIZ_TIME_LIMITS.length - 1}
+                    step={1}
+                    onValueChange={([index]) => {
+                      const seconds = QUIZ_TIME_LIMITS[index];
+                      if (seconds !== undefined) onChange({ timeLimitSeconds: seconds });
+                    }}
+                  />
+                  <span className="w-14 text-right text-sm font-medium text-primarylw">
+                    {config.timeLimitSeconds}s
+                  </span>
                 </div>
               </div>
             )}
@@ -811,6 +992,7 @@ function QuizPanel({
             {config.retryMissed
               ? `${retryCount} ${noun}${retryCount === 1 ? "" : "s"} you keep missing`
               : `${matchCount} ${noun}${matchCount === 1 ? "" : "s"} · ${listWords(kindNames)}`}
+            {config.starredOnly && !config.retryMissed ? " · ★ starred only" : ""}
           </p>
           <p className="text-xs text-muted-foreground">
             {effectiveCount} question{effectiveCount === 1 ? "" : "s"} ·{" "}

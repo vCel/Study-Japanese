@@ -26,9 +26,19 @@ export interface QuizRunConfig {
   ruleKind: string | null;
   pos: string | null;
   listIds: number[];
+  /**
+   * Scope the quiz to starred items only. Sent explicitly rather than inferred
+   * from `starredIds` being non-empty, so starring something can never narrow a
+   * quiz on its own.
+   */
   starredOnly: boolean;
   /** Drawn only from the items the user has answered wrong before. */
   retryMissed: boolean;
+  /**
+   * Explicit rule ids. `null` = every rule; an empty list = none. Rule ids and
+   * word ids are separate sequences, so rules travel separately from `listIds`.
+   */
+  ruleIds: number[] | null;
   /**
    * The ids to scope each kind to when retrying misses. Rule ids and word ids
    * are separate sequences, so they travel separately rather than as one list.
@@ -89,6 +99,107 @@ function sourceHref(question: QuizQuestion, config: QuizRunConfig): string | nul
   return `/${kind === "rule" ? "rules" : "words"}/${question.sourceId}`;
 }
 
+/** What the generation stream reports while it runs. */
+interface StreamHandlers {
+  onAttempt: (info: { model: string; index: number; total: number }) => void;
+  onRetry: (info: { model: string; detail: string; retryInMs: number }) => void;
+  onAttemptDone: (attempt: GenerationAttempt) => void;
+}
+
+type StreamOutcome =
+  | { ok: true; questions: QuizQuestion[]; model: string; attempts: GenerationAttempt[] }
+  | { ok: false; error: string; attempts: GenerationAttempt[] | null };
+
+/**
+ * Read the newline-delimited JSON that `/api/quiz/generate` streams.
+ *
+ * Deliberately tolerant of the whole body arriving in a single chunk: the
+ * parser works line by line either way, so a buffering intermediary degrades
+ * this to "no live progress" rather than breaking the quiz.
+ */
+async function readGenerationStream(
+  response: Response,
+  handlers: StreamHandlers
+): Promise<StreamOutcome> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return { ok: false, error: "The quiz service returned an empty response.", attempts: null };
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let outcome: StreamOutcome | null = null;
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      return; // A partial line — the rest arrives in the next chunk.
+    }
+
+    switch (event.type) {
+      case "attempt":
+        handlers.onAttempt({
+          model: String(event.model ?? ""),
+          index: Number(event.index ?? 0),
+          total: Number(event.total ?? 1),
+        });
+        break;
+      case "retry":
+        handlers.onRetry({
+          model: String(event.model ?? ""),
+          detail: String(event.detail ?? ""),
+          retryInMs: Number(event.retryInMs ?? 0),
+        });
+        break;
+      case "attemptDone":
+        handlers.onAttemptDone(event.attempt as GenerationAttempt);
+        break;
+      case "result":
+        outcome = {
+          ok: true,
+          questions: (event.questions ?? []) as QuizQuestion[],
+          model: String(event.model ?? ""),
+          attempts: (event.attempts ?? []) as GenerationAttempt[],
+        };
+        break;
+      case "error":
+        outcome = {
+          ok: false,
+          error: String(event.error ?? "The quiz could not be generated."),
+          attempts: Array.isArray(event.attempts)
+            ? (event.attempts as GenerationAttempt[])
+            : null,
+        };
+        break;
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    // The trailing piece may be a partial line; hold it for the next chunk.
+    buffer = lines.pop() ?? "";
+    for (const line of lines) handleLine(line);
+  }
+  handleLine(buffer);
+
+  if (outcome === null) {
+    return {
+      ok: false,
+      error: "The connection to the quiz service ended before the questions arrived.",
+      attempts: null,
+    };
+  }
+  return outcome;
+}
+
 /**
  * The quiz runner: asks the API to generate the configured questions, then
  * walks the user through them with an optional per-question timer.
@@ -113,8 +224,18 @@ export function QuizRunner({
   const [error, setError] = React.useState("");
   /** Every answer of the current run, owned here so the results can read it. */
   const [answers, setAnswers] = React.useState<Answer[]>([]);
-  /** Which attempt index is currently in flight, for the loading bar. */
-  const [activeAttempt, setActiveAttempt] = React.useState(0);
+  /**
+   * The model the server says it is trying right now, plus the attempts it has
+   * already settled. Both come from the generation stream, so the loading panel
+   * never has to guess: it used to advance on a blind 6-second timer and would
+   * name a model the server had long since moved past.
+   */
+  const [progress, setProgress] = React.useState<{
+    model: string;
+    index: number;
+    total: number;
+  } | null>(null);
+  const [liveAttempts, setLiveAttempts] = React.useState<GenerationAttempt[]>([]);
   const [retryNote, setRetryNote] = React.useState<string | null>(null);
 
   // Generation is kicked off exactly once, even under StrictMode's double
@@ -125,13 +246,12 @@ export function QuizRunner({
     setPhase("generating");
     setError("");
     setRetryNote(null);
-    setActiveAttempt(0);
+    setProgress(null);
+    setLiveAttempts([]);
     setAnswers([]);
 
-    // The server owns the fallback chain; this just animates while we wait.
-    const ticker = window.setInterval(() => {
-      setActiveAttempt((index) => Math.min(index + 1, 4));
-    }, 6000);
+    /** The attempts seen live — the fallback when a failure carries no list. */
+    const seen: GenerationAttempt[] = [];
 
     try {
       const response = await fetch("/api/quiz/generate", {
@@ -146,6 +266,7 @@ export function QuizRunner({
             tags: [],
             pos: config.pos ?? "",
             ruleKind: config.ruleKind ?? "",
+            ruleIds: config.ruleIds,
             questionCount: config.questionCount,
             timeLimitEnabled: config.timeLimitSeconds !== null,
             timeLimitSeconds: config.timeLimitSeconds ?? 30,
@@ -153,6 +274,7 @@ export function QuizRunner({
             distribution: config.distribution,
             difficulty: config.difficulty,
             retryMissed: config.retryMissed,
+            starredOnly: config.starredOnly,
           },
           starredIds,
           missedWordIds: config.missedWordIds,
@@ -160,28 +282,59 @@ export function QuizRunner({
         }),
       });
 
-      const body = (await response.json()) as {
-        questions?: QuizQuestion[];
-        model?: string;
-        attempts?: GenerationAttempt[];
-        error?: string;
-      };
+      // Everything raised *before* generation starts — rate limit, sign-in, a
+      // rejected config, "nothing matched" — is still a plain JSON body. A
+      // buffering intermediary can also flatten a *successful* stream into a
+      // single JSON body, so both shapes are handled here rather than assuming
+      // JSON can only ever mean failure.
+      if ((response.headers.get("content-type") ?? "").includes("application/json")) {
+        const body = (await response.json()) as {
+          questions?: QuizQuestion[];
+          model?: string;
+          attempts?: GenerationAttempt[];
+          error?: string;
+        };
 
-      if (!response.ok || !body.questions) {
-        setError(body.error ?? "We could not generate a quiz just now.");
+        if (!response.ok || !body.questions) {
+          setAttempts(body.attempts ?? []);
+          setError(body.error ?? "We could not generate a quiz just now.");
+          setPhase("error");
+          return;
+        }
+
+        setQuestions(body.questions);
+        setModel(body.model ?? "");
+        setAttempts(body.attempts ?? []);
+        setPhase("question");
+        return;
+      }
+
+      const outcome = await readGenerationStream(response, {
+        onAttempt: (info) => setProgress(info),
+        onRetry: (info) =>
+          setRetryNote(
+            `${info.model} is busy — retrying in ${Math.max(1, Math.round(info.retryInMs / 1000))}s.`
+          ),
+        onAttemptDone: (attempt) => {
+          seen.push(attempt);
+          setLiveAttempts([...seen]);
+        },
+      });
+
+      if (!outcome.ok) {
+        setAttempts(outcome.attempts ?? seen);
+        setError(outcome.error);
         setPhase("error");
         return;
       }
 
-      setQuestions(body.questions);
-      setModel(body.model ?? "");
-      setAttempts(body.attempts ?? []);
+      setQuestions(outcome.questions);
+      setModel(outcome.model);
+      setAttempts(outcome.attempts);
       setPhase("question");
     } catch {
       setError("Could not reach the quiz service. Check your connection and try again.");
       setPhase("error");
-    } finally {
-      window.clearInterval(ticker);
     }
   }, [config, starredIds]);
 
@@ -194,7 +347,12 @@ export function QuizRunner({
   return (
     <div>
       {phase === "generating" && (
-        <GeneratingPanel config={config} activeAttempt={activeAttempt} retryNote={retryNote} />
+        <GeneratingPanel
+          config={config}
+          progress={progress}
+          attempts={liveAttempts}
+          retryNote={retryNote}
+        />
       )}
 
       {phase === "error" && (
@@ -266,18 +424,25 @@ const CHAIN_LABELS = [
 
 /**
  * The waiting screen. Because the fallback walk can take a while, this doubles
- * as an explanation of what is happening — including why a model was skipped
- * when the first choice is rate limited.
+ * as an explanation of what is happening — and every word of it is reported by
+ * the server as it happens, so it never claims a model is being tried after the
+ * walk has moved past it.
  */
 function GeneratingPanel({
   config,
-  activeAttempt,
+  progress,
+  attempts,
   retryNote,
 }: {
   config: QuizRunConfig;
-  activeAttempt: number;
+  progress: { model: string; index: number; total: number } | null;
+  attempts: GenerationAttempt[];
   retryNote: string | null;
 }) {
+  const total = progress?.total ?? CHAIN_LENGTH;
+  const step = progress ? Math.min(progress.index + 1, total) : 0;
+  const label = progress ? (CHAIN_LABELS[progress.index] ?? progress.model) : null;
+
   return (
     <Card>
       <CardContent className="flex flex-col items-center gap-6 p-10 text-center">
@@ -295,20 +460,26 @@ function GeneratingPanel({
           </p>
         </div>
 
-        {/* Progress through the fallback chain. */}
+        {/* Progress through the fallback chain, as reported by the server. */}
         <div className="w-full max-w-md">
           <div className="h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className="h-full bg-primarylw transition-all duration-700 ease-out"
-              style={{ width: `${((activeAttempt + 1) / CHAIN_LENGTH) * 100}%` }}
+              style={{ width: `${(Math.max(step, 1) / total) * 100}%` }}
             />
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
             <span>
-              Trying <span className="font-medium text-foreground">{CHAIN_LABELS[activeAttempt]}</span>
+              {label ? (
+                <>
+                  Trying <span className="font-medium text-foreground">{label}</span>
+                </>
+              ) : (
+                "Contacting the model chain…"
+              )}
             </span>
             <span>
-              model {Math.min(activeAttempt + 1, CHAIN_LENGTH)} of {CHAIN_LENGTH}
+              {step > 0 ? `model ${step} of ${total}` : `${total} models in the chain`}
             </span>
           </div>
         </div>
@@ -318,6 +489,9 @@ function GeneratingPanel({
             {retryNote}
           </p>
         )}
+
+        {/* What has actually happened so far, not a prediction. */}
+        {attempts.length > 0 && <AttemptList attempts={attempts} />}
 
         <p className="max-w-md text-xs text-muted-foreground">
           If a model is busy or rate limited, the next one in the chain is tried automatically —
@@ -499,8 +673,8 @@ function QuestionFlow({
         </div>
       </div>
 
-      {/* Progress, plus the countdown bar while a question is timed. */}
-      <div className="mb-6 space-y-1.5">
+      {/* Progress, plus the countdown while a question is timed. */}
+      <div className="mb-6 space-y-2">
         <div className="h-1.5 overflow-hidden rounded-full bg-muted">
           <div
             className="h-full bg-primarylw transition-all duration-300"
@@ -508,7 +682,7 @@ function QuestionFlow({
           />
         </div>
         {timeLimitSeconds !== null && (
-          <div className="h-1 overflow-hidden rounded-full bg-muted">
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className={cn(
                 "h-full transition-all duration-1000 ease-linear",
@@ -602,7 +776,9 @@ function renderSentence(
         {!isLast && (
           <span
             className={cn(
-              "mx-1 inline-block min-w-14 rounded border-b-2 px-2 text-center align-middle font-semibold",
+              // A real blank: fixed height and a baseline, so the sentence reads
+              // as a sentence rather than a run of full-width underscores.
+              "mx-1 inline-flex h-8 min-w-16 items-center justify-center border-b-2 px-2 align-middle text-base font-semibold",
               given === null
                 ? "border-primarylw/60 text-primarylw"
                 : givenParts[index] === answerParts[index]
@@ -610,7 +786,13 @@ function renderSentence(
                   : "border-red-500 text-red-500"
             )}
           >
-            {given === null ? "＿" : (givenParts[index] ?? "—")}
+            {given === null ? (
+              // Before answering, the gap shows its number — the same number the
+              // chips below carry — and nothing else.
+              <span className="text-xs font-normal opacity-40">{index + 1}</span>
+            ) : (
+              (givenParts[index] ?? "—")
+            )}
           </span>
         )}
       </React.Fragment>
@@ -710,7 +892,11 @@ function QuestionInput({
               key={index}
               className="rounded-[var(--radius)] border border-dashed border-primarylw/60 px-4 py-2 text-sm font-semibold text-primarylw"
             >
-              {picked[index] ?? `gap ${index + 1}`}
+              {picked[index] ?? (
+                // An unfilled slot shows its number, faintly — the same marker
+                // the sentence itself uses, so the two read as the same slot.
+                <span className="text-xs font-normal opacity-40">{index + 1}</span>
+              )}
             </span>
           ))}
         </div>

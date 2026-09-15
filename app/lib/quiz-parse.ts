@@ -33,6 +33,26 @@ function asStringArray(value: unknown): string[] {
     .filter((item): item is string => item !== null);
 }
 
+/**
+ * Drop repeated options, comparing on a trimmed, case-folded form.
+ *
+ * A pool that lists the same string twice — most damagingly, the answer twice —
+ * cannot be rendered as a single-choice question: the user would see two
+ * identical buttons and only one of them would be marked right.
+ *
+ * Deliberately *not* applied to fill-blanks: there the pool is a bank, and a
+ * two-gap answer legitimately needs the same filler twice (「は, は」).
+ */
+function dedupeOptions(options: string[]): string[] {
+  const seen = new Set<string>();
+  return options.filter((option) => {
+    const key = option.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function isQuestionType(value: unknown): value is QuizQuestionType {
   return typeof value === "string" && (QUIZ_QUESTION_TYPES as string[]).includes(value);
 }
@@ -46,9 +66,12 @@ function countBlanks(sentence: string): number {
  * Coerce one raw entry into a question, or null when it is too malformed to
  * render. The per-type requirements enforced here mirror the prompt:
  *  * every type needs a prompt and a non-empty answer
- *  * `multiple-choice` needs 2+ options, with the answer among them
+ *  * `multiple-choice` needs 2+ *distinct* options, with the answer among them
  *  * `fill-blanks` needs a sentence containing at least one gap
  *  * `true-false` normalises its answer to "true"/"false"
+ *
+ * What this cannot check is whether a distractor is *semantically* also valid —
+ * that is the prompt's job (see `## Distractor quality` in `quiz-prompt.ts`).
  */
 function parseQuestion(raw: unknown, index: number): QuizQuestion | null {
   if (!raw || typeof raw !== "object") return null;
@@ -110,7 +133,7 @@ function parseQuestion(raw: unknown, index: number): QuizQuestion | null {
   }
 
   if (type === "multiple-choice") {
-    const options = asStringArray(entry.options);
+    const options = dedupeOptions(asStringArray(entry.options));
     if (options.length < 2) return null;
     // The answer has to be one of the options, or the question is unanswerable.
     if (!options.includes(answer)) return null;

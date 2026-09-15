@@ -1,5 +1,5 @@
 import type { Route } from "./+types/study-quizzes";
-import { countRulesByKind, listAllRuleTags, listAllTags, listStudyLists } from "~/lib/db.server";
+import { countRulesByKind, listAllRuleTags, listAllTags, listRuleChoices, listStudyLists } from "~/lib/db.server";
 import { ownerContext } from "~/lib/owner.server";
 import { isAiConfigured } from "~/lib/ai.server";
 import { PageHeader } from "~/components/page-header";
@@ -30,11 +30,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const owner = context.get(ownerContext);
   const ownerId = owner?.ownerId ?? "anonymous";
 
-  const [library, tags, ruleTags, ruleCounts] = await Promise.all([
+  const [library, tags, ruleTags, ruleCounts, rules] = await Promise.all([
     listStudyLists(ownerId),
     listAllTags(ownerId),
     listAllRuleTags(ownerId),
     countRulesByKind(ownerId),
+    // The rule picker needs every rule up front — it offers "all" as the
+    // default and counts the selection, so it cannot be paged.
+    listRuleChoices(ownerId),
   ]);
 
   return {
@@ -43,6 +46,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     tags,
     ruleTags,
     ruleCounts,
+    rules,
     preselectedLists,
     initialSources: parseSources(url.searchParams.get("kind")),
     aiConfigured: isAiConfigured(),
@@ -70,6 +74,7 @@ export default function QuizzesPage({ loaderData }: Route.ComponentProps) {
         tags={loaderData.tags}
         ruleTags={loaderData.ruleTags}
         ruleCounts={loaderData.ruleCounts}
+        rules={loaderData.rules}
         preselectedLists={loaderData.preselectedLists}
         initialSources={loaderData.initialSources}
       />

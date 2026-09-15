@@ -1788,6 +1788,32 @@ export async function countRulesByKind(ownerId: string): Promise<{
   return counts;
 }
 
+/** A rule as the quiz builder's picker needs it — no explanation, no examples. */
+export interface RuleChoice {
+  id: number;
+  kind: RuleKind;
+  title: string;
+}
+
+/**
+ * Every rule the owner has, as a minimal `{id, kind, title}`.
+ *
+ * The builder's rule picker needs the whole list at once — to offer "all", to
+ * count the selection, and to show which are ticked — so this deliberately
+ * skips both the pagination and the per-rule hydration that `listRules` does.
+ * Ordered like the rules list, so the picker reads the same way.
+ */
+export async function listRuleChoices(ownerId: string, limit = 500): Promise<RuleChoice[]> {
+  const db = getDb();
+  const { results } = await db
+    .prepare(
+      "SELECT id, kind, title FROM rules WHERE owner_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
+    )
+    .bind(ownerId, limit)
+    .all<{ id: number; kind: RuleKind; title: string }>();
+  return (results ?? []).map((row) => ({ id: row.id, kind: row.kind, title: row.title }));
+}
+
 /** A random deck of rules (with their examples) for the forms study tab. */
 export async function getRuleStudyDeck(
   ownerId: string,
