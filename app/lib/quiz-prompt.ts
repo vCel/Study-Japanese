@@ -260,13 +260,42 @@ const WORKED_EXAMPLES = [
   '- The input question carries kana *and* romaji in "acceptableAnswers", so a learner who types either is marked right.',
 ].join("\n");
 
+/**
+ * How to spread the questions, for each axis that has something to spread over:
+ * the selected question types, and the two kinds of list material.
+ *
+ * One setting covers both axes, so "even" is said twice — once per axis — and an
+ * axis with a single bucket is dropped rather than told to spread across itself.
+ * The kinds axis names `type: phrase`, because that line in the material is the
+ * only thing distinguishing a phrase from an individual word.
+ */
 function distributionInstruction(config: QuizConfig): string {
-  if (config.types.length <= 1) return "";
-  if (config.distribution === "even") {
-    const per = Math.max(1, Math.round(config.questionCount / config.types.length));
-    return `Spread the questions as evenly as you reasonably can across the ${config.types.length} selected types — about ${per} of each. It does not have to be exact.`;
+  const typeCount = config.types.length;
+  const splitsKinds = config.sources.includes("words") && config.sources.includes("phrases");
+  if (typeCount <= 1 && !splitsKinds) return "";
+
+  const lines: string[] = [];
+
+  if (typeCount > 1) {
+    lines.push(
+      config.distribution === "even"
+        ? `Spread the questions as evenly as you reasonably can across the ${typeCount} selected question types — about ${Math.max(
+            1,
+            Math.round(config.questionCount / typeCount)
+          )} of each. It does not have to be exact.`
+        : "Choose the mix of question types yourself, freely — some types may end up more common than others."
+    );
   }
-  return `Choose the mix of question types yourself, freely — some types may end up more common than others.`;
+
+  if (splitsKinds) {
+    lines.push(
+      config.distribution === "even"
+        ? 'Spread the questions evenly between the individual words and the phrases — the items marked "type: phrase" are the phrases. Neither kind should carry the whole quiz. It does not have to be exact.'
+        : 'Choose freely how much of the quiz draws on individual words and how much on phrases — the items marked "type: phrase" are the phrases. One kind may end up more common than the other.'
+    );
+  }
+
+  return lines.join(" ");
 }
 
 const RESPONSE_SCHEMA = `{

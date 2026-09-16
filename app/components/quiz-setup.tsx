@@ -247,6 +247,12 @@ function QuizPanel({
   const wantsPhrases = config.sources.includes("phrases");
   const wantsRules = config.sources.includes("rules");
   const wantsLists = wantsWords || wantsPhrases;
+  /**
+   * Whether "Question split" has anything to divide. It covers two axes — the
+   * question types, and individual words against phrases — and either alone is
+   * enough to make it live.
+   */
+  const splitsQuestions = config.types.length > 1 || (wantsWords && wantsPhrases);
 
   // The tag chips: list tags and rule tags are separate registries, so a quiz
   // spanning both shows the union. A name in both registries has its counts
@@ -1206,32 +1212,41 @@ function QuizPanel({
 
           <div className="space-y-5">
             {/*
-              Moved out of the question-types card. It is a setting like the
-              rest of these rows and reads better beside the other dials than
-              underneath the pills it describes — and it is still only offered
-              when there is more than one type to split.
+              Moved out of the question-types card: it is a setting like the rest
+              of these rows and reads better beside the other dials than
+              underneath the pills it describes.
+
+              Always shown, greyed when there is nothing to divide, so the
+              setting is discoverable rather than appearing and vanishing as the
+              sources change. "Question split" covers two axes — the question
+              types, and individual words against phrases.
             */}
-            {config.types.length > 1 && (
-              <div className={settingRow}>
+            <div className={settingRow} data-slot="quiz-split" data-disabled={!splitsQuestions}>
+              <span className={cn("flex", !splitsQuestions && "opacity-60")}>
                 <SettingLabel
-                  label="How to split them"
-                  hint={QUIZ_DISTRIBUTION_HINTS[config.distribution]}
+                  label="Question split"
+                  hint={
+                    splitsQuestions
+                      ? QUIZ_DISTRIBUTION_HINTS[config.distribution]
+                      : "Nothing to split — pick more than one question type, or switch on both words and phrases in step 1."
+                  }
                 />
-                <div className="flex flex-wrap gap-1.5 sm:justify-end">
-                  {QUIZ_DISTRIBUTIONS.map((distribution) => (
-                    <button
-                      key={distribution}
-                      type="button"
-                      onClick={() => onChange({ distribution })}
-                      aria-pressed={config.distribution === distribution}
-                      className={pill(config.distribution === distribution)}
-                    >
-                      {QUIZ_DISTRIBUTION_LABELS[distribution]}
-                    </button>
-                  ))}
-                </div>
+              </span>
+              <div className="flex flex-wrap gap-1.5 sm:justify-end">
+                {QUIZ_DISTRIBUTIONS.map((distribution) => (
+                  <button
+                    key={distribution}
+                    type="button"
+                    disabled={!splitsQuestions}
+                    onClick={() => onChange({ distribution })}
+                    aria-pressed={config.distribution === distribution}
+                    className={pill(config.distribution === distribution, !splitsQuestions)}
+                  >
+                    {QUIZ_DISTRIBUTION_LABELS[distribution]}
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
 
             {/*
               Only offered once the user has actually missed something — a

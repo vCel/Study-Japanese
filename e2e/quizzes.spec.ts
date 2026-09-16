@@ -456,15 +456,19 @@ test.describe("quiz builder", () => {
     );
   });
 
-  test("the even/random split appears only for multiple types", async ({ page }) => {
+  test("the question split greys out until there is something to divide", async ({ page }) => {
     await stubConvex(page);
     await page.goto("/study/quizzes");
     await expectHydrated(page);
 
-    // Two types are on by default, so the split row starts visible — and it
-    // lives in the Options card now, not underneath the pills it splits.
-    await expect(page.getByText("How to split them")).toBeVisible();
-    await expect(page.locator("[data-slot='quiz-options']").getByText("How to split them")).toBeVisible();
+    const split = page.locator("[data-slot='quiz-split']");
+
+    // It lives in the Options card now, not underneath the pills it splits, and
+    // two question types are on by default — so it starts live.
+    await expect(
+      page.locator("[data-slot='quiz-options']").getByText("Question split")
+    ).toBeVisible();
+    await expect(split).toHaveAttribute("data-disabled", "false");
     await expect(page.getByRole("button", { name: "Even split" })).toHaveAttribute(
       "aria-pressed",
       "true"
@@ -476,9 +480,19 @@ test.describe("quiz builder", () => {
       "true"
     );
 
-    // Down to one type — nothing to split.
+    // Down to one type with rules alone, neither axis has anything to divide —
+    // so the row stays put and greys out rather than disappearing.
     await page.getByRole("button", { name: "Fill in the blanks" }).click();
-    await expect(page.getByText("How to split them")).toHaveCount(0);
+    await expect(split).toBeVisible();
+    await expect(split).toHaveAttribute("data-disabled", "true");
+    await expect(page.getByRole("button", { name: "Even split" })).toBeDisabled();
+
+    // Switching words and phrases on brings the second axis back: still a single
+    // question type, but now there are two kinds of list material to separate.
+    await page.getByRole("button", { name: "Words", exact: true }).click();
+    await page.getByRole("button", { name: "Phrases", exact: true }).click();
+    await expect(split).toHaveAttribute("data-disabled", "false");
+    await expect(page.getByRole("button", { name: "Even split" })).toBeEnabled();
   });
 
   test("'only what I keep missing' is hidden until something has been missed", async ({

@@ -113,11 +113,16 @@ export const WORD_FOCUS_OPTIONS: { value: WordQuizFocus; label: string; hint: st
   },
 ];
 
-/** How the generator spreads questions across the selected question types. */
+/**
+ * How the generator spreads the questions. Two axes: across the selected
+ * question types, and between the individual words and the phrases drawn from
+ * the lists. The second only exists when both kinds are in scope — the
+ * generator drops whichever axis has nothing to spread over.
+ */
 export type QuizDistribution =
-  /** Give every selected type a roughly equal share. */
+  /** Give every selected type a roughly equal share, and draw on words and phrases alike. */
   | "even"
-  /** Let the AI choose the mix freely. */
+  /** Let the AI choose both mixes freely. */
   | "random";
 
 export const QUIZ_DISTRIBUTIONS: QuizDistribution[] = ["even", "random"];
@@ -128,8 +133,8 @@ export const QUIZ_DISTRIBUTION_LABELS: Record<QuizDistribution, string> = {
 };
 
 export const QUIZ_DISTRIBUTION_HINTS: Record<QuizDistribution, string> = {
-  even: "Every question type you picked gets roughly the same number of questions.",
-  random: "The AI decides the mix as it goes — some types may dominate.",
+  even: "Every question type you picked gets roughly the same number of questions, and the quiz draws on individual words and phrases in roughly equal numbers.",
+  random: "The AI decides the mix as it goes — some types may dominate, and words or phrases may carry more of the quiz than the other.",
 };
 
 /**
