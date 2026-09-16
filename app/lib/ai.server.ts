@@ -67,10 +67,10 @@ interface ModelSpec {
 }
 
 /**
- * Ordered as specified: OpenCode's paid Muse Spark rows first, then Meta's Muse
- * Spark 1.3 Contributor, then the AIHubMix free model, then Gemini newest-first
- * down to 3.5, then OpenRouter's Gemma, then the Groq Qwen row, then the two
- * remaining fallbacks, with Comet's `gpt-5-nano` last.
+ * Ordered as specified: Meta's Muse Spark 1.3 Contributor first, then the
+ * AIHubMix free model, then Gemini newest-first down to 3.5, then the Groq Qwen
+ * row, then OpenRouter's Gemma, then the two remaining fallbacks, with Comet's
+ * `gpt-5-nano` last.
  *
  * Two pairs of rows are commented out, not deleted — GLM's two and NVIDIA's two.
  * Both notes are at their old positions and say what has to change before they
@@ -78,11 +78,10 @@ interface ModelSpec {
  * loop.
  */
 export const MODEL_CHAIN: ModelSpec[] = [
-  // --- OpenCode Zen. Paid rows only, and first, as specified. ---
+  // --- Meta. First, as specified. ---
   //
-  // Muse Spark is on the OpenAI Responses API here: the docs route the GPT /
-  // Grok / Muse-Spark families to `/responses` with `@ai-sdk/openai`, and
-  // chat-completions is not their wire format. Hence `endpoint: "responses"`.
+  // Chat-completions on `api.meta.ai/v1` — `endpoint: "responses"` is OpenCode
+  // Zen's wire format for its own Muse Spark family, not this row's.
   //
   {
     model: "muse-spark-1.3-contributor",
