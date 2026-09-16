@@ -696,9 +696,21 @@ async function callOpenAiCompatible(
   };
   if (provider === "opencode") {
     // Zen's free tier is refused without these two — a per-conversation UUID
-    // and a User-Agent. See `opencodeTierGate` and the MODEL_CHAIN note.
+    // and a User-Agent. The rest of the block (`x-opencode-client` /
+    // `-project` / `-request`, plus the CLI User-Agent) is the fingerprint
+    // their own client sends, added at the owner's request to try to keep the
+    // free tier usable from the Worker. Measured 2026-09-16 from a residential
+    // IP the extra headers change nothing — every variant (with and without
+    // them, even with no Authorization at all) returns 200 — and there is no
+    // evidence they beat the per-IP limits on Cloudflare's shared egress. The
+    // provider states its free tier is only for its own client, so this is
+    // client-identity emulation, owner-requested, with the ToS/key risk that
+    // implies. See `opencodeTierGate` and the MODEL_CHAIN note.
     headers["x-opencode-session"] = opencodeSessionId;
-    headers["User-Agent"] = "japanese-vocab/quiz-generator";
+    headers["x-opencode-project"] = opencodeSessionId;
+    headers["x-opencode-request"] = crypto.randomUUID();
+    headers["x-opencode-client"] = "cli";
+    headers["User-Agent"] = "opencode/latest/1.3.15/cli";
   }
 
   const response = await fetch(AGGREGATOR_ENDPOINTS[provider], {
@@ -791,7 +803,10 @@ async function callOpenAiCompatibleResponses(
         "Content-Type": "application/json",
         Authorization: `Bearer ${key}`,
         "x-opencode-session": opencodeSessionId,
-        "User-Agent": "japanese-vocab/quiz-generator",
+        "x-opencode-project": opencodeSessionId,
+        "x-opencode-request": crypto.randomUUID(),
+        "x-opencode-client": "cli",
+        "User-Agent": "opencode/latest/1.3.15/cli",
       },
       body: JSON.stringify({
         model: spec.model,
