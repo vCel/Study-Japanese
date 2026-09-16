@@ -2,13 +2,20 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { expectHydrated, seedStarterPack, stubConvex, wordIdByTitle } from "./helpers";
 
+/** One tinted panel inside the merged "What to ask about" step. */
+function facetPanel(page: Page, source: "words" | "lists") {
+  return page.locator(`[data-slot="quiz-facet-panel"][data-source="${source}"]`);
+}
+
 /**
  * The Quizzes builder (/study/quizzes) and the session page
  * (/study/quizzes/session).
  *
  * Unlike the flashcards builder there are no tabs: words, phrases and rules are
  * togglable buttons, so a single quiz can draw on any combination of them. The
- * panel below shows only the steps that apply to what is switched on.
+ * panel below shows only the steps that apply to what is switched on — except
+ * inside "What to ask about", where a facet panel whose source is off stays on
+ * screen and greys out instead.
  *
  * The generation endpoint is always stubbed: the real thing calls out to Gemini,
  * Comet, Groq and the aggregators, which would make these specs slow,
@@ -212,8 +219,13 @@ test.describe("quiz builder", () => {
     // Words and rules share one container, sectioned inside it — so there is a
     // single "Lists & rules" step rather than one step per group.
     await expect(page.getByText(/^\d+ · Lists & rules$/)).toBeVisible();
-    await expect(page.getByText(/^\d+ · Types of words$/)).toBeVisible();
-    await expect(page.getByText(/^\d+ · What to ask about$/)).toBeVisible();
+    // "Types of words" and "What to ask about" are one step now, sectioned the
+    // same way. Words and rules are both on, so both of its panels are live.
+    await expect(
+      page.getByText(/^\d+ · What to ask about — rules, words & phrases$/)
+    ).toBeVisible();
+    await expect(facetPanel(page, "words")).toHaveAttribute("data-disabled", "false");
+    await expect(facetPanel(page, "lists")).toHaveAttribute("data-disabled", "false");
     // …and the rule type pills sit in that same container, not in a step of
     // their own. Nothing is seeded here, so the picker itself is empty.
     await expect(page.getByRole("button", { name: /All rules/ })).toBeVisible();
@@ -229,6 +241,37 @@ test.describe("quiz builder", () => {
     await expect(rules).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByText(/^\d+ · Lists$/)).toBeVisible();
     await expect(page.getByRole("button", { name: /All rules/ })).toHaveCount(0);
+  });
+
+  test("the facet panels grey out with their own source", async ({ page }) => {
+    await stubConvex(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    // Rules is the only source to begin with, so both panels are inert — but
+    // they stay on screen. Greying rather than hiding is the point: an option
+    // that vanishes when you untick a source is one you cannot discover.
+    await expect(facetPanel(page, "words")).toBeVisible();
+    await expect(facetPanel(page, "lists")).toBeVisible();
+    await expect(facetPanel(page, "words")).toHaveAttribute("data-disabled", "true");
+    await expect(facetPanel(page, "lists")).toHaveAttribute("data-disabled", "true");
+    await expect(facetPanel(page, "words").getByRole("button", { name: "Nouns" })).toBeDisabled();
+
+    // Words on: both panels come alive, because the facets the second one sets
+    // apply to words as much as to phrases.
+    await page.getByRole("button", { name: "Words", exact: true }).click();
+    await expect(facetPanel(page, "words")).toHaveAttribute("data-disabled", "false");
+    await expect(facetPanel(page, "lists")).toHaveAttribute("data-disabled", "false");
+    await expect(facetPanel(page, "words").getByRole("button", { name: "Nouns" })).toBeEnabled();
+
+    // Down to phrases alone: the two panels part ways. "What to ask about" still
+    // applies, "Types of words" does not — which is the independence the two
+    // panels exist to express.
+    await page.getByRole("button", { name: "Phrases", exact: true }).click();
+    await page.getByRole("button", { name: "Rules", exact: true }).click();
+    await page.getByRole("button", { name: "Words", exact: true }).click();
+    await expect(facetPanel(page, "words")).toHaveAttribute("data-disabled", "true");
+    await expect(facetPanel(page, "lists")).toHaveAttribute("data-disabled", "false");
   });
 
   test("the last source cannot be deselected", async ({ page }) => {
@@ -418,8 +461,10 @@ test.describe("quiz builder", () => {
     await page.goto("/study/quizzes");
     await expectHydrated(page);
 
-    // Two types are on by default, so the split row starts visible.
+    // Two types are on by default, so the split row starts visible — and it
+    // lives in the Options card now, not underneath the pills it splits.
     await expect(page.getByText("How to split them")).toBeVisible();
+    await expect(page.locator("[data-slot='quiz-options']").getByText("How to split them")).toBeVisible();
     await expect(page.getByRole("button", { name: "Even split" })).toHaveAttribute(
       "aria-pressed",
       "true"

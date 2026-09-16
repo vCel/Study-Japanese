@@ -77,12 +77,20 @@ const RULE_KIND_OPTIONS: { value: string; label: string }[] = [
 /** How many tags a rule row shows before the rest collapse into "+x". */
 const MAX_VISIBLE_RULE_TAGS = 3;
 
-const pill = (active: boolean) =>
+/**
+ * `disabled` is for a pill whose source is switched off in step 1. It stays on
+ * screen rather than disappearing — an option that vanishes when you untick a
+ * source is one you cannot discover, and the greyed pill is what says why the
+ * setting has stopped applying.
+ */
+const pill = (active: boolean, disabled = false) =>
   cn(
-    "cursor-pointer rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
-    active
-      ? "border-primarylw bg-primarylw/15 text-primarylw"
-      : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+    "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
+    disabled
+      ? "cursor-not-allowed border-border/60 text-muted-foreground/50"
+      : active
+        ? "cursor-pointer border-primarylw bg-primarylw/15 text-primarylw"
+        : "cursor-pointer border-border text-muted-foreground hover:bg-muted hover:text-foreground"
   );
 
 /**
@@ -1063,49 +1071,90 @@ function QuizPanel({
     });
   }
 
-  if (wantsWords) {
-    steps.push({
-      title: "Types of words",
-      body: (
-        <div className="flex flex-wrap gap-1.5">
-          {POS_OPTIONS.map((option) => (
-            <button
-              key={option.value || "all"}
-              type="button"
-              onClick={() => onChange({ pos: option.value })}
-              aria-pressed={config.pos === option.value}
-              className={pill(config.pos === option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      ),
-    });
-  }
-
-  // What the questions should ask about each word — meaning, reading, kanji…
-  if (wantsLists) {
-    steps.push({
-      title: "What to ask about",
-      body: (
-        <div className="flex flex-wrap gap-1.5">
-          {WORD_FOCUS_OPTIONS.map((option) => (
-            <Tooltip key={option.value} content={option.hint}>
+  /**
+   * What a question may be built from, for whichever sources are switched on.
+   *
+   * These were two steps ("Types of words" and "What to ask about"). They are
+   * answering one question — which words and phrases a question may draw on,
+   * and what about them — so they share a card and are separated the way the
+   * lists and the rules are: one tinted panel each.
+   *
+   * A panel whose source is off in step 1 stays on screen and greys out rather
+   * than disappearing. An option that vanishes when you untick a source is one
+   * you cannot discover, and the greyed pills are what explain why the setting
+   * has stopped applying.
+   */
+  steps.push({
+    title: "What to ask about — rules, words & phrases",
+    body: (
+      <div className="space-y-3">
+        <section
+          className={sectionClass}
+          data-slot="quiz-facet-panel"
+          data-source="words"
+          data-disabled={!wantsWords}
+        >
+          <div className="mb-3">
+            <p className={cn("text-sm font-medium", !wantsWords && "text-muted-foreground")}>
+              Types of words
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {wantsWords
+                ? "Words — which parts of speech a question may be drawn from."
+                : "Words are off in step 1 — turn them on to use this."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {POS_OPTIONS.map((option) => (
               <button
+                key={option.value || "all"}
                 type="button"
-                onClick={() => onChange({ focus: option.value as WordQuizFocus })}
-                aria-pressed={config.focus === option.value}
-                className={pill(config.focus === option.value)}
+                disabled={!wantsWords}
+                onClick={() => onChange({ pos: option.value })}
+                aria-pressed={config.pos === option.value}
+                className={pill(config.pos === option.value, !wantsWords)}
               >
                 {option.label}
               </button>
-            </Tooltip>
-          ))}
-        </div>
-      ),
-    });
-  }
+            ))}
+          </div>
+        </section>
+
+        <section
+          className={sectionClass}
+          data-slot="quiz-facet-panel"
+          data-source="lists"
+          data-disabled={!wantsLists}
+        >
+          <div className="mb-3">
+            <p className={cn("text-sm font-medium", !wantsLists && "text-muted-foreground")}>
+              What to ask about
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {wantsLists
+                ? "Words and phrases — the facet each question should test."
+                : "Words and phrases are off in step 1 — turn one on to use this."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {WORD_FOCUS_OPTIONS.map((option) => (
+              <Tooltip key={option.value} content={option.hint}>
+                <button
+                  type="button"
+                  disabled={!wantsLists}
+                  onClick={() => onChange({ focus: option.value as WordQuizFocus })}
+                  aria-pressed={config.focus === option.value}
+                  className={pill(config.focus === option.value, !wantsLists)}
+                >
+                  {option.label}
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+        </section>
+      </div>
+    ),
+  });
 
   return (
     <div className="space-y-6">
@@ -1147,37 +1196,43 @@ function QuizPanel({
           <p className="mt-3 text-xs text-muted-foreground">
             Pick as many as you like — at least one is required.
           </p>
-
-          {config.types.length > 1 && (
-            <div className="mt-5 flex items-center justify-between gap-4">
-              <SettingLabel
-                label="How to split them"
-                hint={QUIZ_DISTRIBUTION_HINTS[config.distribution]}
-              />
-              <div className="flex flex-wrap justify-end gap-1.5">
-                {QUIZ_DISTRIBUTIONS.map((distribution) => (
-                  <button
-                    key={distribution}
-                    type="button"
-                    onClick={() => onChange({ distribution })}
-                    aria-pressed={config.distribution === distribution}
-                    className={pill(config.distribution === distribution)}
-                  >
-                    {QUIZ_DISTRIBUTION_LABELS[distribution]}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </CardContent>
       </Card>
 
       {/* The single-setting rows share one "Options" card. */}
-      <Card>
+      <Card data-slot="quiz-options">
         <CardContent className="p-6">
           <p className="mb-5 text-sm font-semibold">{steps.length + 2} · Options</p>
 
           <div className="space-y-5">
+            {/*
+              Moved out of the question-types card. It is a setting like the
+              rest of these rows and reads better beside the other dials than
+              underneath the pills it describes — and it is still only offered
+              when there is more than one type to split.
+            */}
+            {config.types.length > 1 && (
+              <div className={settingRow}>
+                <SettingLabel
+                  label="How to split them"
+                  hint={QUIZ_DISTRIBUTION_HINTS[config.distribution]}
+                />
+                <div className="flex flex-wrap gap-1.5 sm:justify-end">
+                  {QUIZ_DISTRIBUTIONS.map((distribution) => (
+                    <button
+                      key={distribution}
+                      type="button"
+                      onClick={() => onChange({ distribution })}
+                      aria-pressed={config.distribution === distribution}
+                      className={pill(config.distribution === distribution)}
+                    >
+                      {QUIZ_DISTRIBUTION_LABELS[distribution]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/*
               Only offered once the user has actually missed something — a
               "retry my misses" quiz with no misses would be empty.
