@@ -3,7 +3,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useState } from "react";
 import { UserPlus } from "lucide-react";
 
-import { isConvexClientConfigured } from "~/components/convex-provider";
+import { isAuthConfigured } from "~/components/convex-provider";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/lightswind/card";
 import { Input, Label } from "~/components/lightswind/input";
@@ -19,7 +19,7 @@ export default function Signup() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (!isConvexClientConfigured()) {
+  if (!isAuthConfigured()) {
     return (
       <div className="mx-auto max-w-md">
         <Card>

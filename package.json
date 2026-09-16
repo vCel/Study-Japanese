@@ -12,6 +12,7 @@
     "chain:parity": "node scripts/chain-parity.mjs",
     "quiz:guard": "node scripts/quiz-guard.mjs",
     "grader:guard": "node scripts/grader-guard.mjs",
+    "owner:guard": "node scripts/owner-refresh-guard.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:changed": "playwright test --only-changed=HEAD",

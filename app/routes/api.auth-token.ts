@@ -1,5 +1,14 @@
 import type { Route } from "./+types/api.auth-token";
 
+import {
+  FETCH_TIME_COOKIE,
+  JWT_COOKIE,
+  MISC_COOKIE,
+  REFRESH_COOKIE,
+  TOKEN_COOKIE_MAX_AGE,
+  VERIFIER_COOKIE,
+} from "~/lib/token-cookies";
+
 /**
  * Convex Auth token store.
  *
@@ -12,16 +21,12 @@ import type { Route } from "./+types/api.auth-token";
  * Only a small, fixed set of keys is used by Convex Auth, so each maps to a
  * dedicated cookie name (keeps every cookie well under the 4 KB limit).
  */
-const COOKIE_PREFIX = "jv_";
-
-const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
-
 function cookieName(key: string): string {
-  if (/Refresh/i.test(key)) return `${COOKIE_PREFIX}refresh`;
-  if (/JWT/i.test(key)) return `${COOKIE_PREFIX}jwt`;
-  if (/Verifier/i.test(key)) return `${COOKIE_PREFIX}verifier`;
-  if (/FetchTime/i.test(key)) return `${COOKIE_PREFIX}fetched`;
-  return `${COOKIE_PREFIX}misc`;
+  if (/Refresh/i.test(key)) return REFRESH_COOKIE;
+  if (/JWT/i.test(key)) return JWT_COOKIE;
+  if (/Verifier/i.test(key)) return VERIFIER_COOKIE;
+  if (/FetchTime/i.test(key)) return FETCH_TIME_COOKIE;
+  return MISC_COOKIE;
 }
 
 function readCookie(header: string | null, name: string): string | null {
@@ -48,7 +53,7 @@ function cookieAttributes(isHttps: boolean) {
 }
 
 function setCookie(name: string, value: string, isHttps: boolean): string {
-  return `${name}=${encodeURIComponent(value)}; ${cookieAttributes(isHttps)}; Max-Age=${MAX_AGE}`;
+  return `${name}=${encodeURIComponent(value)}; ${cookieAttributes(isHttps)}; Max-Age=${TOKEN_COOKIE_MAX_AGE}`;
 }
 
 function clearCookie(name: string, isHttps: boolean): string {

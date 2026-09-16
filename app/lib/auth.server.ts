@@ -54,6 +54,35 @@ export async function getConvexUserFromToken(token: string | null): Promise<Conv
   return session?.user ?? null;
 }
 
+/**
+ * Exchange a refresh token for a fresh JWT — the same call the browser makes on
+ * mount (`auth:signIn` with no provider). Null when the refresh token has been
+ * spent, revoked, or has aged out.
+ *
+ * The rotated refresh token that comes back is deliberately dropped: Convex Auth
+ * treats a replay of one outside a 10s window as theft and revokes the whole
+ * chain, and the browser's in-memory copy keeps presenting the one in its
+ * cookie. Persisting the rotation here would fork that chain and sign the user
+ * out.
+ */
+export async function refreshConvexTokens(
+  refreshToken: string
+): Promise<{ token: string; refreshToken: string } | null> {
+  const url = import.meta.env.VITE_CONVEX_URL as string | undefined;
+  if (!url) return null;
+
+  try {
+    const result = (await new ConvexHttpClient(url).action(api.auth.signIn, {
+      refreshToken,
+    })) as { tokens?: { token: string; refreshToken: string } | null } | null;
+    return result?.tokens ?? null;
+  } catch {
+    // Spent/revoked refresh token, or Convex unreachable — either way there is
+    // no session to recover.
+    return null;
+  }
+}
+
 export function extractBearerToken(request: Request): string | null {
   const header = request.headers.get("Authorization");
   if (!header) return null;

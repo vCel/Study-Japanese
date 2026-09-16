@@ -234,10 +234,6 @@ export async function listIdByTitle(
 /**
  * Navigate to a create page and wait until it is safe to interact with.
  *
- * The create pages render an "auth not configured" fallback during SSR and only
- * swap in the real form once the Convex client is available in the browser, so
- * assertions must not run against the server-rendered markup alone.
- *
  * Waiting for the accordion trigger to be *visible* is not enough on its own:
  * the trigger is in the server-rendered HTML, so visibility is satisfied long
  * before React is listening. A click dispatched in that window is dropped, and

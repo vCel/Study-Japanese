@@ -1,6 +1,7 @@
 import { createContext } from "react-router";
 
-import { getConvexSession, type ConvexUser } from "~/lib/auth.server";
+import { getConvexSession, refreshConvexTokens, type ConvexUser } from "~/lib/auth.server";
+import { JWT_COOKIE, REFRESH_COOKIE } from "~/lib/token-cookies";
 
 /**
  * The resolved viewer identity for one request. The owner scopes every content
@@ -26,7 +27,6 @@ export interface OwnerInfo {
 export const ownerContext = createContext<OwnerInfo | null>(null);
 
 const DEVICE_COOKIE = "jv_device";
-const JWT_COOKIE = "jv_jwt";
 const DEVICE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
 
 export function readCookie(header: string | null, name: string): string | null {
@@ -41,7 +41,21 @@ export function readCookie(header: string | null, name: string): string | null {
   return null;
 }
 
-/** Resolve the viewer: device id from the cookie, user from the JWT cookie. */
+/**
+ * Resolve the viewer: device id from the cookie, user from the JWT cookie.
+ *
+ * The JWT lasts an hour while the cookie holding it lasts thirty days, so a tab
+ * left open — or opened again after lunch — presents a token the browser can
+ * still renew but this side cannot validate. Reading that as "signed out" served
+ * the device-scoped library to a signed-in user until the next reload, which is
+ * why the refresh below exists: the browser makes the same call on mount, and
+ * making it here too means the *first* request after expiry is already right.
+ *
+ * The renewed token is used for this request only. The browser is the sole
+ * writer of the token cookies (it renews within a second of the first load), and
+ * a second writer here would race the sign-out path — which clears the cookie
+ * precisely while a request that read it is still in flight.
+ */
 export async function resolveOwnerFromRequest(request: Request): Promise<OwnerInfo> {
   const cookies = request.headers.get("Cookie");
   let deviceId = readCookie(cookies, DEVICE_COOKIE);
@@ -49,17 +63,24 @@ export async function resolveOwnerFromRequest(request: Request): Promise<OwnerIn
   if (!deviceId) deviceId = crypto.randomUUID();
 
   const jwt = readCookie(cookies, JWT_COOKIE);
-  let user: ConvexUser | null = null;
-  let isAdmin = false;
-  if (jwt) {
-    const session = await getConvexSession(jwt);
-    if (session) {
-      user = session.user;
-      isAdmin = session.isAdmin;
+  let session = jwt ? await getConvexSession(jwt) : null;
+
+  if (!session) {
+    const refreshToken = readCookie(cookies, REFRESH_COOKIE);
+    if (refreshToken) {
+      const tokens = await refreshConvexTokens(refreshToken);
+      // Verified like any other token before it is trusted.
+      if (tokens) session = await getConvexSession(tokens.token);
     }
   }
 
-  return { ownerId: user?.id ?? deviceId, deviceId, user, isAdmin, deviceIsNew };
+  return {
+    ownerId: session?.user.id ?? deviceId,
+    deviceId,
+    user: session?.user ?? null,
+    isAdmin: session?.isAdmin ?? false,
+    deviceIsNew,
+  };
 }
 
 /** Set-Cookie header that persists a freshly created device id. */
