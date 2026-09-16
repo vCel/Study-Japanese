@@ -454,6 +454,16 @@ function geminiKey(): string {
   return (env.GEMINI_API_KEY ?? "").trim();
 }
 
+/**
+ * Backup Gemini key, tried when the primary's failure is key- or account-level
+ * (401/403, or 429/quota exhaustion). Without it `callGemini` behaves exactly
+ * as before. Read from `GEMINI_FALLBACK_API_KEY`; a deployment holding only
+ * the backup can still generate.
+ */
+function geminiFallbackKey(): string {
+  return (env.GEMINI_FALLBACK_API_KEY ?? "").trim();
+}
+
 function glmKey(): string {
   return (env.GLM_API_KEY ?? "").trim();
 }
@@ -488,6 +498,7 @@ function opencodeKey(): string {
 export function isAiConfigured(): boolean {
   return (
     geminiKey().length > 0 ||
+    geminiFallbackKey().length > 0 ||
     glmKey().length > 0 ||
     aihubmixKey().length > 0 ||
     openrouterKey().length > 0 ||
@@ -502,15 +513,52 @@ export function isAiConfigured(): boolean {
  * Gemini `generateContent`. `messages[0]` (if it is a system message) becomes
  * `systemInstruction`; the rest are collapsed into one user turn, which is all
  * a single-shot generation needs.
+ *
+ * Tries `GEMINI_API_KEY` first, then `GEMINI_FALLBACK_API_KEY` when the
+ * primary fails on key/account grounds (401/403, or 429/quota exhaustion) —
+ * the owner's setup is two keys, the second standing by. A timeout or an
+ * overloaded 503 does not switch keys, because the key is not the problem
+ * there. The retry is invisible to the walk: it costs no extra attempt event.
  */
 async function callGemini(
   spec: ModelSpec,
   messages: ChatMessage[],
   signal: AbortSignal
 ): Promise<string> {
-  const key = geminiKey();
-  if (!key) throw new GenerationError("error", "GEMINI_API_KEY is not set.");
+  const primary = geminiKey();
+  const fallback = geminiFallbackKey();
+  if (!primary) {
+    // A deployment holding only the backup key can still generate; without
+    // either there is nothing to say but the original message.
+    if (!fallback) throw new GenerationError("error", "GEMINI_API_KEY is not set.");
+    return callGeminiWithKey(spec, messages, signal, fallback, "GEMINI_FALLBACK_API_KEY");
+  }
+  try {
+    return await callGeminiWithKey(spec, messages, signal, primary, "GEMINI_API_KEY");
+  } catch (error) {
+    // Switch keys only for the failure the backup actually covers. 429/quota
+    // is account-scoped per `classifyGemini`; 401/403 land in `error` with a
+    // message that names the key.
+    const keyProblem =
+      (error instanceof GenerationError && error.kind === "provider-ratelimit") ||
+      (error instanceof GenerationError &&
+        error.kind === "error" &&
+        /401|403|api[ _-]?key|invalid|unauthori[sz]ed|forbidden/i.test(error.message));
+    if (keyProblem && fallback) {
+      return callGeminiWithKey(spec, messages, signal, fallback, "GEMINI_FALLBACK_API_KEY");
+    }
+    throw error;
+  }
+}
 
+/** One Gemini call with a specific key; shared by the primary and the backup. */
+async function callGeminiWithKey(
+  spec: ModelSpec,
+  messages: ChatMessage[],
+  signal: AbortSignal,
+  key: string,
+  envName: string
+): Promise<string> {
   const system = messages
     .filter((message) => message.role === "system")
     .map((message) => message.content)
@@ -536,9 +584,11 @@ async function callGemini(
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
+    // Name the key that failed in the message, so the attempt list says which
+    // of the two is out when generation does eventually give up.
     throw new GenerationError(
       classifyGemini(response.status, body),
-      describeFailure(response.status, body)
+      `${envName}: ${describeFailure(response.status, body)}`
     );
   }
 
