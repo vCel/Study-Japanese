@@ -1,11 +1,12 @@
 import * as React from "react";
 import { Link } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ExternalLink, Loader2, RotateCcw, Sparkles, Timer, X } from "lucide-react";
+import { Check, Delete, ExternalLink, Loader2, RotateCcw, Sparkles, Timer, X } from "lucide-react";
 
 import type { GenerationAttempt, QuizQuestion, QuizSourceKind } from "~/lib/quiz-types";
 import { QUIZ_SOURCE_KIND_LABELS, QUIZ_TYPE_LABELS } from "~/lib/quiz-types";
 import { anyHasFurigana, stripEmphasis, stripFurigana } from "~/lib/furigana";
+import { kanaBank, type KanaBank } from "~/lib/kana-bank";
 import { useQuizStats } from "~/lib/use-quiz-stats";
 import { FuriganaProvider, FuriganaToggle, RichText } from "~/components/furigana";
 import { Button, buttonVariants } from "~/components/lightswind/button";
@@ -476,17 +477,16 @@ export function QuizRunner({
  * rather than mislabelling a model.
  *
  * The commented-out GLM and NVIDIA rows are absent here too — an entry left in
- * would shift every label after it by one.
+ * would shift every label after it by one. Same for a provider with no rows at
+ * all: OpenCode has none, so it has no label. **Adding a row to `MODEL_CHAIN`
+ * means adding its label here in the same position**, and `npm run chain:parity`
+ * is what catches it when you don't.
  *
- * The three OpenCode rows are the first thing the bar shows: MiMo answers over
- * chat-completions, the two Muse Spark rows answer over the Responses API, and
- * all three are listed so the bar never falls back to raw model ids like
- * `muse-spark-1.3-contributor-free`.
+ * Muse Spark leads and its raw id is long, so it is listed first to keep the
+ * bar off `muse-spark-1.3-contributor`.
  */
 const CHAIN_LABELS = [
-  "OpenCode MiMo V2.5",
-  "OpenCode Muse Spark 1.3",
-  "OpenCode Muse Spark 1.2",
+  "Meta Muse Spark 1.3 Contributor",
   "Xiaomi MiMo V2.5",
   "Gemini 3.8 Flash",
   "Gemini 3.7 Flash",
@@ -495,7 +495,7 @@ const CHAIN_LABELS = [
   // Groq's Qwen row now precedes the OpenRouter Gemma row — the owner swapped
   // the two in `MODEL_CHAIN` on 2026-09-15. The order here is positional, so a
   // swap on the server silently mislabels both rows in the loading bar unless
-  // this list follows. `chain-parity.mjs` now checks label↔model correspondence,
+  // this list follows. `npm run chain:parity` checks label↔model correspondence,
   // not just the count.
   "Groq Qwen 3.8 27B",
   "OpenRouter Gemma 4 26B",
@@ -911,6 +911,44 @@ function SubmitButton({ given, onClick }: { given: string; onClick: () => void }
   );
 }
 
+/**
+ * Which of the bank's tiles the answer has already spent.
+ *
+ * Derived from the answer string rather than tracked beside it, so the two can
+ * never disagree: tapping a tile and typing the same kana mark the same tile,
+ * and deleting a character hands its tile back. Walked left to right, so a kana
+ * the answer repeats claims one tile per occurrence and never the same one
+ * twice — which is what leaves a second こ in the bank for ここ.
+ *
+ * A character that is not in the bank stops the walk rather than being skipped
+ * over: that is a kana typed from the user's own keyboard, and carrying on
+ * would spend a later tile on it.
+ */
+function spentTiles(given: string, tiles: string[]): Set<number> {
+  const spent = new Set<number>();
+  for (const kana of given) {
+    const index = tiles.findIndex((tile, position) => !spent.has(position) && tile === kana);
+    if (index === -1) break;
+    spent.add(index);
+  }
+  return spent;
+}
+
+/**
+ * The bank to offer under a typing question, or null when there is none.
+ *
+ * Gated on the grader rather than on the shape of the answer: a bank is offered
+ * only when tapping out the whole reading is an answer this app will accept. A
+ * bank that spelled a word the grader then marked wrong would be worse than no
+ * bank at all — the learner would have produced the right answer and been told
+ * otherwise.
+ */
+function usableKanaBank(question: QuizQuestion): KanaBank | null {
+  const bank = kanaBank(question.answer);
+  if (!bank) return null;
+  return answersMatch(bank.reading, question) ? bank : null;
+}
+
 /** The per-type answer control. */
 function QuestionInput({
   question,
@@ -931,6 +969,16 @@ function QuestionInput({
   React.useEffect(() => {
     setPicked([]);
   }, [question.id]);
+
+  /**
+   * Memoised on the question, because `kanaBank` shuffles: recomputing it per
+   * render would reorder the tiles on every keystroke, so the kana would move
+   * under the user's finger as they typed.
+   */
+  const bank = React.useMemo(
+    () => (question.type === "input" ? usableKanaBank(question) : null),
+    [question]
+  );
 
   if (question.type === "multiple-choice" || question.type === "true-false") {
     const options =
@@ -1065,24 +1113,118 @@ function QuestionInput({
 
   // input
   return (
-    <input
-      value={given}
-      onChange={(event) => onGivenChange(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") onSubmit(given);
-      }}
-      disabled={submitted !== null}
-      autoFocus
-      placeholder="Type your answer — kana or romaji"
-      className={cn(
-        "w-full rounded-[var(--radius)] border bg-background px-4 py-3 text-lg outline-none",
-        submitted === null
-          ? "border-border focus:border-primarylw"
-          : submitted.correct
-            ? "border-emerald-500/60"
-            : "border-red-500/60"
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <input
+          value={given}
+          onChange={(event) => onGivenChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onSubmit(given);
+          }}
+          disabled={submitted !== null}
+          autoFocus
+          // A hook for the specs: the placeholder changes when a kana bank is
+          // offered, so a locator built on the copy would only match half the
+          // typing questions.
+          data-slot="quiz-answer-input"
+          placeholder={
+            bank
+              ? "Type the answer in Japanese — or tap the kana below"
+              : "Type your answer — kana or romaji"
+          }
+          className={cn(
+            "min-w-0 flex-1 rounded-[var(--radius)] border bg-background px-4 py-3 text-lg outline-none",
+            submitted === null
+              ? "border-border focus:border-primarylw"
+              : submitted.correct
+                ? "border-emerald-500/60"
+                : "border-red-500/60"
+          )}
+        />
+        {/*
+          The bank is tapped, and tapping a tile never focuses the field — so
+          without this there is no way to take a mis-tap back on a phone, where
+          the bank is the only way to write kana at all.
+        */}
+        {bank && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Delete the last kana"
+            disabled={submitted !== null || given.length === 0}
+            onClick={() => onGivenChange([...given].slice(0, -1).join(""))}
+          >
+            <Delete />
+          </Button>
+        )}
+      </div>
+
+      {bank && (
+        <KanaTiles
+          bank={bank}
+          given={given}
+          onGivenChange={onGivenChange}
+          disabled={submitted !== null}
+        />
       )}
-    />
+    </div>
+  );
+}
+
+/**
+ * The kana bank.
+ *
+ * Not a set of buttons that each fill a slot of their own: a tile appends to
+ * the same string the field above holds, so the learner can tap three kana, fix
+ * a typo by typing over it, and submit — one answer with two ways of writing
+ * it, and nothing to keep in step between them.
+ */
+function KanaTiles({
+  bank,
+  given,
+  onGivenChange,
+  disabled,
+}: {
+  bank: KanaBank;
+  given: string;
+  onGivenChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  const spent = spentTiles(given, bank.tiles);
+
+  return (
+    <div className="rounded-[var(--radius)] border border-border bg-muted/30 p-3">
+      <p className="mb-2.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+        Kana bank
+      </p>
+
+      <div className="flex flex-wrap gap-1.5">
+        {bank.tiles.map((tile, index) => {
+          const used = spent.has(index);
+          return (
+            <button
+              key={`${tile}-${index}`}
+              type="button"
+              disabled={used || disabled}
+              onClick={() => onGivenChange(given + tile)}
+              data-slot="quiz-kana-tile"
+              className={cn(
+                // A spent tile stays legible but visibly out of play, rather
+                // than disappearing: the bank's shape should not change under
+                // the user's hand as they use it.
+                "h-11 min-w-11 rounded-[10px] border text-xl leading-none font-medium transition-all duration-150",
+                used
+                  ? "cursor-default border-dashed border-border/70 text-muted-foreground/25"
+                  : "cursor-pointer border-border bg-card shadow-sm hover:-translate-y-0.5 hover:border-primarylw/60 hover:bg-primarylw/10 hover:text-primarylw"
+              )}
+            >
+              {tile}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -1,6 +1,5 @@
 import { Link, useLocation } from "react-router";
 import {
-  BookOpenText,
   CircleHelp,
   GraduationCap,
   Layers,
@@ -19,11 +18,10 @@ import { AuthButtons } from "~/components/auth-buttons";
 import { ProfileMenuItems } from "~/components/profile-menu-items";
 import { Dock } from "~/components/lightswind/dock";
 
-/** Word library: word lists, words and their example sentences. */
+/** Word library: word lists and the words they contain. */
 const WORD_LIBRARY_LINKS = [
   { to: "/", label: "Word lists", icon: ListTree },
   { to: "/words", label: "Words", icon: Layers },
-  { to: "/words/examples", label: "Examples", icon: BookOpenText },
 ];
 
 /** Phrases: phrase lists and the phrases they contain. */
@@ -42,11 +40,11 @@ const STUDY_LINKS = [
   { to: "/study/quizzes", label: "Quizzes", icon: CircleHelp },
 ];
 
-/** Separate section for word/sentence rules & forms. */
-const RULE_LINKS = [
-  { to: "/rules", label: "Rules & forms", icon: Sparkles },
-  { to: "/rules/examples", label: "Rule examples", icon: BookOpenText },
-];
+/**
+ * Separate section for word/sentence rules & forms. One page, so the mobile
+ * dock links straight to it instead of opening a one-item popover.
+ */
+const RULE_LINKS = [{ to: "/rules", label: "Rules & forms", icon: Sparkles }];
 
 const SECTIONS = [
   { title: "Word library", links: WORD_LIBRARY_LINKS },

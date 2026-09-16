@@ -65,32 +65,54 @@ export default function Phrases({ loaderData }: Route.ComponentProps) {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {loaderData.items.map((phrase) => (
-            <Link key={phrase.id} to={`/words/${phrase.id}`} className="block h-full">
-              <Card className="h-full transition-transform hover:-translate-y-0.5">
-                <CardContent className="p-5">
-                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                    <Badge variant="outline" className="text-xs">
-                      phrase
-                    </Badge>
-                    <Badge variant="kana">{phrase.kana}</Badge>
-                  </div>
-                  <h2 className="break-words text-2xl font-semibold">{phrase.word}</h2>
-                  <p className="line-clamp-2 text-sm text-muted-foreground">
-                    {phrase.meaning ?? "-"}
+            // Same card as a word on /words — headword, kana, meaning, then a
+            // footer — so the two libraries read alike. The card itself is not a
+            // link: the phrase link is stretched over it with `after:` so the
+            // list link in the footer stays clickable.
+            <Card
+              key={phrase.id}
+              data-slot="word-card"
+              className="relative flex h-full flex-col transition-transform hover:-translate-y-0.5"
+            >
+              <CardContent className="flex flex-1 flex-col p-5">
+                <div className="min-w-0">
+                  <h2 className="break-words text-2xl font-semibold">
+                    <Link
+                      to={`/words/${phrase.id}`}
+                      className="after:absolute after:inset-0 after:content-['']"
+                    >
+                      {phrase.word}
+                    </Link>
+                  </h2>
+                  <p className="mt-0.5 text-sm text-muted-foreground">{phrase.kana}</p>
+                </div>
+
+                {phrase.meaning && (
+                  <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+                    {phrase.meaning}
                   </p>
-                  {phrase.listId && phrase.listTitle && (
-                    <p className="mt-2 text-xs">
-                      <Link
-                        to={`/lists/${phrase.listId}`}
-                        className="text-primarylw hover:underline"
-                      >
-                        {phrase.listTitle}
-                      </Link>
-                    </p>
+                )}
+
+                {/* Footer: source list on the left, part of speech pinned bottom-right. */}
+                <div className="mt-auto flex items-end justify-between gap-2 pt-4">
+                  {phrase.listId && phrase.listTitle ? (
+                    <Link
+                      to={`/lists/${phrase.listId}`}
+                      className="min-w-0 truncate text-xs text-muted-foreground transition-colors hover:text-primarylw hover:underline"
+                    >
+                      {phrase.listTitle}
+                    </Link>
+                  ) : (
+                    <span />
                   )}
-                </CardContent>
-              </Card>
-            </Link>
+                  {phrase.pos && (
+                    <Badge variant="outline" className="shrink-0 text-xs">
+                      {phrase.pos}
+                    </Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

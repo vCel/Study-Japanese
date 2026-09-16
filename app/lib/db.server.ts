@@ -1995,7 +1995,7 @@ export interface RuleExampleItem {
 
 const RULE_EXAMPLE_PAGE_SIZE = 20;
 
-/** All rule/grammar example sentences of the owner — powers /rules/examples. */
+/** All rule/grammar example sentences of the owner. Kept after `/rules/examples` was removed. */
 export async function listRuleExamples(ownerId: string, page: number): Promise<Paginated<RuleExampleItem>> {
   const db = getDb();
   const totalResult = await db

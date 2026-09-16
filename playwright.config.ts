@@ -25,6 +25,14 @@ import { E2E_BASE_URL, E2E_PORT } from "./e2e/test-config";
  * machine, and noticeably more once several workers share one server and one
  * local D1. Specs that walk a dozen pages (the page-header layout sweep) need
  * the headroom, so the per-test budget is 60s rather than Playwright's 30s.
+ *
+ * On workers: the whole suite is bounded by how fast the dev server can render
+ * pages — measured ~80ms each idle, ~7 pages/s aggregate under load, with the
+ * browser's own cache worth only ~20% (the render, not the module graph, is the
+ * cost). That ceiling is why the worker count is not the knob it looks like:
+ * measured 3.0 loads/s at 4 workers and 4.6 at 8, and 12 workers ran the suite
+ * *slower* (2.9m vs 2.5m) and timed out the page-header sweep. So the default
+ * stays cpus/2; `PW_WORKERS` is there to experiment, not to tune for CI.
  */
 const PORT = E2E_PORT;
 const baseURL = E2E_BASE_URL;
@@ -35,7 +43,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI ? 1 : process.env.PW_WORKERS ? Number(process.env.PW_WORKERS) : undefined,
   reporter: process.env.CI
     ? [["github"], ["html", { open: "never" }]]
     : [["list"], ["html", { open: "never" }]],

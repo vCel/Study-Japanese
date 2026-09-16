@@ -17,11 +17,11 @@
  * you silently lose a healthy fallback — the same shape of bug as the GLM
  * `1305` mix-up documented in `classifyGlm`.
  *
- * OpenCode Zen is the one provider with an extra requirement: its free tier
- * refuses a request without the `x-opencode-session` header (a per-conversation
- * UUID) and a `User-Agent` — regardless of which key, or none, is sent. With
- * the header all three rows answer: MiMo over chat-completions, the two Muse
- * Spark rows over the Responses API (see the MODEL_CHAIN note).
+ * OpenCode Zen is wired for a **paid** key only. Its free tier refuses any
+ * client that is not OpenCode's own — and it is a data-exchange tier, where the
+ * free models train on your prompts — so no `-free` row is shipped and the
+ * client-identity headers that once worked around the refusal are gone. Its
+ * Muse Spark rows need the Responses API (see the MODEL_CHAIN note).
  *
  * Runs in the Worker (`env` from `cloudflare:workers`), never in the browser —
  * the keys must not reach the client bundle.
@@ -45,23 +45,32 @@ interface ModelSpec {
    * providers only (Gemini builds its own body and ignores this).
    *
    * Exists for one reason: controlling how much a model thinks. See the
-   * `xiaomi-mimo-v2.5-free` and `gpt-5-nano` entries below.
+   * `xiaomi-mimo-v2.5-free`, `gpt-5-nano` and `muse-spark-1.3-contributor`
+   * entries below.
    */
   extraBody?: Record<string, unknown>;
   /**
    * Wire format, for the OpenAI-compatible providers only. Defaults to
    * chat-completions; `"responses"` routes the row to the OpenAI Responses API
-   * instead — the Muse Spark rows on OpenCode Zen live there.
+   * instead, which is where OpenCode Zen puts its Muse Spark / GPT / Grok
+   * families.
    */
   endpoint?: "responses";
+  /**
+   * Per-row ceiling, overriding `ATTEMPT_TIMEOUT_MS`.
+   *
+   * For a model whose *minimum* thinking budget already approaches the shared
+   * ceiling, where the alternative is a wasted timeout on every generation. See
+   * the `muse-spark-1.3-contributor` entry.
+   */
+  timeoutMs?: number;
 }
 
 /**
- * Ordered as specified: OpenCode's three free models first — MiMo speaks
- * chat-completions, the two Muse Spark rows speak the Responses API — then the
- * AIHubMix free model, then Gemini newest-first down to 3.5, then OpenRouter's
- * Gemma, then the Groq Qwen row, then the two remaining fallbacks, with
- * Comet's `gpt-5-nano` last.
+ * Ordered as specified: OpenCode's paid Muse Spark rows first, then Meta's Muse
+ * Spark 1.3 Contributor, then the AIHubMix free model, then Gemini newest-first
+ * down to 3.5, then OpenRouter's Gemma, then the Groq Qwen row, then the two
+ * remaining fallbacks, with Comet's `gpt-5-nano` last.
  *
  * Two pairs of rows are commented out, not deleted — GLM's two and NVIDIA's two.
  * Both notes are at their old positions and say what has to change before they
@@ -69,31 +78,20 @@ interface ModelSpec {
  * loop.
  */
 export const MODEL_CHAIN: ModelSpec[] = [
-  // --- OpenCode Zen. First, as specified. ---
+  // --- OpenCode Zen. Paid rows only, and first, as specified. ---
   //
-  // The free tier is reachable from any client, but only with the session
-  // header. Without `x-opencode-session` (a per-conversation UUID) and a
-  // `User-Agent`, every free model is refused — verified live 2026-09-16 with
-  // no key, the `public` sentinel, and the real key alike:
+  // Muse Spark is on the OpenAI Responses API here: the docs route the GPT /
+  // Grok / Muse-Spark families to `/responses` with `@ai-sdk/openai`, and
+  // chat-completions is not their wire format. Hence `endpoint: "responses"`.
   //
-  //   400 {"type":"error","error":{"type":"MissingSessionID","message":
-  //        "Error from provider (Console): OpenCode's free tier can only be
-  //        used in OpenCode"}}
-  //
-  // The header is the fix: the Zen docs' OpenAI-SDK snippet carries exactly
-  // `x-opencode-session` + `User-Agent`. `generateWithFallback` makes one
-  // session UUID per generation and the OpenCode rows send it, so
-  // `mimo-v2.5-free` answers in about a second.
-  //
-  // `deepseek-v4-flash-free` was removed at the owner's request: its promo has
-  // ended and the relay answers `400 "Model is unavailable"`.
-  { model: "mimo-v2.5-free", provider: "opencode" },
-  // Muse Spark lives on the OpenAI Responses API: the docs route the GPT /
-  // Grok / Muse-Spark family to `/responses`, and chat/completions answers
-  // `500 Internal server error` even with the session header. These rows carry
-  // `endpoint: "responses"` so `callOpenAiCompatible` speaks Responses to them.
-  { model: "muse-spark-1.3-contributor-free", provider: "opencode", endpoint: "responses" },
-  { model: "muse-spark-1.2-contributor-free", provider: "opencode", endpoint: "responses" },
+  {
+    model: "muse-spark-1.3-contributor",
+    provider: "meta",
+    // `minimal`, not `low`: at six questions `low` clears the 60s ceiling often
+    // enough that the row stops answering, and no quality gain was measurable.
+    extraBody: { reasoning_effort: "minimal" },
+    timeoutMs: 60_000,
+  },
   // NVIDIA's `deepseek-v4-flash-0731` and `moonshotai/kimi-k3` were specified
   // for the top of the chain, ahead of `xiaomi-mimo-v2.5-free`, and are
   // commented out at the owner's request.
@@ -132,23 +130,10 @@ export const MODEL_CHAIN: ModelSpec[] = [
   { model: "gemini-3.5-flash", provider: "gemini" },
   { model: "qwen/qwen3.8-27b", provider: "groq" },
   { model: "google/gemma-4-26b-a4b-it:free", provider: "openrouter", },
-  // `glm-4.5-flash` are hybrid reasoning models with dynamic thinking on by
-  // default, and the rows never switched it off. Leaving them in the chain
-  // while that is unresolved spends a 25s timeout to learn nothing. Restore
-  // them (and re-add `glm` to the header's provider list) once their thinking
-  // is either disabled like `xiaomi-mimo-v2.5-free` or measured to fit.
-  // { model: "glm-4.7-flash", provider: "glm" },
-  // { model: "glm-4.5-flash", provider: "glm" },
   { model: "hy3-free", provider: "aihubmix" },
   { model: "inclusionai/ling-3.0-flash-vl:free", provider: "openrouter" },
   {
-    model: "nvidia/nemotron-3-ultra-550b-a55b",
-    provider: "nvidia",
-    // Second last, as specified. The one NVIDIA row that needed nothing: 3.6s
-    // and 191 reasoning characters unforced, comfortably inside the ceiling. No
-    // `reasoning_effort` — it was never shown to need it, and sending an
-    // unverified param is how you turn a healthy row into a 400.
-  },
+    model: "nvidia/nemotron-3-ultra-550b-a55b", provider: "nvidia" },
   {
     model: "gpt-5-nano",
     provider: "comet",
@@ -159,8 +144,9 @@ export const MODEL_CHAIN: ModelSpec[] = [
   },
 ];
 
-/** Per-attempt ceiling. Long enough for a full question set, short enough that
- * the chain can't outlive the request. */
+/** Per-attempt ceiling, unless the row overrides it with `timeoutMs`. Long
+ * enough for a full question set, short enough that the chain can't outlive the
+ * request. */
 const ATTEMPT_TIMEOUT_MS = 25_000;
 
 /**
@@ -168,14 +154,16 @@ const ATTEMPT_TIMEOUT_MS = 25_000;
  * request still returns a response when a slow cascade fails everywhere.
  *
  * This is what decides whether the second pass happens at all, and it is why the
- * pass is only reachable when the first one failed *fast*: the fifteen rows that
- * each burn the full 25s ceiling need 375s on their own, whereas a 429/503 storm
+ * pass is only reachable when the first one failed *fast*: the twelve rows that
+ * each burn the full 25s ceiling need 300s on their own, whereas a 429/503 storm
  * is over in a couple of seconds and leaves the budget almost untouched. Raising
  * this is a product decision, not a bug fix — see `AI.md`.
  *
- * The OpenCode group at the top is cheap either way: `mimo-v2.5-free` answers
- * in about a second, and the two Muse Spark rows, when reached, stay inside a
- * fraction of it.
+ * Muse Spark leads and is the one row allowed 60s, so a first attempt that
+ * times out costs more of this budget than any other single row — and the rows
+ * starved by it are the later ones. It is the row that makes the second pass
+ * mostly unreachable: 60s of 95s leaves the rest of the chain 35s. That is the
+ * trade the owner chose; it is not free.
  */
 const TOTAL_BUDGET_MS = 95_000;
 
@@ -390,35 +378,6 @@ function accountNotice(body: string): string | null {
 }
 
 /**
- * OpenCode Zen refuses its free tier to requests that omit the session header,
- * with a structured error naming the missing session:
- *
- *   400 {"type":"error","error":{"type":"MissingSessionID","message":
- *        "Error from provider (Console): OpenCode's free tier can only be used
- *        in OpenCode"}}
- *
- * `callOpenAiCompatible` now sends the header (a per-conversation UUID plus a
- * `User-Agent`), so a healthy call never lands here. This classifier stays as
- * the safety net: if the relay changes its mind and the refusal reappears, it
- * must be account-scoped rather than model-scoped, or every OpenCode row would
- * be walked on both passes — six wasted round-trips per generation.
- *
- * Deliberately *not* folded into `accountNotice`. That function is about credit
- * and quota notices and returns a sentence about topping up; this is a different
- * species — nothing to do with billing, and no action available to the user.
- * Keeping them apart keeps both messages honest.
- *
- * Matched on the message rather than on the provider because the phrase is
- * unique to OpenCode and the classifier has no provider in hand.
- *
- * Returns the reason to show, or null when this is not the gate.
- */
-function opencodeTierGate(body: string): string | null {
-  if (!/free tier can only be used in OpenCode/i.test(body)) return null;
-  return "OpenCode's free tier only works inside OpenCode's own client";
-}
-
-/**
  * The aggregator pair: `classifyOpenAiCompatible` plus the one signal that
  * ladder structurally cannot see — an account-level **notice in the body**.
  *
@@ -431,19 +390,15 @@ function opencodeTierGate(body: string): string | null {
  *
  * A notice is more specific than a status, so it wins. Both cases are
  * account-level: the walk should stop spending this provider's other rows on it.
- *
- * The OpenCode tier gate is checked here for that same reason. It arrives as a
- * 400, which the ladder reads as model-scoped, so leaving it out would spend
- * every OpenCode row per pass learning one account-level fact.
  */
 function classifyAggregator(status: number, body: string): FailureKind {
-  if (opencodeTierGate(body) || accountNotice(body)) return "provider-ratelimit";
+  if (accountNotice(body)) return "provider-ratelimit";
   return classifyOpenAiCompatible(status, body);
 }
 
 /** The matching one-line reason, notice first for the same reason as above. */
 function describeAggregator(status: number, body: string): string {
-  return opencodeTierGate(body) ?? accountNotice(body) ?? describeFailure(status, body);
+  return accountNotice(body) ?? describeFailure(status, body);
 }
 
 // ---------------------------------------------------------------------------
@@ -488,8 +443,16 @@ function nvidiaKey(): string {
   return (env.NVIDIA_API_KEY ?? "").trim();
 }
 
+/**
+ * OpenCode Zen. A paid key only — the free tier refuses every client that is
+ * not OpenCode's own, which is why no `-free` row ships.
+ */
 function opencodeKey(): string {
   return (env.OPENCODE_API_KEY ?? "").trim();
+}
+
+function metaKey(): string {
+  return (env.MUSECODE_API_KEY ?? "").trim();
 }
 
 /**
@@ -497,6 +460,8 @@ function opencodeKey(): string {
  */
 export function isAiConfigured(): boolean {
   return (
+    metaKey().length > 0 ||
+    opencodeKey().length > 0 ||
     geminiKey().length > 0 ||
     geminiFallbackKey().length > 0 ||
     glmKey().length > 0 ||
@@ -504,8 +469,7 @@ export function isAiConfigured(): boolean {
     openrouterKey().length > 0 ||
     cometKey().length > 0 ||
     groqKey().length > 0 ||
-    nvidiaKey().length > 0 ||
-    opencodeKey().length > 0
+    nvidiaKey().length > 0
   );
 }
 
@@ -686,31 +650,46 @@ type OpenAiCompatibleProvider = Exclude<Provider, "gemini" | "glm">;
 
 /** Where each OpenAI-compatible provider's chat-completions endpoint lives. */
 const AGGREGATOR_ENDPOINTS: Record<OpenAiCompatibleProvider, string> = {
+  // Meta Model API: `https://api.meta.ai/v1`, bearer token, OpenAI-SDK
+  // drop-in, so chat-completions is the documented path.
+  meta: "https://api.meta.ai/v1/chat/completions",
+  // The base for both of OpenCode's wires: the Responses transport derives
+  // `/responses` from this by replacing the path suffix.
+  opencode: "https://opencode.ai/zen/v1/chat/completions",
   aihubmix: "https://aihubmix.com/v1/chat/completions",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   comet: "https://api.cometapi.com/v1/chat/completions",
   // Groq's OpenAI-compatible face lives under a path prefix, unlike the others.
   groq: "https://api.groq.com/openai/v1/chat/completions",
   nvidia: "https://integrate.api.nvidia.com/v1/chat/completions",
-  // OpenCode Zen's docs row reads exactly this: bare model id, this path,
-  // `@ai-sdk/openai-compatible`. The Muse Spark rows swap the path suffix for
-  // `/responses` — see `callOpenAiCompatibleResponses`.
-  opencode: "https://opencode.ai/zen/v1/chat/completions",
 };
 
 /** The key each of those reads. Thunks, so the env is read per attempt. */
 const AGGREGATOR_KEYS: Record<OpenAiCompatibleProvider, () => string> = {
+  meta: metaKey,
+  opencode: opencodeKey,
   aihubmix: aihubmixKey,
   openrouter: openrouterKey,
   comet: cometKey,
   groq: groqKey,
   nvidia: nvidiaKey,
-  opencode: opencodeKey,
 };
 
 /**
- * Chat-completions transport for AIHubMix, OpenRouter, Comet, Groq, NVIDIA and
- * OpenCode, which share a wire format and a status ladder.
+ * The env var a provider's key is read from, for the message a missing one
+ * throws. Meta is the one provider whose key does not follow the
+ * `<PROVIDER>_API_KEY` pattern — its key is `MUSECODE_API_KEY`.
+ */
+function keyNameFor(provider: OpenAiCompatibleProvider): string {
+  return provider === "meta" ? "MUSECODE_API_KEY" : `${provider.toUpperCase()}_API_KEY`;
+}
+
+/**
+ * Chat-completions transport for Meta, OpenCode, AIHubMix, OpenRouter, Comet,
+ * Groq and NVIDIA, which share a wire format and a status ladder. A row can opt
+ * out of that wire format with `endpoint: "responses"`, which hands it to
+ * `callOpenAiCompatibleResponses` below — same provider, same key, different
+ * shape.
  *
  * No `response_format`: the prompt already asks for JSON and the parser is
  * tolerant, and asking anyway is not free — OpenRouter answers a
@@ -725,47 +704,21 @@ const AGGREGATOR_KEYS: Record<OpenAiCompatibleProvider, () => string> = {
 async function callOpenAiCompatible(
   spec: ModelSpec,
   messages: ChatMessage[],
-  signal: AbortSignal,
-  opencodeSessionId: string
+  signal: AbortSignal
 ): Promise<string> {
   const provider = spec.provider as OpenAiCompatibleProvider;
   const key = AGGREGATOR_KEYS[provider]();
   if (!key) {
-    throw new GenerationError("error", `${provider.toUpperCase()}_API_KEY is not set.`);
+    throw new GenerationError("error", `${keyNameFor(provider)} is not set.`);
   }
 
-  // The Muse Spark rows speak the OpenAI Responses API, everything else speaks
-  // chat-completions. Same provider, same key, different wire format.
   if (spec.endpoint === "responses") {
-    return callOpenAiCompatibleResponses(spec, messages, signal, key, opencodeSessionId);
-  }
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${key}`,
-  };
-  if (provider === "opencode") {
-    // Zen's free tier is refused without these two — a per-conversation UUID
-    // and a User-Agent. The rest of the block (`x-opencode-client` /
-    // `-project` / `-request`, plus the CLI User-Agent) is the fingerprint
-    // their own client sends, added at the owner's request to try to keep the
-    // free tier usable from the Worker. Measured 2026-09-16 from a residential
-    // IP the extra headers change nothing — every variant (with and without
-    // them, even with no Authorization at all) returns 200 — and there is no
-    // evidence they beat the per-IP limits on Cloudflare's shared egress. The
-    // provider states its free tier is only for its own client, so this is
-    // client-identity emulation, owner-requested, with the ToS/key risk that
-    // implies. See `opencodeTierGate` and the MODEL_CHAIN note.
-    headers["x-opencode-session"] = opencodeSessionId;
-    headers["x-opencode-project"] = opencodeSessionId;
-    headers["x-opencode-request"] = crypto.randomUUID();
-    headers["x-opencode-client"] = "cli";
-    headers["User-Agent"] = "opencode/latest/1.3.15/cli";
+    return callOpenAiCompatibleResponses(spec, messages, signal, key);
   }
 
   const response = await fetch(AGGREGATOR_ENDPOINTS[provider], {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model: spec.model,
       messages,
@@ -822,16 +775,21 @@ async function callOpenAiCompatible(
 }
 
 /**
- * The OpenAI Responses-API transport, used by the Muse Spark rows on OpenCode
- * Zen — the docs route the GPT / Grok / Muse-Spark family to `/responses`, and
- * chat-completions answers `500 Internal server error` there. Verified live
- * 2026-09-16: both Muse Spark rows answer `/responses` with the session header
- * in 1.5-5.6s.
+ * The OpenAI Responses-API transport, for rows that carry
+ * `endpoint: "responses"` — today only OpenCode Zen's Muse Spark rows, whose
+ * docs route the GPT / Grok / Muse-Spark families here with `@ai-sdk/openai`.
  *
  * The body is Responses-shaped: `input` instead of `messages` (the same
- * role/content array works), no `temperature`/`max_tokens` (that is
- * `max_output_tokens`), and the answer is assembled from the `output` items
- * rather than `choices[0].message.content`.
+ * role/content array works), `max_output_tokens` instead of
+ * `temperature`/`max_tokens`, and the answer is assembled from the `output`
+ * items rather than `choices[0].message.content`.
+ *
+ * **Unverified.** Written against the docs, not against a successful call: the
+ * only OpenCode key available has no credit, and Zen checks billing before it
+ * routes, so both wires answer `401 Insufficient balance` and the shape of a
+ * real reply has never been seen. If a funded key ever lands, this is the first
+ * thing to check — a wrong `output` walk would read as "returned an empty
+ * response" and quietly cost the chain two rows.
  *
  * Errors ride the same `error` JSON shape as chat-completions, so the shared
  * `classifyAggregator` / `describeAggregator` pair applies unchanged.
@@ -840,8 +798,7 @@ async function callOpenAiCompatibleResponses(
   spec: ModelSpec,
   messages: ChatMessage[],
   signal: AbortSignal,
-  key: string,
-  opencodeSessionId: string
+  key: string
 ): Promise<string> {
   const provider = spec.provider as OpenAiCompatibleProvider;
 
@@ -849,15 +806,7 @@ async function callOpenAiCompatibleResponses(
     AGGREGATOR_ENDPOINTS[provider].replace("/chat/completions", "/responses"),
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-        "x-opencode-session": opencodeSessionId,
-        "x-opencode-project": opencodeSessionId,
-        "x-opencode-request": crypto.randomUUID(),
-        "x-opencode-client": "cli",
-        "User-Agent": "opencode/latest/1.3.15/cli",
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model: spec.model,
         input: messages,
@@ -883,13 +832,16 @@ async function callOpenAiCompatibleResponses(
   try {
     json = JSON.parse(body) as typeof json;
   } catch {
+    const notice = accountNotice(body);
+    if (notice) throw new GenerationError("provider-ratelimit", notice);
     throw new GenerationError("error", describeFailure(response.status, body));
   }
 
   if (json.error) {
+    const notice = accountNotice(body);
     throw new GenerationError(
-      classifyAggregator(response.status, json.error.message ?? body),
-      json.error.message ?? `${provider} error`
+      notice ? "provider-ratelimit" : classifyOpenAiCompatible(response.status, json.error.message ?? body),
+      notice ?? json.error.message ?? `${provider} error`
     );
   }
 
@@ -905,8 +857,7 @@ async function callOpenAiCompatibleResponses(
 function callModel(
   spec: ModelSpec,
   messages: ChatMessage[],
-  signal: AbortSignal,
-  opencodeSessionId: string
+  signal: AbortSignal
 ): Promise<string> {
   switch (spec.provider) {
     case "gemini":
@@ -914,7 +865,7 @@ function callModel(
     case "glm":
       return callGlm(spec, messages, signal);
     default:
-      return callOpenAiCompatible(spec, messages, signal, opencodeSessionId);
+      return callOpenAiCompatible(spec, messages, signal);
   }
 }
 
@@ -946,10 +897,6 @@ export async function generateWithFallback(
   options: GenerateOptions = {}
 ): Promise<GenerateOutcome> {
   const attempts: GenerationAttempt[] = [];
-  // One OpenCode Zen session per generation: the free tier keys prompt caching
-  // off this UUID, and a fresh one per attempt would throw that away for zero
-  // benefit — the messages are identical every time a row is retried.
-  const opencodeSessionId = crypto.randomUUID();
   const deadline = Date.now() + TOTAL_BUDGET_MS;
   /**
    * Providers whose *account* is already known to be rate limited.
@@ -1014,11 +961,12 @@ export async function generateWithFallback(
         // still take its full ceiling, which made the budget a floor — measured
         // at 100.0s against 95s. Clamped rather than skipped, because most rows
         // answer in about a second, so a small remainder is still worth trying.
+        // `spec.timeoutMs` overrides the shared ceiling for a row whose minimum
+        // thinking budget approaches it — see the Muse Spark entry.
         const text = await callModel(
           spec,
           messages,
-          AbortSignal.timeout(Math.min(ATTEMPT_TIMEOUT_MS, remaining)),
-          opencodeSessionId
+          AbortSignal.timeout(Math.min(spec.timeoutMs ?? ATTEMPT_TIMEOUT_MS, remaining))
         );
 
         // A 200 is not proof of a usable answer — see `accept` in

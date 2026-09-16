@@ -799,9 +799,11 @@ test.describe("quiz session", () => {
 
     await page.getByRole("button", { name: "Next question →" }).click();
 
-    // Question 3 is free text, with a romaji alternative accepted.
+    // Question 3 is free text, with a romaji alternative accepted. The answer
+    // is bare kana, so this one also offers a kana bank — the romaji route has
+    // to keep working regardless.
     await expect(page.getByText("Question 3 of 3")).toBeVisible();
-    const input = page.getByPlaceholder("Type your answer — kana or romaji");
+    const input = page.locator('[data-slot="quiz-answer-input"]');
     await input.fill("gakusei");
     await page.getByRole("button", { name: "Check answer" }).click();
     await expect(page.getByText("Correct!")).toBeVisible();
@@ -902,13 +904,109 @@ test.describe("quiz session", () => {
     // among its alternatives, so this passes only if the annotation is stripped
     // before the comparison. Without that, every kanji answer would be marked
     // wrong while the question looked perfectly correct on screen.
-    const input = page.getByPlaceholder("Type your answer — kana or romaji");
+    const input = page.locator('[data-slot="quiz-answer-input"]');
     await input.fill("学生");
     await page.getByRole("button", { name: "Check answer" }).click();
     await expect(page.getByText("Correct!")).toBeVisible();
 
     await page.getByRole("button", { name: "See results" }).click();
     await expect(page.getByText("3 of 3 correct (100%)")).toBeVisible();
+  });
+
+  /**
+   * The kana bank is a typing aid rather than a question type of its own: it
+   * appears under a "Type the answer" question whose answer is Japanese, and
+   * its tiles write into the same field the keyboard does.
+   */
+  test("offers a kana bank under a typing question and grades a tapped answer", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, [
+      {
+        type: "input",
+        prompt: 'Type the Japanese for "student".',
+        answer: "がくせい",
+        acceptableAnswers: ["gakusei"],
+        explanation: "学生《がくせい》 is read がくせい.",
+        sourceId: 3,
+        sourceKind: "word",
+      },
+    ]);
+
+    await page.goto("/study/quizzes/session?sources=words&count=1&types=input");
+    await expectHydrated(page);
+
+    await expect(page.getByText("Kana bank")).toBeVisible({ timeout: 15_000 });
+    const input = page.locator('[data-slot="quiz-answer-input"]');
+    // One tile per kana of the reading, so each name is unambiguous.
+    const tile = (kana: string) => page.getByRole("button", { name: kana, exact: true });
+
+    await tile("が").click();
+    await expect(input).toHaveValue("が");
+    // A spent tile goes out of play rather than disappearing: the bank's shape
+    // must not shift under the user's hand while they are using it.
+    await expect(tile("が")).toBeDisabled();
+
+    await tile("く").click();
+    await tile("せ").click();
+    await tile("い").click();
+    await expect(input).toHaveValue("がくせい");
+
+    // The backspace hands the last tile back. It is the only way to undo a
+    // mis-tap from the bank, because tapping a tile never focuses the field.
+    await page.getByRole("button", { name: "Delete the last kana" }).click();
+    await expect(input).toHaveValue("がくせ");
+    await expect(tile("い")).toBeEnabled();
+    await tile("い").click();
+
+    await page.getByRole("button", { name: "Check answer" }).click();
+    await expect(page.getByText("Correct!")).toBeVisible();
+  });
+
+  test("offers no kana bank when the answer is not Japanese", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, [
+      {
+        type: "input",
+        prompt: "What does 学生《がくせい》 mean?",
+        answer: "student",
+        explanation: "学生《がくせい》 means student.",
+        sourceId: 3,
+        sourceKind: "word",
+      },
+    ]);
+
+    await page.goto("/study/quizzes/session?sources=words&count=1&types=input");
+    await expectHydrated(page);
+
+    const input = page.locator('[data-slot="quiz-answer-input"]');
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Kana bank")).toHaveCount(0);
+    // With nothing to tap, the field keeps its original promise.
+    await expect(input).toHaveAttribute("placeholder", "Type your answer — kana or romaji");
+  });
+
+  test("offers no kana bank when the reading would be marked wrong", async ({ page }) => {
+    await stubConvex(page);
+    // The answer is annotated, but only the romaji is listed as an alternative
+    // — so a bank spelling がくせい would hand the learner a wrong answer to a
+    // question they had actually got right.
+    await stubGeneration(page, [
+      {
+        type: "input",
+        prompt: 'Type the Japanese for "student".',
+        answer: "学生《がくせい》",
+        acceptableAnswers: ["gakusei"],
+        explanation: "学生《がくせい》 is read がくせい.",
+        sourceId: 3,
+        sourceKind: "word",
+      },
+    ]);
+
+    await page.goto("/study/quizzes/session?sources=words&count=1&types=input");
+    await expectHydrated(page);
+
+    await expect(page.locator('[data-slot="quiz-answer-input"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Kana bank")).toHaveCount(0);
   });
 
   test("omitting seconds means the quiz is untimed", async ({ page }) => {

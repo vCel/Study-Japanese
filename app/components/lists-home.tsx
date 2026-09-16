@@ -45,12 +45,16 @@ export function ListsHome({
           return (
             <Card
               key={list.id}
+              data-slot="list-card"
               className={
-                "relative h-full transition-transform hover:-translate-y-0.5 " +
+                // Flex column so the footer can be pushed to the card's bottom
+                // edge: a list without a description would otherwise end higher
+                // than its neighbours in the same row.
+                "relative flex h-full flex-col transition-transform hover:-translate-y-0.5 " +
                 (isSelected ? "border-primarylw/60 ring-1 ring-primarylw/40" : "")
               }
             >
-              <CardContent className="p-6">
+              <CardContent className="flex flex-1 flex-col p-6">
                 <label
                   className="absolute right-4 top-4 z-10 cursor-pointer"
                   aria-label={`Select ${list.title} for combined study`}
@@ -71,7 +75,12 @@ export function ListsHome({
                 <Link to={`/lists/${list.id}`} className="block">
                   <h2 className="mb-1 text-xl font-semibold hover:text-primarylw">{list.title}</h2>
                   {list.description && (
-                    <p className="line-clamp-2 text-sm text-muted-foreground">{list.description}</p>
+                    <p
+                      data-slot="list-description"
+                      className="line-clamp-2 text-sm text-muted-foreground"
+                    >
+                      {list.description}
+                    </p>
                   )}
                 </Link>
 
@@ -89,7 +98,10 @@ export function ListsHome({
                   </div>
                 )}
 
-                <div className="mt-4 flex items-center justify-between">
+                <div
+                  data-slot="list-card-footer"
+                  className="mt-auto flex items-center justify-between pt-4"
+                >
                   <Badge variant="secondary">
                     <ListTree className="mr-1 h-3 w-3" /> {list.wordCount} {unit}
                   </Badge>

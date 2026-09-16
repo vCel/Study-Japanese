@@ -53,7 +53,7 @@ jobs:
       #
       # Keep this list in step with MODEL_CHAIN in app/lib/ai.server.ts.
       - name: Seed empty AI-key placeholders for type generation
-        run: printf 'GEMINI_FALLBACK_API_KEY=\nGEMINI_API_KEY=\nGLM_API_KEY=\nAIHUBMIX_API_KEY=\nOPENROUTER_API_KEY=\nCOMET_API_KEY=\nGROQ_API_KEY=\nNVIDIA_API_KEY=\nOPENCODE_API_KEY=\n' > .dev.vars
+        run: printf 'GEMINI_FALLBACK_API_KEY=\nGEMINI_API_KEY=\nGLM_API_KEY=\nAIHUBMIX_API_KEY=\nOPENROUTER_API_KEY=\nCOMET_API_KEY=\nGROQ_API_KEY=\nNVIDIA_API_KEY=\nMUSECODE_API_KEY=\nOPENCODE_API_KEY=\n' > .dev.vars
 
       - name: Install dependencies
         run: npm ci
@@ -92,7 +92,7 @@ jobs:
              [ -z "$GLM_API_KEY" ] && [ -z "$AIHUBMIX_API_KEY" ] && \
              [ -z "$OPENROUTER_API_KEY" ] && [ -z "$COMET_API_KEY" ] && \
              [ -z "$GROQ_API_KEY" ] && [ -z "$NVIDIA_API_KEY" ] && \
-             [ -z "$OPENCODE_API_KEY" ]; then
+             [ -z "$MUSECODE_API_KEY" ] && [ -z "$OPENCODE_API_KEY" ]; then
             echo "No AI key is set in GitHub secrets - nothing to sync."
             exit 0
           fi
@@ -116,6 +116,7 @@ jobs:
           sync_one COMET_API_KEY "$COMET_API_KEY"
           sync_one GROQ_API_KEY "$GROQ_API_KEY"
           sync_one NVIDIA_API_KEY "$NVIDIA_API_KEY"
+          sync_one MUSECODE_API_KEY "$MUSECODE_API_KEY"
           sync_one OPENCODE_API_KEY "$OPENCODE_API_KEY"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -128,4 +129,5 @@ jobs:
           COMET_API_KEY: ${{ secrets.COMET_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          MUSECODE_API_KEY: ${{ secrets.MUSECODE_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

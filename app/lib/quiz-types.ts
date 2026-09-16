@@ -290,14 +290,15 @@ export interface QuizQuestion {
  * into the client bundle.
  */
 export type Provider =
+  | "meta"
+  | "opencode"
   | "gemini"
   | "glm"
   | "aihubmix"
   | "openrouter"
   | "comet"
   | "groq"
-  | "nvidia"
-  | "opencode";
+  | "nvidia";
 
 /** One step of the model-fallback walk, reported back so the UI can narrate it. */
 export interface GenerationAttempt {

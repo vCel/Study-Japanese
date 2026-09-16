@@ -7,7 +7,6 @@ import {
 export default [
   index("routes/index.tsx"),
   route("words", "routes/words.tsx"),
-  route("words/examples", "routes/examples.tsx"),
   route("words/:id", "routes/word-detail.tsx"),
   route("words/:id/edit", "routes/word-edit.tsx"),
   route("phrases", "routes/phrases.tsx"),
@@ -18,7 +17,6 @@ export default [
   route("lists/:id/edit", "routes/list-edit.tsx"),
   route("lists/new", "routes/lists-new.tsx"),
   route("rules", "routes/rules.tsx"),
-  route("rules/examples", "routes/rule-examples.tsx"),
   route("rules/new", "routes/rule-new.tsx"),
   route("rules/upload", "routes/rule-upload.tsx"),
   route("rules/:id", "routes/rule-detail.tsx"),
@@ -32,8 +30,6 @@ export default [
   route("study", "routes/study-redirect.tsx"),
   route("study/session", "routes/study-session-redirect.tsx"),
   route("settings", "routes/settings.tsx"),
-  // Legacy URL — redirects to /words/examples.
-  route("examples", "routes/examples-redirect.tsx"),
   route("upload", "routes/upload.tsx"),
   route("login", "routes/login.tsx"),
   route("signup", "routes/signup.tsx"),

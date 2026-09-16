@@ -1,11 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-/** Legacy URLs — uploads folded into the create pages, examples under /words. */
+/** Legacy URLs — uploads folded into the create pages. */
 const REDIRECTS = [
   { from: "/upload", to: "/lists/new" },
   { from: "/rules/upload", to: "/rules/new" },
   { from: "/phrases/upload", to: "/phrases/new" },
-  { from: "/examples", to: "/words/examples" },
 ];
 
 test.describe("legacy upload URLs", () => {

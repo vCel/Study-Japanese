@@ -6,11 +6,16 @@
  * questions are dropped and the rest are kept — the user gets a shorter quiz
  * instead of an error page. Options are re-shuffled here too, because "in a
  * random order" is an instruction the model may quietly ignore.
+ *
+ * One failure is neither malformed nor re-shufflable: a question that spells
+ * out its own answer. The prompt asks the model not to, and it does anyway —
+ * see {@link leaksAnswer}.
  */
 
 import type { QuizQuestion, QuizQuestionType } from "./quiz-types";
 import { QUIZ_QUESTION_TYPES } from "./quiz-types";
 import { extractJson } from "./quiz-prompt";
+import { stripEmphasis, stripFurigana } from "./furigana";
 
 /** Fisher-Yates, so an option pool can be relied on to be unordered. */
 function shuffle<T>(items: T[]): T[] {
@@ -63,12 +68,86 @@ function countBlanks(sentence: string): number {
 }
 
 /**
+ * Anything the model writes in kana or kanji.
+ *
+ * Includes the iteration marks `々` / `〆`, which sit outside the kana blocks
+ * and would otherwise make `日々` look like a Latin string.
+ */
+const JAPANESE = /[\u3005\u3006\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+/** The comparison form of a string: annotations and emphasis markers gone. */
+function comparable(text: string): string {
+  return stripEmphasis(stripFurigana(text)).trim().toLowerCase();
+}
+
+/**
+ * Whether the answer is spelled out somewhere the learner can read it.
+ *
+ * This is the mechanical half of the giveaway rule in `quiz-prompt.ts`. The
+ * prompt asks the model not to reveal the answer, and models keep doing it
+ * anyway — a meaning question whose options are English and whose prompt
+ * already states the meaning, or a sentence quoted with the tested word still
+ * in it. Both are decidable here by comparison, so they are not left to
+ * compliance. What stays the prompt's job is the *semantic* half: whether a
+ * distractor happens to be defensible too.
+ *
+ * Three deliberate imprecisions, all erring towards keeping a question, since a
+ * false drop costs the learner a question they never see:
+ *
+ * - Readings count as text. The model annotates everything, so an annotation
+ *   left over the tested word (`学生《がくせい》` for a question asking how to
+ *   read 学生) is a leak even though the base text is bare.
+ * - A one-character answer is never a leak. Particle questions answer 「は」 or
+ *   「に」, which turn up in almost any Japanese sentence; matching on something
+ *   that short would cost real questions to coincidences.
+ * - Latin answers match on word boundaries, so "eat" is not found inside
+ *   "great". Japanese has no such boundaries and is matched by containment.
+ */
+function leaksAnswer(text: string, answer: string): boolean {
+  const needle = comparable(answer);
+  if (needle.length < 2) return false;
+
+  const haystacks = [text, stripFurigana(text)].map((value) => value.toLowerCase());
+
+  if (JAPANESE.test(needle)) {
+    const stem = uninflected(needle);
+    return haystacks.some(
+      (haystack) => haystack.includes(needle) || (stem !== null && haystack.includes(stem))
+    );
+  }
+
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const word = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`);
+  return haystacks.some((haystack) => word.test(haystack));
+}
+
+/**
+ * The part of a Japanese word that survives conjugation, or null when there is
+ * nothing safe left to compare.
+ *
+ * Only the trailing *hiragana* comes off, because that is where a Japanese
+ * ending lives: a sentence quoting 「召し上がりましたか」 contains 召し上がる for
+ * every practical purpose and yet not as a substring, which is the exact shape
+ * of a question that quotes the verb it is testing. Katakana is left alone —
+ * loanwords do not inflect, and trimming ー would turn コーヒー into a stem of
+ * its own.
+ *
+ * A stem under two characters is not a test: 食べる reduces to 食, and single
+ * kanji turn up in too much of the language to mean anything.
+ */
+function uninflected(needle: string): string | null {
+  const stem = needle.replace(/[\u3040-\u309f]+$/, "");
+  return stem.length >= 2 && stem !== needle ? stem : null;
+}
+
+/**
  * Coerce one raw entry into a question, or null when it is too malformed to
  * render. The per-type requirements enforced here mirror the prompt:
  *  * every type needs a prompt and a non-empty answer
  *  * `multiple-choice` needs 2+ *distinct* options, with the answer among them
  *  * `fill-blanks` needs a sentence containing at least one gap
  *  * `true-false` normalises its answer to "true"/"false"
+ *  * no type but `true-false` may contain its own answer (see `leaksAnswer`)
  *
  * What this cannot check is whether a distractor is *semantically* also valid —
  * that is the prompt's job (see `## Distractor quality` in `quiz-prompt.ts`).
@@ -100,6 +179,16 @@ function parseQuestion(raw: unknown, index: number): QuizQuestion | null {
     sourceId,
     sourceKind,
   };
+
+  // `true-false` is exempt: its answer is the word "true" or "false", which a
+  // prompt reading "True or false: …" contains by construction. Everything else
+  // is checked against both strings the learner sees, prompt and sentence.
+  if (type !== "true-false") {
+    const sentence = asString(entry.sentence);
+    if (leaksAnswer(prompt, answer) || (sentence !== null && leaksAnswer(sentence, answer))) {
+      return null;
+    }
+  }
 
   if (type === "true-false") {
     const normalized = answer.toLowerCase();

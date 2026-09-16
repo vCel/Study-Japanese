@@ -253,30 +253,3 @@ test.describe("rule detail", () => {
     await expect(page.getByText("Related rules")).toHaveCount(0);
   });
 });
-
-test.describe("rule examples page", () => {
-  test("is its own page, separate from the word-list examples", async ({ page }) => {
-    await page.goto("/rules/examples");
-    await expect(page.getByRole("heading", { level: 1, name: "Rule examples" })).toBeVisible();
-
-    // A seeded rule example lives here, with its equivalent broken out…
-    const ruleExample = "書く → 書きます";
-    await expect(page.getByText(ruleExample)).toBeVisible();
-    // The equivalent comes from the example's own `english_equivalent` field.
-    // Migration 0013 backfilled that column from `english`, so for seeded rows
-    // the two hold the same string and it renders twice — hence `.first()`.
-    await expect(
-      page.getByText("kaku → kakimasu (to write → writes, politely)").first()
-    ).toBeVisible();
-
-    // …and is not mixed into the word-list examples page.
-    await page.goto("/words/examples");
-    await expect(page.getByRole("heading", { level: 1, name: "Example sentences" })).toBeVisible();
-    await expect(page.getByText(ruleExample)).toHaveCount(0);
-  });
-
-  test("links each example back to its rule", async ({ page }) => {
-    await page.goto("/rules/examples");
-    await expect(page.locator("main a:has(h2), main a[href^='/rules/']").first()).toBeVisible();
-  });
-});

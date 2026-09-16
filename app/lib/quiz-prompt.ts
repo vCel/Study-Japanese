@@ -91,7 +91,7 @@ function typeInstruction(type: QuizQuestionType, particleRules: boolean): string
     case "multiple-choice":
       return `- "multiple-choice": ${QUIZ_TYPE_HINTS["multiple-choice"]} Provide exactly 4 options in "options", only one of which is correct. Put the correct option in "answer". Every distractor must be clearly WRONG here — not merely unlikely, and never a near-synonym of the answer.`;
     case "input":
-      return `- "input": ${QUIZ_TYPE_HINTS.input} Put the canonical answer in "answer" and any alternative accepted spellings (kana and romaji, where reasonable) in "acceptableAnswers".`;
+      return `- "input": ${QUIZ_TYPE_HINTS.input} Put the canonical answer in "answer" and every accepted spelling in "acceptableAnswers" — "What the answer must look like" below says exactly what that field has to contain.`;
     case "fill-blanks":
       return [
         `- "fill-blanks": ${QUIZ_TYPE_HINTS["fill-blanks"]}`,
@@ -99,9 +99,9 @@ function typeInstruction(type: QuizQuestionType, particleRules: boolean): string
         `  Set "blanks" to the number of gaps.`,
         `  Put the correct fillers in "answer", joined by ", " in gap order.`,
         particleRules
-          ? `  For a question about one of the particle rules below, the gaps MUST be the particles themselves — e.g. 「私___学生です」 with the answer 「は」 — and "options" must add plausible distractor particles (が, を, に, で, と, も) so the bank is not trivially solvable. For any other item, "options" must contain the correct fillers plus plausible distractors of the same word class, in a shuffled order.`
-          : `  "options" must contain the correct fillers plus plausible distractors of the same word class, in a shuffled order.`,
-        `  Every distractor must be wrong in the sentence you wrote — test each one against it before returning.`,
+          ? `  For a question about one of the particle rules below, the gaps MUST be the particles themselves — e.g. 「私___学生です」 with the answer 「は」 — and "options" must add plausible distractor particles (が, を, に, で, と, も) so the bank is not trivially solvable. For any other item, "options" must contain the correct fillers plus at least three plausible distractors of the same word class, in a shuffled order.`
+          : `  "options" must contain the correct fillers plus at least three plausible distractors of the same word class, in a shuffled order.`,
+        `  Every distractor must be wrong in the sentence you wrote — test each one against it before returning. A bank of two options is a coin flip, so there must be at least three distractors.`,
       ].join("\n");
     case "true-false":
       return `- "true-false": ${QUIZ_TYPE_HINTS["true-false"]} Write a Japanese sentence in "sentence" (you may show it in "prompt" instead) that is either correct or contains exactly one deliberate error, and set "answer" to "true" if the sentence is correct or "false" if it is not.`;
@@ -131,6 +131,9 @@ const DISTRACTOR_QUALITY = [
   "### The opposite failure: a giveaway",
   "A question also breaks by being too *easy*. If the item under test appears verbatim in the question, the only option that repeats it is obviously the answer, and the learner scores without knowing any Japanese — which is worse than a hard question, because it teaches nothing and looks careless.",
   "- The answer must never be the only option that shares a word, a character, or a reading with the question or the sentence.",
+  "- **The prompt must not contain the answer.** Before you return, search your own \"prompt\" string for the answer text: if the answer appears in it, in any language, the question is broken. Rewrite it so the answer appears only in \"options\".",
+  "- **A meaning question must make the learner go through the Japanese.** If the options are English meanings, the prompt shows the Japanese word and does NOT state the meaning: What does 定食《ていしょく》 mean? with options \"set meal\" / \"meal ticket\" / \"documents\". If the prompt states the English meaning, the options must be Japanese words: Which of these means \"set meal\"? with options 定食 / 食券 / 資料. Never state the English meaning in the prompt *and* offer English meanings as options — Which of these means set meal? with the option \"set meal\" answers itself, and the learner can pick it without reading a word of Japanese.",
+  "- **Never quote a sentence that already contains the item under test.** If a question quotes Japanese, the tested word or ending must be absent from that quotation — leave it as ___ instead. 社食で昼ごはんを食べます。 where 社食 means company cafeteria gives the answer away twice over; so does quoting お客様はもう朝食を召し上がりましたか。 and then asking which honorific verb to use, because 召し上がる is the only option that appears in the quotation. Ask instead about ___で昼ごはんを食べます。, or quote a sentence that does not contain the verb at all.",
   "- Where the question quotes Japanese, every option must be a plausible continuation or replacement of that quotation, so simply recognising the quoted text does not pick one out.",
   "  Asking 「学生《がくせい》」 を使った文を選びなさい where only one option contains 学生 is a giveaway. Make every option usable in the sentence and let the grammar decide which is right.",
   "- Keep the options the same kind of thing — same word class, same conjugation, similar length — so the answer cannot be identified by its shape alone.",
@@ -166,6 +169,96 @@ const FURIGANA_RULE = [
   '- Use the reading that fits the sentence — the same kanji can be read several ways.',
   '- EXCEPTION, and it overrides everything above: never annotate the item the question is testing. If the question asks how to read a word, that word stays bare — the annotation would be the answer.',
 ].join('\n');
+
+/**
+ * What the answer field has to contain, derived from the grader rather than
+ * from taste.
+ *
+ * `answersMatch` in `quiz-runner.tsx` compares the learner's typing to `answer`
+ * and `acceptableAnswers` after exactly four allowances — furigana annotations,
+ * `**bold**`, whitespace, and the punctuation `。．.、,，!！?？`. Everything
+ * else is an exact match. So `to eat` does not accept `eat`, a different
+ * conjugation does not accept the plain form, and romaji does not accept kana.
+ *
+ * That last one is why this block exists at all: the input box *tells* the
+ * learner "kana or romaji both count", and `acceptableAnswers` is the only
+ * thing that makes the promise true. Nothing in the app converts romaji.
+ */
+const ANSWER_FORM = [
+  "## What the answer must look like",
+  'The learner\'s typing is compared to "answer" and "acceptableAnswers" after only four allowances: furigana annotations, **bold** markers, spaces, and the punctuation 。．.、,，!！?？. Nothing else is forgiven, so:',
+  "",
+  '- Write "answer" as the exact string a learner would type. Never a gloss, never a parenthetical, and never two variants joined by "/" or "or" — `to eat / eat` matches neither.',
+  '- For an English answer use the shortest natural form: `eat`, not `to eat`; `company cafeteria`, not `the company cafeteria`. A leading article or "to" is not ignored.',
+  '- For a Japanese answer, use the form the library item uses. Annotate its kanji like everything else — the annotation is stripped before comparing.',
+  '- **An "input" answer containing kanji MUST list both its kana reading and that reading in romaji in "acceptableAnswers".** 図書館《としょかん》 → ["としょかん", "toshokan"]. The input box promises the learner that "kana or romaji both count", and this field is the only thing that makes that true. Nothing else in the app converts romaji.',
+  '- Also list the other forms a learner might reasonably type — a plain or polite variant of the same verb, a second reading in common use — but never a string that would be equally right for a different question.',
+].join("\n");
+
+/**
+ * Three examples of the whole thing done properly.
+ *
+ * `RESPONSE_SCHEMA` says what the fields are; it cannot show the *shape* of a
+ * good question — a prompt that does not contain its answer, options where
+ * every wrong one is wrong in this sentence, an explanation that says why. Prose
+ * rules only reach so far, and a worked example is what a model actually
+ * copies: measured 2026-09-16, all three runs of the first version asked the
+ * fill-blanks sentence verbatim, which is why the preamble now forbids reusing
+ * them and why that example was moved off the material's own vocabulary.
+ *
+ * The items are invented, and the preamble says so: examples drawn from the
+ * real material is how a quiz ends up asking about 図書館 in a quiz that never
+ * mentioned it.
+ */
+const WORKED_EXAMPLES = [
+  "## Three worked examples",
+  'These items are from an unrelated library. Copy the *shape* and never the content — the ids are placeholders, and none of this may appear in your answer.',
+  'They illustrate field shapes, not a menu: write only the question types listed under "Question types to use" above.',
+  "**Write your own sentences.** These are illustrations, not a bank: never reuse one of their sentences, and never ask the same sentence twice.",
+  "",
+  "```json",
+  `{
+  "questions": [
+    {
+      "type": "multiple-choice",
+      "prompt": "What does 図書館《としょかん》 mean?",
+      "options": ["library", "hospital", "post office", "station"],
+      "answer": "library",
+      "explanation": "図書館《としょかん》 is where you borrow books. 病院《びょういん》 is a hospital and 郵便局《ゆうびんきょく》 a post office, so neither names this place.",
+      "sourceId": 4,
+      "sourceKind": "word"
+    },
+    {
+      "type": "input",
+      "prompt": "Type the Japanese for \\"departure\\".",
+      "answer": "出発《しゅっぱつ》",
+      "acceptableAnswers": ["しゅっぱつ", "shuppatsu"],
+      "explanation": "出発《しゅっぱつ》 is the moment you leave to begin a journey — the noun, rather than the verb 出発《しゅっぱつ》する.",
+      "sourceId": 9,
+      "sourceKind": "word"
+    },
+    {
+      "type": "fill-blanks",
+      "prompt": "Which ending fits the sentence?",
+      "sentence": "この道《みち》は狭《せま》くて通《とお》り___です。",
+      "blanks": 1,
+      "options": ["にくい", "やすい", "たい", "ながら"],
+      "answer": "にくい",
+      "explanation": "狭《せま》くて says the road is narrow, so it is hard to pass: 通りにくい. 通りやすい is grammatical but contradicts that — やすい means easy to do.",
+      "sourceId": 1,
+      "sourceKind": "rule"
+    }
+  ]
+}`,
+  "```",
+  "What to copy from them:",
+  "",
+  "- The first prompt names the Japanese and asks for the meaning. It never states the meaning *and* offers meanings — that question answers itself, and the learner can score without reading a word of Japanese.",
+  '- Every wrong option is wrong *in this question*, not merely less likely. "hospital" and "post office" are real places; they are simply not what 図書館《としょかん》 means.',
+  "- The third one is the harder lesson: 通りやすい is perfectly grammatical, and the sentence is what rules it out. Letting 狭《せま》くて decide is the whole question.",
+  '- The explanations say why the answer fits and, where it matters, why the alternative does not. None of them restates the question or gives a bare dictionary gloss.',
+  '- The input question carries kana *and* romaji in "acceptableAnswers", so a learner who types either is marked right.',
+].join("\n");
 
 function distributionInstruction(config: QuizConfig): string {
   if (config.types.length <= 1) return "";
@@ -299,8 +392,10 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     distributionInstruction(config),
     spreadInstruction,
     focusInstruction,
+    ANSWER_FORM,
     offersOptions ? DISTRACTOR_QUALITY : "",
     FURIGANA_RULE,
+    WORKED_EXAMPLES,
     "",
     "## Rules",
     `- Produce exactly ${config.questionCount} questions.`,
@@ -309,11 +404,12 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     wantsRules
       ? '- Every question MUST set "sourceKind" to "rule" when it came from a rule, or "word" when it came from a vocabulary item.'
       : '- Every question MUST set "sourceKind" to "word".',
-    '- Every question MUST include a short "explanation" that names the rule or word involved.',
+    '- Every question MUST include a short "explanation": name the rule or word involved, say why the answer is right *in this sentence*, and — where a tempting option was wrong — say why. Do not restate the question, and do not give a bare dictionary gloss.',
+    '- Do not test the same fact twice. A word\'s meaning and its reading are different facts and both may be asked; the same meaning asked twice is a wasted question.',
     '- For any question with "options", the options MUST be listed in an arbitrary, shuffled order — the correct answer must NOT reliably come first.',
     '- Never reveal the answer inside the "prompt" text.',
     offersOptions
-      ? "- Before returning, re-read every question with options twice: once to confirm that exactly one option is defensible, and once to confirm that the answer is not the only option that repeats a word from the question. Rewrite any question that fails either check."
+      ? "- Before returning, re-read every question with options and check three things: that exactly one option is defensible; that the answer text does not appear anywhere in \"prompt\" or \"sentence\"; and that the answer is not the only option repeating a word or character from the question. Rewrite any question that fails any of the three."
       : "",
     '- No Markdown in any value: no **bold**, no *italics*, no `backticks`, no headings.',
     wantsRules

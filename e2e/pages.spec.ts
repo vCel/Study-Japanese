@@ -95,6 +95,100 @@ test.describe("phrases vs words", () => {
     await expect(page.locator("main")).toContainText(/\d+\s+phrases?/);
     await expect(page.locator("main a[href^='/words/']").first()).toBeVisible();
   });
+
+  /**
+   * The shape a word/phrase card has, read off the first card on a page:
+   * headword, its kana reading as muted text, and the part of speech as a badge
+   * pinned into the footer at the card's bottom-right corner.
+   */
+  async function firstCard(page: Page, path: string) {
+    await page.goto(path);
+    const card = page.locator("main [data-slot='word-card']").first();
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    // Every number below is a measurement, so the webfont has to have settled.
+    await waitForFonts(page);
+    return card.evaluate((el) => {
+      const h2 = el.querySelector("h2") as HTMLElement;
+      const kana = h2.nextElementSibling as HTMLElement | null;
+      const badge = el.querySelector("span.rounded-full") as HTMLElement | null;
+      const cardBox = el.getBoundingClientRect();
+      const badgeBox = badge?.getBoundingClientRect();
+      return {
+        headword: h2.textContent?.trim() ?? null,
+        // Only a plain paragraph counts — a badge would be a `<span>`.
+        kana: kana?.tagName === "P" ? (kana.textContent?.trim() ?? null) : null,
+        kanaIsBadge: kana?.classList.contains("rounded-full") ?? false,
+        badge: badge?.textContent?.trim() ?? null,
+        badgeFromBottom: badgeBox ? Math.round(cardBox.bottom - badgeBox.bottom) : null,
+        badgeFromRight: badgeBox ? Math.round(cardBox.right - badgeBox.right) : null,
+      };
+    });
+  }
+
+  test("phrase cards are laid out exactly like word cards", async ({ page }) => {
+    const words = await firstCard(page, "/words");
+    const phrases = await firstCard(page, "/phrases");
+
+    expect(words.headword).toBe("日本語");
+    expect(words.kana).toBe("にほんご");
+    expect(phrases.headword).toBe("おはようございます");
+    // The kana sits under the headword as text, the way `/words` renders it —
+    // it used to be a badge above the word here.
+    expect(phrases.kana).toBe("おはようございます");
+    expect(words.kanaIsBadge).toBe(false);
+    expect(phrases.kanaIsBadge, "the kana is muted text, not a badge").toBe(false);
+
+    // The part of speech moved from the top badges into the footer, the same
+    // distance from the card's bottom-right corner as on a word card.
+    expect(words.badge).toBe("noun");
+    expect(phrases.badge).toBe("phrase");
+    expect(phrases.badgeFromBottom).toBe(words.badgeFromBottom);
+    expect(phrases.badgeFromRight).toBe(words.badgeFromRight);
+  });
+});
+
+/**
+ * Every list card ends the same way — count badge left, Study button right —
+ * and that footer is pinned to the card's bottom edge, so a row of cards ends
+ * flush whether or not each list carries a description.
+ */
+test.describe("list cards", () => {
+  test("keep the footer on the card's bottom edge without a description", async ({ page }) => {
+    await page.goto("/");
+    const cards = page.locator("main [data-slot='list-card']");
+    await expect(cards.first()).toBeVisible({ timeout: 30_000 });
+    expect(await cards.count(), "seeded word lists").toBeGreaterThan(1);
+
+    // The seeded lists all carry a description, so the case under test has to be
+    // forced: removing the paragraph is what the layout has to survive.
+    const removed = await page.evaluate(() => {
+      const description = document.querySelector(
+        "[data-slot='list-card'] [data-slot='list-description']"
+      );
+      description?.remove();
+      return description ? 1 : 0;
+    });
+    expect(removed, "a seeded list carries a description to remove").toBe(1);
+    await expect(
+      cards.first().locator("[data-slot='list-description']")
+    ).toHaveCount(0);
+
+    const gaps = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("[data-slot='list-card']")).map((card) => {
+        const footer = card.querySelector("[data-slot='list-card-footer']");
+        return footer
+          ? Math.round(
+              card.getBoundingClientRect().bottom - footer.getBoundingClientRect().bottom
+            )
+          : null;
+      })
+    );
+
+    expect(gaps.filter((gap) => gap === null), "cards missing a footer").toEqual([]);
+    // One card is now a line shorter; every footer must still sit the same
+    // distance from its own card's bottom edge.
+    expect(new Set(gaps).size, `footer gaps: ${gaps.join(", ")}`).toBe(1);
+  });
 });
 
 /**
@@ -255,9 +349,7 @@ test.describe("page header", () => {
     "/words",
     "/phrases",
     "/phrases/lists",
-    "/words/examples",
     "/rules",
-    "/rules/examples",
     "/study/flashcards",
     "/study/quizzes",
     "/lists/new",
@@ -370,12 +462,6 @@ test.describe("page header", () => {
       `/lists/${listId}`
     );
     await expect(editCrumbs.locator("[aria-current='page']")).toHaveText("Edit word list");
-
-    // Word examples trail through Words, matching the rule-examples page.
-    await page.goto("/words/examples");
-    await expect(
-      page.getByRole("navigation", { name: "breadcrumb" }).getByRole("link", { name: "Words" })
-    ).toHaveAttribute("href", "/words");
 
     // Top-level pages have no trail, and nothing says "Back to …" any more.
     await page.goto("/rules");

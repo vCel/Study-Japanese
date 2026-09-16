@@ -5,8 +5,14 @@ import { waitForHydration } from "./helpers";
 /** On small screens the navigation is a bottom dock of categories instead of the sidebar. */
 test.use({ viewport: { width: 390, height: 780 } });
 
-/** Every category expands into a popover of its pages. */
-const CATEGORIES_WITH_MENU = ["Words", "Phrases", "Grammar", "Study", "Profile"];
+/** Categories that expand into a popover of their pages. */
+const CATEGORIES_WITH_MENU = ["Words", "Phrases", "Study", "Profile"];
+
+/**
+ * Grammar has a single page, so the dock links straight to it rather than
+ * opening a one-item popover (see `Dock`).
+ */
+const SINGLE_PAGE_CATEGORY = { label: "Grammar", to: "/rules" };
 
 /** Clicks happen after hydration — pre-hydration clicks are silently dropped. */
 async function openCategory(page: Page, label: string) {
@@ -29,8 +35,14 @@ test.describe("mobile navigation", () => {
     for (const label of CATEGORIES_WITH_MENU) {
       await expect(dock.getByRole("button", { name: label, exact: true })).toBeVisible();
     }
-    // Every category is a popover now, so nothing links straight through.
-    await expect(dock.getByRole("link")).toHaveCount(0);
+
+    // Grammar is the one single-page category: it links straight through, and it
+    // is the only thing in the dock that does.
+    await expect(dock.getByRole("link", { name: SINGLE_PAGE_CATEGORY.label })).toHaveAttribute(
+      "href",
+      SINGLE_PAGE_CATEGORY.to
+    );
+    await expect(dock.getByRole("link")).toHaveCount(1);
 
     // The desktop sidebar is not shown at this width.
     await expect(page.getByRole("navigation")).toBeHidden();
@@ -40,7 +52,7 @@ test.describe("mobile navigation", () => {
     await page.goto("/");
     const { dock, menu: wordsMenu } = await openCategory(page, "Words");
 
-    await expect(wordsMenu.getByRole("menuitem")).toHaveCount(3);
+    await expect(wordsMenu.getByRole("menuitem")).toHaveCount(2);
     await expect(wordsMenu.getByRole("menuitem", { name: "Word lists" })).toHaveAttribute(
       "href",
       "/"
@@ -48,10 +60,6 @@ test.describe("mobile navigation", () => {
     await expect(wordsMenu.getByRole("menuitem", { name: "Words", exact: true })).toHaveAttribute(
       "href",
       "/words"
-    );
-    await expect(wordsMenu.getByRole("menuitem", { name: "Examples" })).toHaveAttribute(
-      "href",
-      "/words/examples"
     );
 
     // Opening another category swaps the menu rather than stacking them.
@@ -73,10 +81,10 @@ test.describe("mobile navigation", () => {
     await expect(profileMenu).toBeHidden();
 
     // Tapping the open category again toggles it shut.
-    await dock.getByRole("button", { name: "Grammar", exact: true }).click();
-    await expect(page.getByRole("menu", { name: "Grammar pages" })).toBeVisible();
-    await dock.getByRole("button", { name: "Grammar", exact: true }).click();
-    await expect(page.getByRole("menu", { name: "Grammar pages" })).toBeHidden();
+    await dock.getByRole("button", { name: "Phrases", exact: true }).click();
+    await expect(page.getByRole("menu", { name: "Phrases pages" })).toBeVisible();
+    await dock.getByRole("button", { name: "Phrases", exact: true }).click();
+    await expect(page.getByRole("menu", { name: "Phrases pages" })).toBeHidden();
   });
 
   test("the popover hangs off the category that was tapped", async ({ page }) => {
@@ -121,11 +129,11 @@ test.describe("mobile navigation", () => {
 
   test("choosing a page from the popover navigates and dismisses the menu", async ({ page }) => {
     await page.goto("/");
-    const { menu } = await openCategory(page, "Grammar");
+    const { menu } = await openCategory(page, "Phrases");
 
-    await menu.getByRole("menuitem", { name: "Rules & forms" }).click();
+    await menu.getByRole("menuitem", { name: "Phrases", exact: true }).click();
 
-    await expect(page).toHaveURL(/\/rules$/);
+    await expect(page).toHaveURL(/\/phrases$/);
     await expect(page.getByRole("menu")).toHaveCount(0);
   });
 
@@ -155,7 +163,7 @@ test.describe("mobile navigation", () => {
     ).toHaveAttribute("aria-current", "page");
   });
 
-  test("the active category is marked and no category links straight through", async ({
+  test("the active category is marked, including the one that links straight through", async ({
     page,
   }) => {
     await page.goto("/phrases");
@@ -175,9 +183,10 @@ test.describe("mobile navigation", () => {
     );
     await expect(dock.locator('[aria-current="page"]')).toHaveCount(1);
 
-    // A page inside the Grammar category keeps Grammar highlighted.
-    await page.goto("/rules/examples");
-    await expect(dock.getByRole("button", { name: "Grammar", exact: true })).toHaveAttribute(
+    // The single-page Grammar category is a link, and marks itself current the
+    // same way its popover siblings do.
+    await page.goto(SINGLE_PAGE_CATEGORY.to);
+    await expect(dock.getByRole("link", { name: SINGLE_PAGE_CATEGORY.label })).toHaveAttribute(
       "aria-current",
       "page"
     );

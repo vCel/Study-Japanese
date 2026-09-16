@@ -107,8 +107,7 @@ function DockEntry({
   const single = category.links.length === 1;
 
   // A one-page category is a plain link — a popover for a single item would
-  // just be an extra tap. No category is that small today (Study gained
-  // Flashcards + Quizzes), but the shorthand stays for any that becomes one.
+  // just be an extra tap. Grammar is the one category that small.
   const highlight = active || (open && !single);
   const className = cn(
     itemClasses,
