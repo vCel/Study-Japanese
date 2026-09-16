@@ -802,7 +802,7 @@ function QuestionFlow({
           <Card>
             <CardContent className="p-6 md:p-8">
               <div className="mb-4 flex items-start justify-between gap-4">
-                <p className="text-lg leading-relaxed font-medium whitespace-pre-line">
+                <p className="text-xl leading-relaxed font-medium whitespace-pre-line">
                   <RichText>{question.prompt}</RichText>
                 </p>
                 {timeLimitSeconds !== null && !submitted && (
@@ -821,7 +821,7 @@ function QuestionFlow({
               </div>
 
               {question.type === "fill-blanks" && question.sentence && (
-                <p className="mb-5 rounded-[var(--radius)] border border-border bg-muted/40 p-4 text-lg leading-loose">
+                <p className="mb-5 rounded-[var(--radius)] border border-border bg-muted/40 p-4 text-xl leading-loose">
                   {renderSentence(question.sentence, submitted?.given ?? null, submitted?.question.answer ?? null)}
                 </p>
               )}
@@ -881,7 +881,9 @@ function renderSentence(
             className={cn(
               // A real blank: fixed height and a baseline, so the sentence reads
               // as a sentence rather than a run of full-width underscores.
-              "mx-1 inline-flex h-8 min-w-16 items-center justify-center border-b-2 px-2 align-middle text-base font-semibold",
+              // Sized to the sentence around it — a filled gap that renders
+              // smaller than its own sentence reads as a different word.
+              "mx-1 inline-flex h-9 min-w-20 items-center justify-center border-b-2 px-2 align-middle text-xl font-semibold",
               given === null
                 ? "border-primarylw/60 text-primarylw"
                 : sameChoice(givenParts[index], answerParts[index])
@@ -892,7 +894,7 @@ function renderSentence(
             {given === null ? (
               // Before answering, the gap shows its number — the same number the
               // chips below carry — and nothing else.
-              <span className="text-xs font-normal opacity-40">{index + 1}</span>
+              <span className="text-sm font-normal opacity-40">{index + 1}</span>
             ) : (
               <RichText>{givenParts[index] ?? "—"}</RichText>
             )}
@@ -1014,7 +1016,7 @@ function QuestionInput({
                       : "border-border opacity-60"
               )}
             >
-              <span className="text-sm font-medium">
+              <span className="text-base font-medium">
                 <RichText>{labels[index]}</RichText>
               </span>
               {submitted !== null && isCorrect && (
@@ -1046,14 +1048,14 @@ function QuestionInput({
           {Array.from({ length: blanks }).map((_, index) => (
             <span
               key={index}
-              className="rounded-[var(--radius)] border border-dashed border-primarylw/60 px-4 py-2 text-sm font-semibold text-primarylw"
+              className="rounded-[var(--radius)] border border-dashed border-primarylw/60 px-4 py-2 text-base font-semibold text-primarylw"
             >
               {picked[index] ? (
                 <RichText>{picked[index]}</RichText>
               ) : (
                 // An unfilled slot shows its number, faintly — the same marker
                 // the sentence itself uses, so the two read as the same slot.
-                <span className="text-xs font-normal opacity-40">{index + 1}</span>
+                <span className="text-sm font-normal opacity-40">{index + 1}</span>
               )}
             </span>
           ))}
@@ -1070,7 +1072,7 @@ function QuestionInput({
                   disabled={used || submitted !== null}
                   onClick={() => pick(option)}
                   className={cn(
-                    "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
+                    "rounded-full border px-4 py-1.5 text-base font-medium transition-colors",
                     used
                       ? "cursor-not-allowed border-border/60 text-muted-foreground/40 line-through"
                       : "cursor-pointer border-border hover:border-primarylw/50 hover:bg-muted"
@@ -1090,7 +1092,7 @@ function QuestionInput({
                 if (event.key === "Enter") onSubmit(given);
               }}
               placeholder="Type the missing words, separated by commas"
-              className="w-full rounded-[var(--radius)] border border-border bg-background px-4 py-2 text-sm outline-none focus:border-primarylw"
+              className="w-full rounded-[var(--radius)] border border-border bg-background px-4 py-2 text-base outline-none focus:border-primarylw"
             />
             <Button onClick={() => onSubmit(given)} disabled={given.trim().length === 0}>
               <Check />
@@ -1133,7 +1135,7 @@ function QuestionInput({
               : "Type your answer — kana or romaji"
           }
           className={cn(
-            "min-w-0 flex-1 rounded-[var(--radius)] border bg-background px-4 py-3 text-lg outline-none",
+            "min-w-0 flex-1 rounded-[var(--radius)] border bg-background px-4 py-3 text-xl outline-none",
             submitted === null
               ? "border-border focus:border-primarylw"
               : submitted.correct
@@ -1258,13 +1260,13 @@ function Feedback({
         ) : (
           <X className="h-4 w-4 text-red-500" />
         )}
-        <p className="text-sm font-semibold">
+        <p className="text-base font-semibold">
           {correct ? "Correct!" : timedOut ? "Time ran out" : "Not quite"}
         </p>
       </div>
 
       {!correct && (
-        <p className="mt-2 text-sm">
+        <p className="mt-2 text-base">
           <span className="text-muted-foreground">Correct answer: </span>
           <span className="font-semibold">
             <RichText>{question.answer}</RichText>
@@ -1280,7 +1282,7 @@ function Feedback({
       )}
 
       {question.explanation && (
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="mt-2 text-base text-muted-foreground">
           <RichText>{question.explanation}</RichText>
         </p>
       )}
@@ -1376,12 +1378,12 @@ function ResultsPanel({
             {missed.map((answer) => (
               <div
                 key={answer.question.id}
-                className="rounded-[var(--radius)] border border-border p-3 text-sm"
+                className="rounded-[var(--radius)] border border-border p-3 text-base"
               >
                 <p className="font-medium whitespace-pre-line">
                   <RichText>{answer.question.prompt}</RichText>
                 </p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Correct answer:{" "}
                   <span className="text-foreground">
                     <RichText>{answer.question.answer}</RichText>

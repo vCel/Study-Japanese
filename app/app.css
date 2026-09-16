@@ -21,12 +21,16 @@ body {
  * readings are meant to sit *above* the text, not inside its rhythm. Pinning
  * the size, the line-height and the position keeps the reading legible without
  * the surrounding sentence shifting.
+ *
+ * 0.7em, not the browser's ~0.5em: half of a `text-sm` answer is about 7px,
+ * which is no use to the reader who cannot read kanji. `em` keeps it
+ * proportional, so a larger answer scales its readings with it.
  */
 ruby.furigana {
   ruby-position: over;
 }
 ruby.furigana > rt {
-  font-size: 0.5em;
+  font-size: 0.7em;
   font-weight: 400;
   line-height: 1;
   color: var(--color-muted-foreground);
