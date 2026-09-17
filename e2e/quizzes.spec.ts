@@ -1,10 +1,23 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
 import { expectHydrated, seedStarterPack, stubConvex, wordIdByTitle } from "./helpers";
 
 /** One tinted panel inside the merged "What to ask about" step. */
 function facetPanel(page: Page, source: "words" | "lists") {
   return page.locator(`[data-slot="quiz-facet-panel"][data-source="${source}"]`);
+}
+
+/**
+ * The named computed properties of an element, for comparing two elements that
+ * are meant to be styled alike. Comparing against the other element rather than
+ * against literals is what makes the check unable to drift from the treatment it
+ * pins.
+ */
+function styleOf(target: Locator, keys: string[]) {
+  return target.evaluate((el, names) => {
+    const computed = getComputedStyle(el);
+    return Object.fromEntries(names.map((name) => [name, computed.getPropertyValue(name)]));
+  }, keys);
 }
 
 /**
@@ -420,6 +433,178 @@ test.describe("quiz builder", () => {
     await expect(page.getByText("Seconds per question")).toBeVisible();
   });
 
+  test("the mode select trades the per-question limit for a whole-run budget", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, [sampleQuestions()[0]]);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    // Quiz by default, so the per-question rows are the ones on screen.
+    const quiz = page.getByRole("radio", { name: "Quiz" });
+    const exam = page.getByRole("radio", { name: "Exam" });
+    await expect(quiz).toHaveAttribute("aria-checked", "true");
+    await expect(exam).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByText("Seconds per question")).toBeVisible();
+    await expect(page.getByRole("slider", { name: "Exam time limit" })).toHaveCount(0);
+
+    await exam.click();
+
+    // The per-question limit is not greyed out but gone: a run with one budget
+    // for all of its questions has no per-question limit left to set. What
+    // remains is the same slider under its exam name.
+    await expect(exam).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByText("Seconds per question")).toHaveCount(0);
+    await expect(page.getByRole("switch", { name: "Time limit per question" })).toHaveCount(0);
+    const limit = page.getByRole("slider", { name: "Exam time limit" });
+    await expect(limit).toHaveAttribute("aria-valuemin", "0");
+    await expect(limit).toHaveAttribute("aria-valuemax", "14");
+    await expect(limit).toHaveAttribute("aria-valuetext", "20 minutes");
+    // Anchored, because the summary line also carries the budget — as
+    // "20 min exam", which is a different string.
+    await expect(page.getByText("20 min", { exact: true })).toBeVisible();
+
+    // Arrow keys move focus and selection together, which is what the
+    // radiogroup role promises. Back to Quiz and the per-question rows return.
+    await exam.focus();
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.getByRole("radio", { name: "Quiz" })).toHaveAttribute(
+      "aria-checked",
+      "true"
+    );
+    await expect(page.getByText("Seconds per question")).toBeVisible();
+
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("radio", { name: "Exam" })).toHaveAttribute("aria-checked", "true");
+
+    // Arrow keys step it — the accessible way to drive it. Two minutes at a
+    // time, which is the interval the ladder is measured in.
+    await limit.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("slider", { name: "Exam time limit" })).toHaveAttribute(
+      "aria-valuetext",
+      "22 minutes"
+    );
+
+    await page.getByRole("button", { name: "Generate quiz" }).click();
+
+    // The whole run's budget, in the unit the runner counts in.
+    await expect(page).toHaveURL(/examSeconds=1320/);
+  });
+
+  test("the mode select is one control, styled like the question pills", async ({ page }) => {
+    await stubConvex(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    // The question element the mode control is meant to match is the question-type
+    // pill. "Multiple choice" starts picked, "True or false" does not, so both
+    // halves of the treatment have a reference on screen.
+    const pillOn = page.getByRole("button", { name: "Multiple choice" });
+    const pillOff = page.getByRole("button", { name: "True or false" });
+    const itemOn = page.getByRole("radio", { name: "Quiz" });
+    const itemOff = page.getByRole("radio", { name: "Exam" });
+
+    // Spacing and type are the pill's, so a mode occupies its row the same way a
+    // question type does.
+    const SHAPE = [
+      "padding-top",
+      "padding-right",
+      "padding-bottom",
+      "padding-left",
+      "font-size",
+      "font-weight",
+      "border-radius",
+    ];
+    expect(await styleOf(itemOff, SHAPE)).toEqual(await styleOf(pillOff, SHAPE));
+
+    // The picked state is the pill's too — the same tint behind the same blue text.
+    const STATE = ["background-color", "color"];
+    expect(await styleOf(itemOn, STATE)).toEqual(await styleOf(pillOn, STATE));
+
+    const group = page.getByRole("radiogroup", { name: "Mode" });
+
+    // The pill's border is not repeated on the item: it moves up to the control.
+    // Two rounded-full outlines two pixels apart read as a ring nested inside a
+    // ring, which is the separate-elements look this control exists to avoid.
+    expect((await styleOf(itemOff, ["border-top-width"]))["border-top-width"]).toBe("0px");
+    expect(await styleOf(group, ["border-top-width", "border-top-color", "border-radius"])).toEqual(
+      await styleOf(pillOff, ["border-top-width", "border-top-color", "border-radius"])
+    );
+
+    // One border, and it wraps both options. That is the whole difference between
+    // one control and two adjacent pills.
+    const [groupBox, onBox, offBox, pillBox] = await Promise.all([
+      group.boundingBox(),
+      itemOn.boundingBox(),
+      itemOff.boundingBox(),
+      pillOff.boundingBox(),
+    ]);
+    expect(groupBox && onBox && offBox && pillBox, "mode control geometry").toBeTruthy();
+    expect(groupBox!.x).toBeLessThan(onBox!.x);
+    expect(groupBox!.x + groupBox!.width).toBeGreaterThan(offBox!.x + offBox!.width);
+
+    // Flush inside it: the second option starts where the first ends, rather than
+    // a gap away.
+    expect(Math.abs(offBox!.x - (onBox!.x + onBox!.width))).toBeLessThanOrEqual(1);
+
+    // Taller than a lone pill by its own border and padding, and nothing else, so
+    // it stays in scale with the pills sharing the card.
+    expect(groupBox!.height - pillBox!.height).toBeLessThanOrEqual(6);
+  });
+
+  test("the question split is the same control as the mode select", async ({ page }) => {
+    await stubConvex(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    const mode = page.getByRole("radiogroup", { name: "Mode" });
+    const split = page.getByRole("radiogroup", { name: "Question split" });
+
+    // The shell: one control's border, radius and inset are the other's.
+    const SHELL = [
+      "border-top-width",
+      "border-top-color",
+      "border-radius",
+      "padding-top",
+      "padding-left",
+    ];
+    expect(await styleOf(split, SHELL)).toEqual(await styleOf(mode, SHELL));
+
+    // The options: an unpicked one from each control.
+    const ITEM = [
+      "padding-top",
+      "padding-right",
+      "padding-bottom",
+      "padding-left",
+      "font-size",
+      "font-weight",
+      "border-radius",
+    ];
+    expect(await styleOf(page.getByRole("radio", { name: "Mix freely" }), ITEM)).toEqual(
+      await styleOf(page.getByRole("radio", { name: "Exam" }), ITEM)
+    );
+
+    // And the picked state reads the same in both.
+    const PICKED = ["background-color", "color"];
+    expect(await styleOf(page.getByRole("radio", { name: "Even split" }), PICKED)).toEqual(
+      await styleOf(page.getByRole("radio", { name: "Quiz" }), PICKED)
+    );
+
+    // Flush, so each reads as one control rather than as two options side by side.
+    for (const [name, group] of [
+      ["mode", mode],
+      ["split", split],
+    ] as const) {
+      const [first, second] = await Promise.all([
+        group.getByRole("radio").first().boundingBox(),
+        group.getByRole("radio").last().boundingBox(),
+      ]);
+      expect(first && second, `${name} control geometry`).toBeTruthy();
+      expect(Math.abs(second!.x - (first!.x + first!.width))).toBeLessThanOrEqual(1);
+    }
+  });
+
   test("difficulty is a slider across easy, normal and hard", async ({ page }) => {
     await stubConvex(page);
     await page.goto("/study/quizzes");
@@ -476,14 +661,14 @@ test.describe("quiz builder", () => {
       page.locator("[data-slot='quiz-options']").getByText("Question split")
     ).toBeVisible();
     await expect(split).toHaveAttribute("data-disabled", "false");
-    await expect(page.getByRole("button", { name: "Even split" })).toHaveAttribute(
-      "aria-pressed",
+    await expect(page.getByRole("radio", { name: "Even split" })).toHaveAttribute(
+      "aria-checked",
       "true"
     );
 
-    await page.getByRole("button", { name: "Mix freely" }).click();
-    await expect(page.getByRole("button", { name: "Mix freely" })).toHaveAttribute(
-      "aria-pressed",
+    await page.getByRole("radio", { name: "Mix freely" }).click();
+    await expect(page.getByRole("radio", { name: "Mix freely" })).toHaveAttribute(
+      "aria-checked",
       "true"
     );
 
@@ -492,14 +677,14 @@ test.describe("quiz builder", () => {
     await page.getByRole("button", { name: "Fill in the blanks" }).click();
     await expect(split).toBeVisible();
     await expect(split).toHaveAttribute("data-disabled", "true");
-    await expect(page.getByRole("button", { name: "Even split" })).toBeDisabled();
+    await expect(page.getByRole("radio", { name: "Even split" })).toBeDisabled();
 
     // Switching words and phrases on brings the second axis back: still a single
     // question type, but now there are two kinds of list material to separate.
     await page.getByRole("button", { name: "Words", exact: true }).click();
     await page.getByRole("button", { name: "Phrases", exact: true }).click();
     await expect(split).toHaveAttribute("data-disabled", "false");
-    await expect(page.getByRole("button", { name: "Even split" })).toBeEnabled();
+    await expect(page.getByRole("radio", { name: "Even split" })).toBeEnabled();
   });
 
   test("'only what I keep missing' is hidden until something has been missed", async ({
@@ -1286,6 +1471,118 @@ test.describe("quiz session", () => {
     // Never answer — the timer should submit for us and mark it wrong.
     await expect(page.getByText("Time ran out")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Correct answer:")).toBeVisible();
+  });
+
+  test("an exam withholds every verdict until the last question is in", async ({ page }) => {
+    await stubConvex(page);
+    const getRequest = await stubGeneration(page, sampleQuestions());
+
+    // A `seconds` alongside `examSeconds` is the case worth pinning: the two are
+    // alternatives, and the run's budget is what wins rather than a per-question
+    // limit quietly running underneath it.
+    await page.goto(
+      "/study/quizzes/session?sources=rules&count=3" +
+        "&types=multiple-choice,fill-blanks,input&seconds=45&examSeconds=600"
+    );
+    await expectHydrated(page);
+
+    await expect(page.getByText("What does 学生 mean?")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-slot="exam-clock"]')).toHaveText(/10:00 left/);
+
+    const body = getRequest() as { config: { mode: string; timeLimitEnabled: boolean } };
+    expect(body.config.mode).toBe("exam");
+    expect(body.config.timeLimitEnabled).toBe(false);
+
+    // Answering moves straight on: no verdict, and no feedback card to sit on.
+    await page.getByRole("button", { name: "student" }).click();
+    await expect(page.getByText("Question 2 of 3")).toBeVisible();
+    await expect(page.getByText("Correct!", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Next question →" })).toHaveCount(0);
+
+    // Question 2, answered wrong on purpose. Still nothing said about it.
+    await page.getByRole("button", { name: "が", exact: true }).click();
+    await expect(page.getByText("Question 3 of 3")).toBeVisible();
+    await expect(page.getByText("Not quite")).toHaveCount(0);
+
+    // The typing question, answered right — and submitting it ends the run.
+    await page.locator('[data-slot="quiz-answer-input"]').fill("がくせい");
+    await page.getByRole("button", { name: "Submit answer" }).click();
+
+    // Every verdict at once, in the order the questions were asked.
+    await expect(page.getByText("Exam complete!")).toBeVisible();
+    await expect(page.getByText("2 of 3 correct (67%)")).toBeVisible();
+
+    const rows = page.locator('[data-slot="exam-review-row"]');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText("What does 学生 mean?");
+    await expect(rows.nth(1)).toContainText("Fill in the missing particle.");
+    await expect(rows.nth(2)).toContainText("How is 学生 read?");
+
+    // And the verdict on each, matched exactly so "Correct answer:" on the
+    // wrong one is not mistaken for its badge.
+    await expect(rows.nth(0).getByText("Correct", { exact: true })).toBeVisible();
+    await expect(rows.nth(1).getByText("Incorrect", { exact: true })).toBeVisible();
+    await expect(rows.nth(2).getByText("Correct", { exact: true })).toBeVisible();
+    await expect(rows.nth(1)).toContainText("Correct answer: は");
+    await expect(rows.nth(1)).toContainText("you said “が”");
+  });
+
+  test("answering a question does not restart the exam clock", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, sampleQuestions());
+
+    // Ten minutes, so the budget cannot run out underneath the test.
+    await page.goto(
+      "/study/quizzes/session?sources=rules&count=3" +
+        "&types=multiple-choice,fill-blanks,input&examSeconds=600"
+    );
+    await expectHydrated(page);
+
+    const clock = page.locator('[data-slot="exam-clock"]');
+    await expect(clock).toHaveText(/10:00 left/, { timeout: 15_000 });
+
+    // Let the clock actually move before answering, so that "it is no longer at
+    // 10:00" cannot be satisfied by a clock that never started.
+    await expect.poll(() => clock.textContent(), { timeout: 15_000 }).not.toMatch(/10:00 left/);
+
+    await page.getByRole("button", { name: "student" }).click();
+    await expect(page.getByText("Question 2 of 3")).toBeVisible();
+
+    // Still counting down from where it was: the budget is the run's, so an
+    // answer neither pauses it nor hands back the time it has already spent.
+    await expect(clock).not.toHaveText(/10:00 left/);
+    await expect(clock).toHaveText(/9:\d\d left/);
+  });
+
+  test("the exam ends when its budget runs out, leaving the rest unanswered", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, sampleQuestions());
+
+    // Five seconds rather than a builder-sized budget: the route accepts any
+    // length, so the expiry path can be watched instead of waited out.
+    await page.goto(
+      "/study/quizzes/session?sources=rules&count=3" +
+        "&types=multiple-choice,fill-blanks,input&examSeconds=5"
+    );
+    await expectHydrated(page);
+
+    await expect(page.getByText("What does 学生 mean?")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-slot="exam-clock"]')).toHaveText(/0:0\d left/);
+    // The header names the budget in the unit it was given in: the builder only
+    // sends whole minutes, but the route accepts any length, and this is one.
+    await expect(page.getByText("5s exam")).toBeVisible();
+
+    // Never answer: the budget should end the run on its own.
+    await expect(page.getByText("Exam complete!")).toBeVisible({ timeout: 20_000 });
+    // The denominator is the questions asked, so a run cut short cannot score
+    // 100% by never reaching the questions it did not answer.
+    await expect(page.getByText("0 of 3 correct (0%)")).toBeVisible();
+    await expect(page.getByText("3 not answered")).toBeVisible();
+
+    const rows = page.locator('[data-slot="exam-review-row"]');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0).getByText("Not answered", { exact: true })).toBeVisible();
+    await expect(rows.nth(2).getByText("Not answered", { exact: true })).toBeVisible();
   });
 
   test("reports a skipped model when Gemini is rate limited", async ({ page }) => {

@@ -149,8 +149,37 @@ export const QUIZ_DISTRIBUTION_HINTS: Record<QuizDistribution, string> = {
  */
 export const QUIZ_SIZES = [5, 10, 15, 20, 25, 30];
 
+/**
+ * How a run presents itself, and the only thing the two modes disagree about is
+ * what they *reveal*.
+ *
+ * A union rather than an `examMode` flag because it is one setting with two
+ * settings' worth of behaviour hanging off it — the control is a mode select,
+ * and a third mode would otherwise mean a second boolean and a rule about which
+ * combination wins.
+ */
+export type QuizMode = "quiz" | "exam";
+
+/** The modes, in the order the builder offers them. */
+export const QUIZ_MODES: QuizMode[] = ["quiz", "exam"];
+
+export const QUIZ_MODE_LABELS: Record<QuizMode, string> = {
+  quiz: "Quiz",
+  exam: "Exam",
+};
+
 /** Time limits per question, in seconds. 0 = the toggle is off. */
 export const QUIZ_TIME_LIMITS = [15, 30, 45, 60, 75, 90];
+
+/**
+ * The exam ladder, in minutes.
+ *
+ * One budget for the whole run rather than a limit per question, which is why
+ * the steps are two orders of magnitude coarser than `QUIZ_TIME_LIMITS`: two
+ * minutes at a time, up to half an hour. Below two minutes nothing but a
+ * two-question quiz is answerable; past thirty it stops being an exam.
+ */
+export const QUIZ_EXAM_MINUTES = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
 
 /** Everything the builder collects, and everything the API needs to generate. */
 export interface QuizConfig {
@@ -200,6 +229,21 @@ export interface QuizConfig {
   timeLimitSeconds: number;
 
   /**
+   * What the run reveals, and how it is timed.
+   *
+   * `exam` withholds every verdict until the run is over, and gets one budget
+   * for the whole of it (`examTimeLimitMinutes`) instead of a limit per
+   * question — answering a question neither pauses nor restarts that clock.
+   */
+  mode: QuizMode;
+  /**
+   * The whole run's budget in exam mode, in minutes — an entry of
+   * `QUIZ_EXAM_MINUTES`. Ignored while the mode is `quiz`, so switching away and
+   * back comes round to the same budget.
+   */
+  examTimeLimitMinutes: number;
+
+  /**
    * Draw the quiz from the items in the answer log with at least one wrong
    * answer, worst accuracy first. Implies `starredOnly`-style id scoping: the
    * ids are sent to the server and intersected with the rest of the selection.
@@ -233,6 +277,8 @@ export const DEFAULT_QUIZ_CONFIG: QuizConfig = {
   questionCount: 10,
   timeLimitEnabled: true,
   timeLimitSeconds: 30,
+  mode: "quiz",
+  examTimeLimitMinutes: 20,
   retryMissed: false,
   starredOnly: false,
   types: ["multiple-choice", "fill-blanks"],

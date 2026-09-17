@@ -7,6 +7,7 @@ import { PageHeader } from "~/components/page-header";
 import { QuizRunner, type QuizRunConfig } from "~/components/quiz-runner";
 import {
   QUIZ_DIFFICULTIES,
+  QUIZ_MODE_LABELS,
   QUIZ_QUESTION_TYPES,
   QUIZ_SOURCE_KINDS,
   QUIZ_SOURCE_KIND_LABELS,
@@ -24,6 +25,17 @@ export function meta({}: Route.MetaArgs) {
 function listWords(items: string[]): string {
   if (items.length <= 1) return items[0] ?? "";
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * The exam's budget, in the unit that reads honestly.
+ *
+ * The builder only ever sends whole minutes, but this route accepts any length —
+ * the specs ask for a five-second one — and "0 min exam" is worse than saying
+ * the seconds out loud.
+ */
+function describeExamBudget(seconds: number): string {
+  return seconds % 60 === 0 ? `${seconds / 60} min exam` : `${seconds}s exam`;
 }
 
 function parseIds(value: string | null): number[] {
@@ -65,6 +77,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const timeLimitSeconds = Number.isNaN(parsedSeconds)
     ? null
     : Math.min(Math.max(parsedSeconds, 5), 300);
+
+  /**
+   * The exam's budget, in seconds for the whole run. Its presence is what turns
+   * exam mode on — the same "absent means off" idiom as `seconds` above.
+   *
+   * Clamped rather than snapped to the builder's ladder, for the reason
+   * `seconds` is too: this route parses a URL, and a URL may legitimately ask
+   * for a budget shorter than the builder offers.
+   */
+  const examParam = url.searchParams.get("examSeconds");
+  const parsedExam = examParam === null ? Number.NaN : Number.parseInt(examParam, 10);
+  const examTimeLimitSeconds = Number.isNaN(parsedExam)
+    ? null
+    : Math.min(Math.max(parsedExam, 5), 30 * 60);
 
   const requestedTypes = (url.searchParams.get("types") ?? "")
     .split(",")
@@ -187,7 +213,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const config: QuizRunConfig = {
     sources: resolvedSources,
     questionCount,
-    timeLimitSeconds,
+    // An exam's budget replaces the per-question limit rather than stacking
+    // with it, so a URL carrying both is read as an exam and `seconds` is
+    // dropped — one run, one way of being timed.
+    timeLimitSeconds: examTimeLimitSeconds === null ? timeLimitSeconds : null,
+    examTimeLimitSeconds,
     types: requestedTypes.length > 0 ? requestedTypes : ["multiple-choice"],
     difficulty,
     distribution: url.searchParams.get("distribution") === "random" ? "random" : "even",
@@ -229,16 +259,26 @@ export default function QuizSession({ loaderData }: Route.ComponentProps) {
         ? `${config.listIds.length} list${config.listIds.length === 1 ? "" : "s"}${config.pos ? ` · ${config.pos} only` : ""} · ${starredOnly(config.starredOnly)}${totalAvailable} available`
         : `${totalAvailable} item${totalAvailable === 1 ? "" : "s"} in scope`;
 
+  /** The run's one timing line, whichever way it is timed. */
+  const timing =
+    config.examTimeLimitSeconds === null
+      ? config.timeLimitSeconds === null
+        ? "untimed"
+        : `${config.timeLimitSeconds}s each`
+      : describeExamBudget(config.examTimeLimitSeconds);
+  /** An exam is worth calling an exam on the page it runs on. */
+  const heading = config.examTimeLimitSeconds === null ? QUIZ_MODE_LABELS.quiz : QUIZ_MODE_LABELS.exam;
+
   return (
     <div className="w-full">
       <PageHeader
         title={
           config.sources.length === 1
-            ? `Quiz · ${QUIZ_SOURCE_KIND_LABELS[config.sources[0]]}`
-            : "Quiz · Mixed"
+            ? `${heading} · ${QUIZ_SOURCE_KIND_LABELS[config.sources[0]]}`
+            : `${heading} · Mixed`
         }
         breadcrumbs={[{ label: "Quizzes", to: setupHref }]}
-        description={`${scope} · ${config.questionCount} question${config.questionCount === 1 ? "" : "s"} · ${config.timeLimitSeconds === null ? "untimed" : `${config.timeLimitSeconds}s each`} · ${config.difficulty} · ${config.types.map((type) => QUIZ_TYPE_LABELS[type as QuizQuestionType]).join(", ")}`}
+        description={`${scope} · ${config.questionCount} question${config.questionCount === 1 ? "" : "s"} · ${timing} · ${config.difficulty} · ${config.types.map((type) => QUIZ_TYPE_LABELS[type as QuizQuestionType]).join(", ")}`}
       />
 
       {totalAvailable === 0 ? (

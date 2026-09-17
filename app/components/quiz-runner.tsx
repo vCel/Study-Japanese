@@ -22,6 +22,17 @@ export interface QuizRunConfig {
   questionCount: number;
   /** null = untimed. */
   timeLimitSeconds: number | null;
+  /**
+   * The whole run's budget in seconds, when this run is an exam — null
+   * otherwise.
+   *
+   * Non-null *is* exam mode on this side of the boundary, the same "absent
+   * means off" shape as `timeLimitSeconds`, and it decides both halves of the
+   * mode: no verdict until the run is over, and a clock that measures the run
+   * rather than each question. The route never sets it alongside
+   * `timeLimitSeconds`.
+   */
+  examTimeLimitSeconds: number | null;
   types: string[];
   difficulty: string;
   distribution: string;
@@ -125,6 +136,18 @@ function questionHasFurigana(question: QuizQuestion): boolean {
     ...(question.options ?? []),
     ...(question.acceptableAnswers ?? []),
   ]);
+}
+
+/**
+ * Seconds as `m:ss`.
+ *
+ * The per-question timer counts to a minute and a half at most, so it reads
+ * fine as a bare number; an exam's budget runs to half an hour, where "1799s"
+ * is a number nobody converts in their head.
+ */
+function formatClock(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
 }
 
 /**
@@ -275,6 +298,19 @@ export function QuizRunner({
   /** Every answer of the current run, owned here so the results can read it. */
   const [answers, setAnswers] = React.useState<Answer[]>([]);
   /**
+   * The same list, readable without waiting for a render.
+   *
+   * An exam answers its last question *and* finishes the run inside one handler,
+   * so the `answers` that render's closure sees is one short of the run — the
+   * log would quietly drop the final question. The ref is what the finish reads;
+   * the state is what the results render from.
+   */
+  const answersRef = React.useRef<Answer[]>([]);
+  const addAnswer = React.useCallback((answer: Answer) => {
+    answersRef.current = [...answersRef.current, answer];
+    setAnswers(answersRef.current);
+  }, []);
+  /**
    * The model the server says it is trying right now, plus the attempts it has
    * already settled. Both come from the generation stream, so the loading panel
    * never has to guess: it used to advance on a blind 6-second timer and would
@@ -302,6 +338,7 @@ export function QuizRunner({
     setRoundNote(null);
     setProgress(null);
     setAnswers([]);
+    answersRef.current = [];
 
     /** The attempts seen live — the fallback when a failure carries no list. */
     const seen: GenerationAttempt[] = [];
@@ -324,6 +361,9 @@ export function QuizRunner({
             questionCount: config.questionCount,
             timeLimitEnabled: config.timeLimitSeconds !== null,
             timeLimitSeconds: config.timeLimitSeconds ?? 30,
+            // The wire carries the builder's unit; the runner counts seconds.
+            mode: config.examTimeLimitSeconds === null ? "quiz" : "exam",
+            examTimeLimitMinutes: Math.round((config.examTimeLimitSeconds ?? 0) / 60),
             types: config.types,
             distribution: config.distribution,
             difficulty: config.difficulty,
@@ -398,6 +438,39 @@ export function QuizRunner({
     void generate();
   }, [generate]);
 
+  /**
+   * End the run: show the results and fold this session's answers into the
+   * per-item log.
+   *
+   * Only questions that cite a library item have anywhere to go, and a question
+   * whose kind cannot be determined is skipped rather than logged wrongly — a
+   * rule id and a word id can collide.
+   *
+   * Memoised because `QuestionFlow` keys the exam clock's expiry effect on it: a
+   * fresh identity per render would re-run that effect every render, and reading
+   * the ref instead of `answers` is also what lets an exam's final answer, given
+   * in the same handler that ends the run, be logged at all.
+   */
+  const finish = React.useCallback(() => {
+    setPhase("complete");
+    void record(
+      answersRef.current.flatMap((answer) => {
+        const { sourceId } = answer.question;
+        if (!sourceId) return [];
+        const kind = sourceKindOf(answer.question, config);
+        if (!kind) return [];
+        return [
+          {
+            kind,
+            itemId: sourceId,
+            correct: answer.correct ? 1 : 0,
+            wrong: answer.correct ? 0 : 1,
+          },
+        ];
+      })
+    );
+  }, [config, record]);
+
   return (
     // Every panel that renders Japanese sits inside this, so the toggle reaches
     // the prompt, the options, the feedback and the results review at once.
@@ -423,30 +496,9 @@ export function QuizRunner({
             attempts={attempts}
             config={config}
             timeLimitSeconds={config.timeLimitSeconds}
-            onAnswer={(answer) => setAnswers((prev) => [...prev, answer])}
-            onFinished={() => {
-              setPhase("complete");
-              // Fold this session's answers into the per-item log. Only questions
-              // that cite a library item have anywhere to go, and a question whose
-              // kind cannot be determined is skipped rather than logged wrongly —
-              // a rule id and a word id can collide.
-              void record(
-                answers.flatMap((answer) => {
-                  const { sourceId } = answer.question;
-                  if (!sourceId) return [];
-                  const kind = sourceKindOf(answer.question, config);
-                  if (!kind) return [];
-                  return [
-                    {
-                      kind,
-                      itemId: sourceId,
-                      correct: answer.correct ? 1 : 0,
-                      wrong: answer.correct ? 0 : 1,
-                    },
-                  ];
-                })
-              );
-            }}
+            examTimeLimitSeconds={config.examTimeLimitSeconds}
+            onAnswer={addAnswer}
+            onFinished={finish}
           />
         )}
 
@@ -455,6 +507,7 @@ export function QuizRunner({
             config={config}
             model={model}
             attempts={attempts}
+            questions={questions}
             answers={answers}
             onRestart={() => void generate()}
           />
@@ -664,6 +717,7 @@ function QuestionFlow({
   attempts,
   config,
   timeLimitSeconds,
+  examTimeLimitSeconds,
   onAnswer,
   onFinished,
 }: {
@@ -672,15 +726,56 @@ function QuestionFlow({
   attempts: GenerationAttempt[];
   config: QuizRunConfig;
   timeLimitSeconds: number | null;
+  examTimeLimitSeconds: number | null;
   onAnswer: (answer: Answer) => void;
   onFinished: () => void;
 }) {
+  /** Exam mode is exactly "this run has one budget for the whole of it". */
+  const examMode = examTimeLimitSeconds !== null;
+
   const [index, setIndex] = React.useState(0);
   /** This run's answers, for the running score badges. */
   const [answers, setAnswers] = React.useState<Answer[]>([]);
   const [given, setGiven] = React.useState("");
   const [submitted, setSubmitted] = React.useState<Answer | null>(null);
   const [secondsLeft, setSecondsLeft] = React.useState(timeLimitSeconds ?? 0);
+
+  /**
+   * The exam's deadline, fixed when the first question appears.
+   *
+   * An instant rather than a counter that decrements: the budget is wall time,
+   * so a throttled background tab cannot buy the learner more of it, and
+   * `useState`'s initialiser is what makes it fixed — every later render reads
+   * back the same number. Nothing that happens to a question can move it, which
+   * is the whole requirement: answering must not restart the clock.
+   */
+  const [examDeadline] = React.useState(() =>
+    examTimeLimitSeconds === null ? null : Date.now() + examTimeLimitSeconds * 1000
+  );
+  const [examSecondsLeft, setExamSecondsLeft] = React.useState(examTimeLimitSeconds ?? 0);
+
+  // The exam clock. Keyed on the deadline alone, so it survives every answer,
+  // every question change, and every render in between.
+  React.useEffect(() => {
+    if (examDeadline === null) return;
+    const tick = () =>
+      setExamSecondsLeft(Math.max(0, Math.ceil((examDeadline - Date.now()) / 1000)));
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [examDeadline]);
+
+  /** Set once the budget has ended the run, so that it ends exactly once. */
+  const expiredRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (examDeadline === null || examSecondsLeft > 0 || expiredRef.current) return;
+    expiredRef.current = true;
+    // The question on screen is left unanswered rather than submitted blank:
+    // the learner never gave an answer for it, and logging one as wrong would
+    // feed the per-item accuracy that "Only what I keep missing" draws on.
+    onFinished();
+  }, [examDeadline, examSecondsLeft, onFinished]);
 
   const question = questions[index];
 
@@ -701,10 +796,41 @@ function QuestionFlow({
   const sentence =
     question.type === "fill-blanks" || question.type === "input" ? question.sentence : undefined;
 
-  /** Commit an answer and show the feedback card. */
+  /**
+   * What the question is allowed to render as answered.
+   *
+   * `null` throughout an exam, so every panel that colours itself by the answer
+   * — the option borders, the answer field, the filled gaps, the feedback card
+   * — withholds the verdict without having to know the mode exists. Routing
+   * them all through one value is what keeps a later panel from leaking one by
+   * being overlooked; `submitted` stays the answer of record and the guard
+   * against a second one.
+   */
+  const shown = examMode ? null : submitted;
+
+  /** Move on, or end the run when there is nothing left to move on to. */
+  const advance = React.useCallback(() => {
+    if (index + 1 >= questions.length) {
+      onFinished();
+      return;
+    }
+    setIndex((value) => value + 1);
+  }, [index, questions.length, onFinished]);
+
+  /**
+   * Which question the last answer belonged to, so one question can be answered
+   * only once. `submitted` is the same guard outside an exam, but an exam never
+   * holds a submitted answer on screen — holding it is exactly what would give
+   * the verdict away — so without this a second click on an option would record
+   * the same question twice before the next one had a chance to render.
+   */
+  const answeredRef = React.useRef<number | null>(null);
+
+  /** Commit an answer; outside an exam, also show the feedback card. */
   const submit = React.useCallback(
     (value: string, timedOut = false) => {
-      if (submitted) return;
+      if (submitted || answeredRef.current === index) return;
+      answeredRef.current = index;
       const correct = !timedOut && answersMatch(value, question);
       const answer: Answer = {
         question,
@@ -713,15 +839,25 @@ function QuestionFlow({
         seconds: timeLimitSeconds === null ? null : timeLimitSeconds - secondsLeft,
         timedOut,
       };
+      onAnswer(answer);
+      if (examMode) {
+        // There is no feedback card to sit on, so the answer is recorded and the
+        // next question comes up. The field is cleared here rather than by the
+        // effect below, so the next question cannot render for a frame holding
+        // the previous one's text.
+        setGiven("");
+        advance();
+        return;
+      }
       setSubmitted(answer);
       setAnswers((prev) => [...prev, answer]);
-      // The runner owns the full run's answers — this keeps them in one place.
-      onAnswer(answer);
     },
-    [question, submitted, timeLimitSeconds, secondsLeft, onAnswer]
+    [advance, examMode, index, onAnswer, question, secondsLeft, submitted, timeLimitSeconds]
   );
 
-  // Reset per-question state whenever a new question comes up.
+  // Reset per-question state whenever a new question comes up. The exam clock is
+  // deliberately not in here: it measures the run, and re-arming it per question
+  // is precisely the bug this mode must not have.
   React.useEffect(() => {
     setGiven("");
     setSubmitted(null);
@@ -739,16 +875,13 @@ function QuestionFlow({
     return () => window.clearTimeout(timer);
   }, [secondsLeft, timeLimitSeconds, submitted, submit]);
 
-  const advance = () => {
-    if (index + 1 >= questions.length) {
-      onFinished();
-      return;
-    }
-    setIndex((value) => value + 1);
-  };
-
   const isLast = index + 1 >= questions.length;
-  const progress = ((index + (submitted ? 1 : 0)) / questions.length) * 100;
+  /**
+   * The bar counts questions reached. Outside an exam the answered question is
+   * still on screen, so it counts as reached as well; an exam holds no answer
+   * on screen, so the question being asked is what has been reached.
+   */
+  const progress = ((index + (examMode || submitted ? 1 : 0)) / questions.length) * 100;
 
   // Computed over the whole run, not the current question: a toggle that
   // appeared and vanished as the quiz moved between English and Japanese
@@ -769,14 +902,20 @@ function QuestionFlow({
               <Badge variant="kana">{model}</Badge>
             </Tooltip>
           )}
-          <Badge variant="success">{answers.filter((a) => a.correct).length}</Badge>
-          <Badge variant="outline" className="text-red-500">
-            {answers.filter((a) => !a.correct).length}
-          </Badge>
+          {/* A running score is a verdict per question, so an exam has none. */}
+          {!examMode && (
+            <>
+              <Badge variant="success">{answers.filter((a) => a.correct).length}</Badge>
+              <Badge variant="outline" className="text-red-500">
+                {answers.filter((a) => !a.correct).length}
+              </Badge>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Progress, plus the countdown while a question is timed. */}
+      {/* Progress, plus the clock — the run's budget in an exam, the question's
+          limit otherwise. */}
       <div className="mb-6 space-y-2">
         <div className="h-1.5 overflow-hidden rounded-full bg-muted">
           <div
@@ -784,16 +923,30 @@ function QuestionFlow({
             style={{ width: `${progress}%` }}
           />
         </div>
-        {timeLimitSeconds !== null && (
+        {examMode ? (
           <div className="h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className={cn(
                 "h-full transition-all duration-1000 ease-linear",
-                secondsLeft <= 5 ? "bg-red-500" : "bg-primarylw/60"
+                examSecondsLeft <= 60 ? "bg-red-500" : "bg-primarylw/60"
               )}
-              style={{ width: `${(secondsLeft / timeLimitSeconds) * 100}%` }}
+              style={{
+                width: `${(examSecondsLeft / (examTimeLimitSeconds || 1)) * 100}%`,
+              }}
             />
           </div>
+        ) : (
+          timeLimitSeconds !== null && (
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className={cn(
+                  "h-full transition-all duration-1000 ease-linear",
+                  secondsLeft <= 5 ? "bg-red-500" : "bg-primarylw/60"
+                )}
+                style={{ width: `${(secondsLeft / timeLimitSeconds) * 100}%` }}
+              />
+            </div>
+          )
         )}
       </div>
 
@@ -811,18 +964,36 @@ function QuestionFlow({
                 <p className="text-xl leading-relaxed font-medium whitespace-pre-line">
                   <RichText plain={asksReading}>{question.prompt}</RichText>
                 </p>
-                {timeLimitSeconds !== null && !submitted && (
+                {examMode ? (
+                  // Stays up while the answer is being written: it is the run's
+                  // budget, and it is the same number on every question.
                   <span
+                    data-slot="exam-clock"
                     className={cn(
                       "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium tabular-nums",
-                      secondsLeft <= 5
+                      examSecondsLeft <= 60
                         ? "border-red-500/50 text-red-500"
                         : "border-border text-muted-foreground"
                     )}
                   >
                     <Timer className="h-3.5 w-3.5" />
-                    {secondsLeft}s
+                    {formatClock(examSecondsLeft)} left
                   </span>
+                ) : (
+                  timeLimitSeconds !== null &&
+                  !submitted && (
+                    <span
+                      className={cn(
+                        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium tabular-nums",
+                        secondsLeft <= 5
+                          ? "border-red-500/50 text-red-500"
+                          : "border-border text-muted-foreground"
+                      )}
+                    >
+                      <Timer className="h-3.5 w-3.5" />
+                      {secondsLeft}s
+                    </span>
+                  )
                 )}
               </div>
 
@@ -835,7 +1006,7 @@ function QuestionFlow({
                   data-slot="quiz-sentence"
                   className="mb-5 rounded-[var(--radius)] border border-border bg-muted/40 p-4 text-xl leading-loose"
                 >
-                  {renderSentence(sentence, submitted?.given ?? null, submitted?.question.answer ?? null)}
+                  {renderSentence(sentence, shown?.given ?? null, shown?.question.answer ?? null)}
                 </p>
               )}
 
@@ -843,20 +1014,19 @@ function QuestionFlow({
                 question={question}
                 given={given}
                 onGivenChange={setGiven}
-                submitted={submitted}
+                submitted={shown}
                 onSubmit={submit}
               />
 
-              {submitted && (
-                <Feedback answer={submitted} onNext={advance} isLast={isLast} config={config} />
-              )}            </CardContent>
+              {shown && <Feedback answer={shown} onNext={advance} isLast={isLast} config={config} />}
+            </CardContent>
           </Card>
         </motion.div>
       </AnimatePresence>
 
-      {!submitted && question.type === "input" && (
+      {!shown && question.type === "input" && (
         <div className="mt-6 flex justify-center">
-          <SubmitButton given={given} onClick={() => submit(given)} />
+          <SubmitButton given={given} onClick={() => submit(given)} examMode={examMode} />
         </div>
       )}
     </div>
@@ -921,10 +1091,18 @@ function renderSentence(
   });
 }
 
-function SubmitButton({ given, onClick }: { given: string; onClick: () => void }) {
+function SubmitButton({
+  given,
+  onClick,
+  examMode,
+}: {
+  given: string;
+  onClick: () => void;
+  examMode: boolean;
+}) {
   return (
     <Button onClick={onClick} disabled={given.trim().length === 0}>
-      <Check /> Check answer
+      <Check /> {examMode ? "Submit answer" : "Check answer"}
     </Button>
   );
 }
@@ -1330,18 +1508,29 @@ function ResultsPanel({
   config,
   model,
   attempts,
+  questions,
   answers,
   onRestart,
 }: {
   config: QuizRunConfig;
   model: string;
   attempts: GenerationAttempt[];
+  questions: QuizQuestion[];
   answers: Answer[];
   onRestart: () => void;
 }) {
-  const total = answers.length;
+  const examMode = config.examTimeLimitSeconds !== null;
+  /**
+   * The denominator is the questions asked, not the answers given: an exam that
+   * runs out of time leaves questions with no answer at all, and counting only
+   * the answered ones would let a half-finished exam score 100%. Outside an exam
+   * the two are equal — the run cannot reach here without every question
+   * submitted.
+   */
+  const total = questions.length > 0 ? questions.length : answers.length;
   const correct = answers.filter((answer) => answer.correct).length;
   const timedOut = answers.filter((answer) => answer.timedOut).length;
+  const unanswered = total - answers.length;
   const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
   const missed = answers.filter((answer) => !answer.correct);
   // Average time per answered question, when the run was timed at all.
@@ -1356,10 +1545,13 @@ function ResultsPanel({
       <CardContent className="flex flex-col items-center gap-5 p-10 text-center">
         <div className="text-5xl">{pct >= 80 ? "🎉" : pct >= 50 ? "👍" : "📚"}</div>
         <div>
-          <h2 className="text-xl font-semibold">Quiz complete!</h2>
+          <h2 className="text-xl font-semibold">
+            {examMode ? "Exam complete!" : "Quiz complete!"}
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {correct} of {total} correct ({pct}%)
             {timedOut > 0 && ` · ${timedOut} ran out of time`}
+            {unanswered > 0 && ` · ${unanswered} not answered`}
             {averageSeconds !== null && ` · ${averageSeconds}s average per question`}
           </p>
         </div>
@@ -1382,42 +1574,79 @@ function ResultsPanel({
             ` ${total} of ${config.questionCount} requested questions were usable.`}
         </p>
 
-        {/* Every question the user got wrong, so the review is actionable. */}
-        {missed.length > 0 && (
-          <div className="w-full max-w-lg space-y-2 text-left">
+        {/*
+          An exam withheld every verdict, so this is where they arrive: all of
+          them, in the order they were asked, right or wrong. Outside an exam the
+          list is narrowed to the misses — a verdict the learner already saw is
+          not news the second time.
+        */}
+        {examMode ? (
+          <div className="w-full max-w-lg space-y-2 text-left" data-slot="exam-review">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                Worth another look
+                Every question, in the order it was asked
               </p>
-              {missed.some((answer) => questionHasFurigana(answer.question)) && <FuriganaToggle />}
+              {questions.some(questionHasFurigana) && <FuriganaToggle />}
             </div>
-            {missed.map((answer) => (
-              <div
-                key={answer.question.id}
-                className="rounded-[var(--radius)] border border-border p-3 text-base"
-              >
-                <p className="font-medium whitespace-pre-line">
-                  <RichText>{answer.question.prompt}</RichText>
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Correct answer:{" "}
-                  <span className="text-foreground">
-                    <RichText>{answer.question.answer}</RichText>
-                  </span>
-                  {answer.timedOut ? (
-                    " · timed out"
+            {questions.map((question, position) => {
+              /**
+               * Paired by position rather than looked up by id. The run asks the
+               * questions in order and takes at most one answer for each, so
+               * `answers[n]` is the answer to `questions[n]` — and an exam that
+               * ran out of time simply has fewer answers than questions, with
+               * the shortfall at the end. An id-keyed map would read the same
+               * until two questions ever shared an id, and then it would quietly
+               * show one question's verdict on another.
+               */
+              const answer = answers[position];
+              const href = sourceHref(question, config);
+              return (
+                <div
+                  key={position}
+                  data-slot="exam-review-row"
+                  className="rounded-[var(--radius)] border border-border p-3 text-base"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="min-w-0 font-medium whitespace-pre-line">
+                      <span className="text-muted-foreground">{position + 1}. </span>
+                      <RichText>{question.prompt}</RichText>
+                    </p>
+                    <Badge
+                      variant={answer?.correct ? "success" : answer ? "secondary" : "outline"}
+                      className={cn("shrink-0", answer && !answer.correct && "text-red-500")}
+                    >
+                      {answer ? (answer.correct ? "Correct" : "Incorrect") : "Not answered"}
+                    </Badge>
+                  </div>
+
+                  {answer ? (
+                    !answer.correct && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Correct answer:{" "}
+                        <span className="text-foreground">
+                          <RichText>{question.answer}</RichText>
+                        </span>
+                        {answer.timedOut ? (
+                          " · timed out"
+                        ) : (
+                          <>
+                            {" · you said “"}
+                            <RichText>{answer.given}</RichText>
+                            {"”"}
+                          </>
+                        )}
+                      </p>
+                    )
                   ) : (
-                    <>
-                      {" · you said “"}
-                      <RichText>{answer.given}</RichText>
-                      {"”"}
-                    </>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      The clock ran out before this one was submitted. Correct answer:{" "}
+                      <span className="text-foreground">
+                        <RichText>{question.answer}</RichText>
+                      </span>
+                    </p>
                   )}
-                </p>
-                {(() => {
-                  const href = sourceHref(answer.question, config);
-                  if (!href) return null;
-                  return (
+
+                  {href && (
                     <Link
                       to={href}
                       target="_blank"
@@ -1426,11 +1655,63 @@ function ResultsPanel({
                     >
                       <ExternalLink className="h-3.5 w-3.5" /> Open the source page
                     </Link>
-                  );
-                })()}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
+        ) : (
+          missed.length > 0 && (
+            <div className="w-full max-w-lg space-y-2 text-left">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                  Worth another look
+                </p>
+                {missed.some((answer) => questionHasFurigana(answer.question)) && (
+                  <FuriganaToggle />
+                )}
+              </div>
+              {missed.map((answer) => (
+                <div
+                  key={answer.question.id}
+                  className="rounded-[var(--radius)] border border-border p-3 text-base"
+                >
+                  <p className="font-medium whitespace-pre-line">
+                    <RichText>{answer.question.prompt}</RichText>
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Correct answer:{" "}
+                    <span className="text-foreground">
+                      <RichText>{answer.question.answer}</RichText>
+                    </span>
+                    {answer.timedOut ? (
+                      " · timed out"
+                    ) : (
+                      <>
+                        {" · you said “"}
+                        <RichText>{answer.given}</RichText>
+                        {"”"}
+                      </>
+                    )}
+                  </p>
+                  {(() => {
+                    const href = sourceHref(answer.question, config);
+                    if (!href) return null;
+                    return (
+                      <Link
+                        to={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-primarylw"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> Open the source page
+                      </Link>
+                    );
+                  })()}
+                </div>
+              ))}
+            </div>
+          )
         )}
 
         {attempts.some((attempt) => attempt.outcome !== "ok") && (

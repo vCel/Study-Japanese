@@ -94,6 +94,12 @@ function readConfig(raw: unknown): QuizConfig | null {
     questionCount,
     timeLimitEnabled: config.timeLimitEnabled !== false,
     timeLimitSeconds: Number(config.timeLimitSeconds) || 30,
+    // Timing is carried for shape parity and read by nothing here: the generator
+    // writes questions, and every clock the learner sees runs on the client.
+    // Both are defaulted, so a body that omits them is a plain quiz rather than a
+    // rejected request.
+    mode: config.mode === "exam" ? "exam" : "quiz",
+    examTimeLimitMinutes: Number(config.examTimeLimitMinutes) || 20,
     // The ids themselves arrive separately (see `GenerateBody`), so the prompt
     // builder only needs to know the source is a narrowed set.
     retryMissed: config.retryMissed === true,

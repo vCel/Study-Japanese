@@ -3,6 +3,7 @@
 import type { QuizConfig } from "~/lib/quiz-types";
 import {
   DEFAULT_QUIZ_CONFIG,
+  QUIZ_EXAM_MINUTES,
   QUIZ_SIZES,
   QUIZ_SOURCE_KINDS,
   QUIZ_TIME_LIMITS,
@@ -105,6 +106,13 @@ export function normalizeConfig(raw: Partial<QuizConfig>): QuizConfig {
     timeLimitSeconds: QUIZ_TIME_LIMITS.includes(raw.timeLimitSeconds as number)
       ? (raw.timeLimitSeconds as number)
       : DEFAULT_QUIZ_CONFIG.timeLimitSeconds,
+    // Snap-and-keep, not snap-and-reset: the mode and the budget are separate
+    // fields precisely so switching back to Quiz and round to Exam returns the
+    // budget that was chosen, and this is the only place a stored config is read.
+    mode: raw.mode === "exam" ? "exam" : "quiz",
+    examTimeLimitMinutes: QUIZ_EXAM_MINUTES.includes(raw.examTimeLimitMinutes as number)
+      ? (raw.examTimeLimitMinutes as number)
+      : DEFAULT_QUIZ_CONFIG.examTimeLimitMinutes,
     retryMissed: raw.retryMissed === true,
     starredOnly: raw.starredOnly === true,
     types: types.length > 0 ? types : [...DEFAULT_QUIZ_CONFIG.types],

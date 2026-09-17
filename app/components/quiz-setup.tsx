@@ -24,6 +24,7 @@ import { ReorderList, ReorderRow } from "~/components/lightswind/reorder";
 import { ScrollArea } from "~/components/lightswind/scroll-area";
 import { Slider } from "~/components/lightswind/slider";
 import { Switch } from "~/components/lightswind/switch";
+import { ToggleGroup, ToggleGroupItem } from "~/components/lightswind/toggle-group";
 import { toast } from "~/components/lightswind/toast";
 import { Tooltip } from "~/components/lightswind/tooltip";
 import { cn } from "~/lib/utils";
@@ -44,6 +45,9 @@ import {
   QUIZ_DISTRIBUTIONS,
   QUIZ_DISTRIBUTION_HINTS,
   QUIZ_DISTRIBUTION_LABELS,
+  QUIZ_EXAM_MINUTES,
+  QUIZ_MODES,
+  QUIZ_MODE_LABELS,
   QUIZ_QUESTION_TYPES,
   QUIZ_SIZES,
   QUIZ_SOURCE_KINDS,
@@ -55,6 +59,8 @@ import {
   WORD_FOCUS_OPTIONS,
   type QuizConfig,
   type QuizDifficulty,
+  type QuizDistribution,
+  type QuizMode,
   type QuizQuestionType,
   type QuizSourceKind,
   type WordQuizFocus,
@@ -109,6 +115,18 @@ function listWords(items: string[]): string {
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
+/**
+ * How the run is timed, as one phrase.
+ *
+ * Exam mode replaces the per-question limit rather than adding to it, so the
+ * two never both appear: a run has either a limit on each question or a budget
+ * for the lot, and saying both would misdescribe whichever one is not running.
+ */
+function describeTiming(config: QuizConfig): string {
+  if (config.mode === "exam") return `${config.examTimeLimitMinutes} min exam`;
+  return config.timeLimitEnabled ? `${config.timeLimitSeconds}s each` : "untimed";
+}
+
 /** One-line summary of what a saved quiz will ask. */
 function describeQuiz(config: QuizConfig): string {
   const parts: string[] = [];
@@ -135,7 +153,7 @@ function describeQuiz(config: QuizConfig): string {
   if (config.starredOnly) parts.push("starred only");
   parts.push(`${config.questionCount} questions`);
   parts.push(`${config.types.length} type${config.types.length === 1 ? "" : "s"}`);
-  parts.push(config.timeLimitEnabled ? `${config.timeLimitSeconds}s each` : "untimed");
+  parts.push(describeTiming(config));
   parts.push(config.difficulty);
   return parts.join(" · ");
 }
@@ -670,7 +688,8 @@ function QuizPanel({
       types: config.types.join(","),
       focus: config.focus,
     });
-    if (config.timeLimitEnabled) qs.set("seconds", String(config.timeLimitSeconds));
+    if (config.mode === "exam") qs.set("examSeconds", String(config.examTimeLimitMinutes * 60));
+    else if (config.timeLimitEnabled) qs.set("seconds", String(config.timeLimitSeconds));
     if (wantsLists && config.lists.length > 0) qs.set("lists", config.lists.join(","));
     if (config.tags.length > 0) qs.set("tags", config.tags.join(","));
     if (config.excludedTags.length > 0) qs.set("excludedTags", config.excludedTags.join(","));
@@ -1276,20 +1295,20 @@ function QuizPanel({
                   }
                 />
               </span>
-              <div className="flex flex-wrap gap-1.5 sm:justify-end">
+              <ToggleGroup
+                type="single"
+                aria-label="Question split"
+                value={config.distribution}
+                onValueChange={(next) => onChange({ distribution: next as QuizDistribution })}
+                disabled={!splitsQuestions}
+                className="self-start sm:self-auto"
+              >
                 {QUIZ_DISTRIBUTIONS.map((distribution) => (
-                  <button
-                    key={distribution}
-                    type="button"
-                    disabled={!splitsQuestions}
-                    onClick={() => onChange({ distribution })}
-                    aria-pressed={config.distribution === distribution}
-                    className={pill(config.distribution === distribution, !splitsQuestions)}
-                  >
+                  <ToggleGroupItem key={distribution} value={distribution}>
                     {QUIZ_DISTRIBUTION_LABELS[distribution]}
-                  </button>
+                  </ToggleGroupItem>
                 ))}
-              </div>
+              </ToggleGroup>
             </div>
 
             {/*
@@ -1341,45 +1360,102 @@ function QuizPanel({
               </div>
             )}
 
-            <div className={settingRow}>
+            {/*
+              Mode, then the timing that belongs to it. Exam and the
+              per-question timer are alternatives, not neighbours: a run that
+              gets one budget for all of its questions has no per-question limit
+              left to set, so the rows below are swapped out rather than greyed.
+              The mode owns both halves of what it changes — what the run
+              reveals, and how it is timed.
+            */}
+            <div className={settingRow} data-slot="quiz-mode">
               <SettingLabel
-                label="Time limit per question"
-                hint="When on, each question is timed and auto-submits when the clock runs out. Turn it off to answer at your own pace."
+                label="Mode"
+                hint="Quiz marks each answer as you go. Exam holds every verdict back — submit each question and move on, then see all of them, in order, once the last one is in."
               />
-              <Switch
-                checked={config.timeLimitEnabled}
-                onCheckedChange={(next) => onChange({ timeLimitEnabled: next })}
-                aria-label="Time limit per question"
-              />
+              <ToggleGroup
+                type="single"
+                aria-label="Mode"
+                value={config.mode}
+                onValueChange={(next) => onChange({ mode: next as QuizMode })}
+                className="self-start sm:self-auto"
+              >
+                {QUIZ_MODES.map((mode) => (
+                  <ToggleGroupItem key={mode} value={mode}>
+                    {QUIZ_MODE_LABELS[mode]}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
             </div>
 
-            {/* Seconds sits on the label's line like difficulty: slider right,
-                current step beside it. */}
-            {config.timeLimitEnabled && (
-              <div className={settingRow}>
+            {config.mode === "exam" ? (
+              <div className={settingRow} data-slot="quiz-exam-limit">
                 <SettingLabel
-                  label="Seconds per question"
-                  hint="How long to allow for each question."
+                  label="Exam time limit"
+                  hint="The budget for the whole exam, not a limit on each question. The clock starts with the first question and answering never resets or extends it — when it runs out the exam ends, and a question you had not submitted is left unanswered."
                 />
                 <div className="flex items-center gap-3 sm:shrink-0">
                   <Slider
                     className="w-36 flex-1 sm:w-52 sm:flex-none"
-                    aria-label="Seconds per question"
-                    aria-valuetext={`${config.timeLimitSeconds} seconds`}
-                    value={[Math.max(0, QUIZ_TIME_LIMITS.indexOf(config.timeLimitSeconds))]}
+                    aria-label="Exam time limit"
+                    aria-valuetext={`${config.examTimeLimitMinutes} minutes`}
+                    value={[Math.max(0, QUIZ_EXAM_MINUTES.indexOf(config.examTimeLimitMinutes))]}
                     min={0}
-                    max={QUIZ_TIME_LIMITS.length - 1}
+                    max={QUIZ_EXAM_MINUTES.length - 1}
                     step={1}
                     onValueChange={([index]) => {
-                      const seconds = QUIZ_TIME_LIMITS[index];
-                      if (seconds !== undefined) onChange({ timeLimitSeconds: seconds });
+                      const minutes = QUIZ_EXAM_MINUTES[index];
+                      if (minutes !== undefined) onChange({ examTimeLimitMinutes: minutes });
                     }}
                   />
-                  <span className="w-14 text-right text-sm font-medium text-primarylw">
-                    {config.timeLimitSeconds}s
+                  <span className="w-16 text-right text-sm font-medium text-primarylw">
+                    {config.examTimeLimitMinutes} min
                   </span>
                 </div>
               </div>
+            ) : (
+              <>
+                <div className={settingRow}>
+                  <SettingLabel
+                    label="Time limit per question"
+                    hint="When on, each question is timed and auto-submits when the clock runs out. Turn it off to answer at your own pace."
+                  />
+                  <Switch
+                    checked={config.timeLimitEnabled}
+                    onCheckedChange={(next) => onChange({ timeLimitEnabled: next })}
+                    aria-label="Time limit per question"
+                  />
+                </div>
+
+                {/* Seconds sits on the label's line like difficulty: slider right,
+                    current step beside it. */}
+                {config.timeLimitEnabled && (
+                  <div className={settingRow}>
+                    <SettingLabel
+                      label="Seconds per question"
+                      hint="How long to allow for each question."
+                    />
+                    <div className="flex items-center gap-3 sm:shrink-0">
+                      <Slider
+                        className="w-36 flex-1 sm:w-52 sm:flex-none"
+                        aria-label="Seconds per question"
+                        aria-valuetext={`${config.timeLimitSeconds} seconds`}
+                        value={[Math.max(0, QUIZ_TIME_LIMITS.indexOf(config.timeLimitSeconds))]}
+                        min={0}
+                        max={QUIZ_TIME_LIMITS.length - 1}
+                        step={1}
+                        onValueChange={([index]) => {
+                          const seconds = QUIZ_TIME_LIMITS[index];
+                          if (seconds !== undefined) onChange({ timeLimitSeconds: seconds });
+                        }}
+                      />
+                      <span className="w-14 text-right text-sm font-medium text-primarylw">
+                        {config.timeLimitSeconds}s
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Length and difficulty are the two "how much / how hard" dials,
@@ -1453,7 +1529,7 @@ function QuizPanel({
           </p>
           <p className="text-xs text-muted-foreground">
             {effectiveCount} question{effectiveCount === 1 ? "" : "s"} ·{" "}
-            {config.timeLimitEnabled ? `${config.timeLimitSeconds}s each` : "untimed"} ·{" "}
+            {describeTiming(config)} ·{" "}
             {QUIZ_DIFFICULTY_LABELS[config.difficulty].toLowerCase()} ·{" "}
             {config.types.length} type{config.types.length === 1 ? "" : "s"}
             {loggedTotal > 0 && ` · ${logged.correct}/${loggedTotal} answered correctly so far`}
