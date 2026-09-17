@@ -88,6 +88,32 @@ test.describe("custom select fields", () => {
     await page.getByRole("listbox").getByRole("option", { name: "Verb", exact: true }).click();
     await expect(page.locator('input[name="pos"]')).toHaveValue("verb");
   });
+
+  test("the subtype options follow the chosen part of speech, and a change clears it", async ({
+    page,
+  }) => {
+    await page.goto(`/words/${await wordIdByTitle(page, WORD)}/edit`);
+    await expectHydrated(page);
+
+    // The starter word arrives as a verb, so its subtype select offers the verb groups.
+    await expect(page.locator('input[name="pos"]')).toHaveValue("verb");
+    const subtype = page.getByRole("button", { name: "Subtype" });
+    await subtype.click();
+    await page.getByRole("listbox").getByRole("option", { name: /Group 1/ }).click();
+    await expect(page.locator('input[name="subtype"]')).toHaveValue("group1");
+
+    // Switching the pos re-derives the options from the pos just chosen rather
+    // than the one the word was loaded with, and clears the stale subtype.
+    await page.getByRole("button", { name: "Part of speech" }).click();
+    await page.getByRole("listbox").getByRole("option", { name: "Noun", exact: true }).click();
+    await expect(page.locator('input[name="pos"]')).toHaveValue("noun");
+    await expect(page.locator('input[name="subtype"]')).toHaveValue("");
+
+    await subtype.click();
+    const options = page.getByRole("listbox").getByRole("option");
+    await expect(options.filter({ hasText: /Suffix/ })).toBeVisible();
+    await expect(options.filter({ hasText: /Group 1/ })).toHaveCount(0);
+  });
 });
 
 test.describe("edit pages match the create page width", () => {

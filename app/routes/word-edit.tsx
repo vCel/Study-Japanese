@@ -5,6 +5,7 @@ import type { Route } from "./+types/word-edit";
 import { canEditWord, deleteWord, getWord, updateWord } from "~/lib/db.server";
 import { ownerContext } from "~/lib/owner.server";
 import { enforceRateLimit, getClientIp } from "~/lib/ratelimit.server";
+import { resolvePosSubtype } from "~/lib/vocab";
 import { Button } from "~/components/lightswind/button";
 import { DeleteButton } from "~/components/delete-button";
 import { PageHeader } from "~/components/page-header";
@@ -78,18 +79,9 @@ export async function action({ request, params, context }: Route.ActionArgs): Pr
     return { ok: false, error: "The word or kana reading is too long (max 64 characters)." };
   }
 
-  const posRaw = form.get("pos");
-  const pos =
-    typeof posRaw === "string" &&
-    ["noun", "verb", "adjective", "adverb", "phrase", "other"].includes(posRaw)
-      ? posRaw
-      : null;
-
-  const subtypeRaw = form.get("subtype");
-  const subtype =
-    typeof subtypeRaw === "string" && subtypeRaw.trim().length > 0
-      ? subtypeRaw.trim().slice(0, 24)
-      : null;
+  // The one resolver the import and the bulk rows use too: the route cannot
+  // hold a pos the form has no option for, nor a subtype its pos cannot show.
+  const { pos, subtype } = resolvePosSubtype(form.get("pos"), form.get("subtype"));
 
   const meaningsRaw = form.get("meanings");
   const meanings =

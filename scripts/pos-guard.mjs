@@ -17,7 +17,12 @@
  *   4. Every target is a value the app can store, show and edit.
  *   5. 0014's rule still holds — `"suffix"` is pos noun plus subtype suffix —
  *      and the two migrations do not fight over the same rows.
- *   6. Self-test: with the synonym lines deleted, every case above must lose its
+ *   6. The pos lists agree with each other, and word-edit.tsx keeps none of its
+ *      own — it resolves through the one implementation the import uses.
+ *   7. The pos/subtype precedence: a subtype names its own class, so a pos that
+ *      disagrees is overridden rather than the subtype dropped, and every pair
+ *      the table already holds resolves to itself.
+ *   8. Self-test: with the synonym lines deleted, every case above must lose its
  *      class. A guard that cannot fail is worth nothing.
  *
  * Run with `npm run pos:guard`.
@@ -171,19 +176,16 @@ for (const [label, file, name] of [
 }
 const editOptions = lists["edit-word-form POS_OPTIONS"];
 const routeSource = fs.readFileSync(path.join(REPO, "app", "routes", "word-edit.tsx"), "utf8");
-const whitelistMatch = routeSource.match(/\["noun",\s*"verb"[\s\S]*?\]\.includes/);
-const routeWhitelist = whitelistMatch
-  ? [...whitelistMatch[0].matchAll(/"([^"]+)"/g)].map((match) => match[1])
-  : null;
-if (!routeWhitelist) fail("word-edit.tsx's pos whitelist not found — this guard's anchor moved.");
-
-if (editOptions && routeWhitelist) {
-  const dropped = editOptions.filter((value) => !routeWhitelist.includes(value));
-  if (dropped.length) {
-    fail(`word-edit.tsx rejects ${dropped.join(", ")}, which its own form offers — saving one blanks the pos`);
-  } else {
-    ok("the word form's route accepts every option the form offers");
-  }
+// The route holds no pos list of its own: it resolves through the same function
+// as the import and the bulk rows, so there is no second list to disagree with.
+// A literal reappearing here is the failure this guard exists to catch.
+const inlineList = routeSource.match(/\["noun",\s*"verb"[\s\S]*?\]\.includes/);
+if (inlineList) {
+  fail(`word-edit.tsx lists pos values inline again: ${inlineList[0].slice(0, 48)}…`);
+} else if (!/resolvePosSubtype\s*\(/.test(routeSource)) {
+  fail("word-edit.tsx neither resolves through resolvePosSubtype nor holds a list — its pos rule moved");
+} else {
+  ok("word-edit.tsx resolves through resolvePosSubtype, with no pos list of its own");
 }
 
 if (editOptions) {
@@ -209,7 +211,61 @@ if (lists["pos-filter POS_FILTERS"]) {
   else ok("every filter pill filters on a value POS_VALUES knows");
 }
 
-console.log("\n7. Self-test — every case must fail without the code it pins");
+console.log("\n7. A subtype decides its own class, and the pos follows it");
+/**
+ * The precedence table. Each row is [pos field, subtype field, the pair that
+ * must be stored]; null means the field was absent. The first block is a pos
+ * that is really a subtype, the second a subtype that outranks a pos it
+ * disagrees with, the third the pos deciding when there is no subtype signal.
+ */
+const PRECEDENCE = [
+  ["suffix", null, "noun/suffix"],
+  ["接尾辞", null, "noun/suffix"],
+  ["i-adjective", null, "adjective/i-adjective"],
+  ["godan", null, "verb/group1"],
+  ["ichidan", null, "verb/group2"],
+  ["irregular", null, "verb/group3"],
+  ["proper", null, "noun/proper"],
+  ["degree", null, "adverb/degree"],
+  ["expression", "suffix", "noun/suffix"],
+  ["other", "suffix", "noun/suffix"],
+  ["other", "i-adjective", "adjective/i-adjective"],
+  ["noun", "group1", "verb/group1"],
+  ["verb", "common", "noun/common"],
+  ["adjective", "group2", "verb/group2"],
+  ["phrase", "suffix", "noun/suffix"],
+  ["noun", "nonsense", "noun/null"],
+  ["noun", "suffix", "noun/suffix"],
+  ["other", "mimetic", "other/mimetic"],
+  ["phrase", "mimetic", "phrase/null"],
+  ["noun", null, "noun/null"],
+  ["phrase", null, "phrase/null"],
+];
+for (const [pos, subtype, expected] of PRECEDENCE) {
+  const entry = { word: "x", kana: "x", pos, meanings: ["x"] };
+  if (subtype !== null) entry.subtype = subtype;
+  check(`pos "${pos}"${subtype === null ? "" : ` + subtype "${subtype}"`}`, imported(entry), expected);
+}
+
+// Every pair the table can already hold must resolve to itself, or the rule
+// above is silently reclassifying rows that exist. Derived from POS_SUBTYPES,
+// so a subtype added to the wrong catalog shows up here.
+const { POS_SUBTYPES } = await import(pathToFileURL(REAL).href);
+let pairs = 0;
+for (const [pos, options] of Object.entries(POS_SUBTYPES)) {
+  check(`bare "${pos}"`, imported({ word: "x", kana: "x", pos, meanings: ["x"] }), `${pos}/null`);
+  for (const option of options) {
+    pairs += 1;
+    check(
+      `${pos} + ${option.value}`,
+      imported({ word: "x", kana: "x", pos, subtype: option.value, meanings: ["x"] }),
+      `${pos}/${option.value}`
+    );
+  }
+}
+ok(`${pairs} catalog pair(s) resolve to themselves`);
+
+console.log("\n8. Self-test — every case must fail without the code it pins");
 const vocabSource = fs.readFileSync(VOCAB, "utf8").replace(/\r\n/g, "\n");
 
 /** Bundle a doctored vocab.ts and hand back its `parseVocabJson`. */
@@ -223,6 +279,14 @@ async function doctored(label, from, to) {
   await bundle(out, source);
   return (await import(pathToFileURL(out).href)).parseVocabJson;
 }
+
+/** `imported`, against a specific bundle rather than the real one. */
+const importedWith = (parseVocabJson, entry) => {
+  const result = parseVocabJson(JSON.stringify(entry));
+  if (!result.ok) return `error: ${result.error}`;
+  const [first] = result.entries;
+  return `${first.pos}/${first.subtype}`;
+};
 
 const parse = (parseVocabJson, value) => {
   const result = parseVocabJson(JSON.stringify({ word: "x", kana: "x", pos: value, meanings: ["x"] }));
@@ -259,6 +323,41 @@ if (noSynonyms) {
     const pos = parse(noSynonyms, value);
     if (pos === target) fail(`without the synonym table, "${value}" still resolves to ${pos}`);
     else ok(`without the synonym table, "${value}" falls through to ${JSON.stringify(pos)}`);
+  }
+}
+
+// The subtype field's branch and the pos-as-subtype branch are two mechanisms
+// reaching the same class, so each needs its own mutation — removing one leaves
+// the other answering correctly for the cases it covers.
+const SUBTYPE_FIELD_CASES = PRECEDENCE.filter(([pos, subtype, expected]) =>
+  subtype !== null && !expected.startsWith(`${pos}/`)
+);
+const noSubtypeBranch = await doctored(
+  "nosubtypebranch",
+  "  if (named && owner) return { pos: owner, subtype: named };\n",
+  ""
+);
+if (noSubtypeBranch) {
+  if (SUBTYPE_FIELD_CASES.length === 0) fail("no case depends on the subtype field — this check is vacuous");
+  for (const [pos, subtype, expected] of SUBTYPE_FIELD_CASES) {
+    const got = importedWith(noSubtypeBranch, { word: "x", kana: "x", pos, subtype, meanings: ["x"] });
+    if (got === expected) fail(`without the subtype branch, "${pos}" + "${subtype}" still resolves to ${got}`);
+    else ok(`without the subtype branch, "${pos}" + "${subtype}" falls through to ${JSON.stringify(got)}`);
+  }
+}
+
+const POS_FIELD_CASES = PRECEDENCE.filter(([pos, subtype, expected]) => subtype === null && expected !== `${pos}/null`);
+const noPosBranch = await doctored(
+  "noposbranch",
+  "    if (pos) map[key] = { pos, subtype };",
+  "    if (false) map[key] = { pos, subtype };"
+);
+if (noPosBranch) {
+  if (POS_FIELD_CASES.length === 0) fail("no case depends on the pos-is-a-subtype table — this check is vacuous");
+  for (const [pos, , expected] of POS_FIELD_CASES) {
+    const got = importedWith(noPosBranch, { word: "x", kana: "x", pos, meanings: ["x"] });
+    if (got === expected) fail(`without the pos-is-a-subtype table, "${pos}" still resolves to ${got}`);
+    else ok(`without the pos-is-a-subtype table, "${pos}" falls through to ${JSON.stringify(got)}`);
   }
 }
 

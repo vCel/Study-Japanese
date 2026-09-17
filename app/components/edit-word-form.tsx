@@ -99,6 +99,13 @@ export function WordEditForm({
       value: form.value,
     }))
   );
+
+  // The subtype options belong to the pos the reader has chosen, not the one the
+  // word arrived with — otherwise changing the pos leaves the old pos's options
+  // on screen and saves its subtype against the new pos.
+  const [pos, setPos] = React.useState(word.pos ?? "");
+  const [subtype, setSubtype] = React.useState(word.subtype ?? "");
+  const subtypeOptions = subtypeOptionsFor(pos);
   const nextMeaningId = React.useRef(meanings.length);
   const nextExampleId = React.useRef(examples.length);
   const nextFormId = React.useRef(forms.length);
@@ -168,7 +175,13 @@ export function WordEditForm({
                 id="pos"
                 name="pos"
                 ariaLabel="Part of speech"
-                defaultValue={word.pos ?? ""}
+                value={pos}
+                onValueChange={(next) => {
+                  setPos(next);
+                  // A subtype belongs to the pos that offered it, so a leftover
+                  // one is cleared rather than saved against the new pos.
+                  setSubtype("");
+                }}
                 className="mt-2"
                 options={POS_OPTIONS}
               />
@@ -179,15 +192,12 @@ export function WordEditForm({
                 id="subtype"
                 name="subtype"
                 ariaLabel="Subtype"
-                defaultValue={word.subtype ?? ""}
+                value={subtype}
+                onValueChange={setSubtype}
                 className="mt-2"
-                placeholder={subtypeOptionsFor(word.pos).length === 0 ? "—" : "Select"}
-                disabled={subtypeOptionsFor(word.pos).length === 0}
-                options={
-                  subtypeOptionsFor(word.pos).length === 0
-                    ? [{ value: "", label: "—" }]
-                    : [{ value: "", label: "—" }, ...subtypeOptionsFor(word.pos)]
-                }
+                placeholder={subtypeOptions.length === 0 ? "—" : "Select"}
+                disabled={subtypeOptions.length === 0}
+                options={[{ value: "", label: "—" }, ...subtypeOptions]}
               />
             </div>
           </CardContent>

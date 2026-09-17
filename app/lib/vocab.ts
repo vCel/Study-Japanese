@@ -470,20 +470,40 @@ const SUBTYPE_ALIASES_COLLAPSED: Record<string, string> = (() => {
   return map;
 })();
 
+/** The pos each catalog subtype belongs to. The POS_SUBTYPES catalogs are disjoint. */
+const SUBTYPE_OWNER: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const [pos, options] of Object.entries(POS_SUBTYPES)) {
+    for (const option of options) map[option.value] = pos;
+  }
+  return map;
+})();
+
+/** The canonical subtype a value names, or null when it names none. */
+function canonicalSubtype(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  return (
+    SUBTYPE_ALIASES[trimmed] ??
+    SUBTYPE_ALIASES_COLLAPSED[trimmed.replace(ALIAS_COLLAPSE, "")] ??
+    null
+  );
+}
+
 /**
- * Parts of speech that are really a noun subtype. "suffix" has no place in
- * `POS_VALUES`, so an import saying `"pos": "suffix"` is stored as pos "noun"
- * plus subtype "suffix" — the shape the UI's selects produce, so the two entry
- * paths cannot disagree about where a suffix lives.
+ * Parts of speech that are really a subtype: "suffix" is a noun subtype,
+ * "godan" a verb subtype, "proper" a noun subtype. Derived from the alias
+ * table, so a new alias is accepted here without a second list to keep in step.
  */
-const POS_AS_SUBTYPE: Record<string, { pos: string; subtype: string }> = {
-  suffix: { pos: "noun", subtype: "suffix" },
-  suffixes: { pos: "noun", subtype: "suffix" },
-  "suffix noun": { pos: "noun", subtype: "suffix" },
-  "noun suffix": { pos: "noun", subtype: "suffix" },
-  "接尾辞": { pos: "noun", subtype: "suffix" },
-  "接尾語": { pos: "noun", subtype: "suffix" },
-};
+const POS_AS_SUBTYPE: Record<string, { pos: string; subtype: string }> = (() => {
+  const map: Record<string, { pos: string; subtype: string }> = {};
+  for (const [key, subtype] of Object.entries(SUBTYPE_ALIASES)) {
+    const pos = SUBTYPE_OWNER[subtype];
+    if (pos) map[key] = { pos, subtype };
+  }
+  return map;
+})();
 
 const POS_AS_SUBTYPE_COLLAPSED: Record<string, { pos: string; subtype: string }> = (() => {
   const map: Record<string, { pos: string; subtype: string }> = {};
@@ -506,23 +526,56 @@ function posAsSubtype(value: unknown): { pos: string; subtype: string } | null {
 }
 
 /**
- * Normalize a subtype value against the pos's catalog. Values outside the
- * catalog are dropped for pos with a catalog (keeps the data clean); other pos
- * accept short free text.
+ * Normalize a subtype value against the pos's catalog. A value the catalog does
+ * not hold is dropped — that is what stops a row keeping a subtype its pos
+ * cannot show. Only `other` keeps short free text: it is the catch-all, where
+ * free text is the sole way to be specific. `phrase` is the Phrases-page marker
+ * rather than a class, so it carries no subtype at all.
  */
 export function normalizeSubtype(value: unknown, pos: string | null): string | null {
-  if (typeof value !== "string" || !pos) return null;
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) return null;
-
-  const aliased =
-    SUBTYPE_ALIASES[trimmed] ?? SUBTYPE_ALIASES_COLLAPSED[trimmed.replace(ALIAS_COLLAPSE, "")];
+  if (!pos) return null;
+  const named = canonicalSubtype(value);
   const options = subtypeOptionsFor(pos);
   if (options.length > 0) {
-    const canonical = aliased ?? trimmed;
-    return options.some((option) => option.value === canonical) ? canonical : null;
+    return named && options.some((option) => option.value === named) ? named : null;
   }
-  return trimmed.slice(0, 24);
+  if (pos !== "other" || typeof value !== "string") return null;
+  return value.trim().toLowerCase().slice(0, 24) || null;
+}
+
+/**
+ * Resolve the pos/subtype pair that will be stored, from whatever the caller
+ * had. One implementation for the JSON import, the bulk rows and the edit form:
+ * a disagreement between them is how a word ends up holding a subtype its pos
+ * cannot show, or losing the subtype on the next save.
+ *
+ * Precedence, most specific first:
+ *
+ *   1. A subtype naming a catalog subtype decides **both** the subtype and the
+ *      class. The catalogs are disjoint, so "group1" can only be a verb and
+ *      "suffix" only a noun — a pos that disagrees is the stale half of the
+ *      pair, and the subtype is the narrower claim.
+ *   2. A pos that is itself a subtype ("suffix", "godan", "proper") is the same
+ *      signal, so it resolves the same way.
+ *   3. With no subtype signal the pos decides the class, and the subtype has to
+ *      fit it.
+ *
+ * `phrase` never wins a conflict — it is the Phrases-page marker, not a class,
+ * so a row carrying both it and a real subtype takes the subtype's class.
+ */
+export function resolvePosSubtype(
+  posValue: unknown,
+  subtypeValue: unknown
+): { pos: string | null; subtype: string | null } {
+  const named = canonicalSubtype(subtypeValue);
+  const owner = named ? SUBTYPE_OWNER[named] : undefined;
+  if (named && owner) return { pos: owner, subtype: named };
+
+  const asSubtype = posAsSubtype(posValue);
+  if (asSubtype) return { pos: asSubtype.pos, subtype: asSubtype.subtype };
+
+  const pos = normalizePos(posValue);
+  return { pos, subtype: normalizeSubtype(subtypeValue, pos) };
 }
 
 const NOTE_KEYS = ["notes", "note", "comment", "comments"] as const;
@@ -588,10 +641,7 @@ function normalizeEntry(raw: unknown, index: number): VocabEntry | { error: stri
   }
 
   const examples = normalizeExamples(pick(obj, EXAMPLE_KEYS));
-  const posField = pick(obj, POS_KEYS);
-  const asSubtype = posAsSubtype(posField);
-  const pos = asSubtype?.pos ?? normalizePos(posField);
-  const subtype = asSubtype?.subtype ?? normalizeSubtype(pick(obj, SUBTYPE_KEYS), pos);
+  const { pos, subtype } = resolvePosSubtype(pick(obj, POS_KEYS), pick(obj, SUBTYPE_KEYS));
   const notes = normalizeNotes(pick(obj, NOTE_KEYS));
   const forms = normalizeForms(pick(obj, FORM_KEYS));
 

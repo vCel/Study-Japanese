@@ -1,4 +1,4 @@
-import { normalizePos, normalizeSubtype, parseVocabJson, type VocabEntry } from "~/lib/vocab";
+import { parseVocabJson, resolvePosSubtype, type VocabEntry } from "~/lib/vocab";
 
 /**
  * The row model behind the word-list and phrase create forms. Shared by the
@@ -176,15 +176,18 @@ export function readVocabRows(
 /** Normalized database entries for every complete row. */
 export function toEntries(rows: VocabRow[], { forcePos }: { forcePos?: string } = {}): VocabEntry[] {
   return rows.filter(isRowComplete).map((row) => {
-    // Through the same normalizers as the JSON import. This is the write path
-    // for the bulk editor, the uploads and the phrase form, and a pos or subtype
-    // the edit form has no option for is blanked the next time the row is saved.
-    const pos = forcePos ?? normalizePos(row.pos);
+    // Through the same resolver as the JSON import, so a row cannot be stored
+    // with a subtype its pos cannot show. The phrases page forces its marker and
+    // takes no subtype; everything else resolves the pair the way the edit form
+    // does, which is what makes the two entry paths agree.
+    const { pos, subtype } = forcePos
+      ? { pos: forcePos, subtype: null }
+      : resolvePosSubtype(row.pos, row.subtype);
     return {
       word: row.word.trim().slice(0, 64),
       kana: row.kana.trim().slice(0, 64),
       pos,
-      subtype: forcePos ? null : normalizeSubtype(row.subtype, pos),
+      subtype,
       meanings: row.meanings
         .map((meaning) => meaning.trim())
         .filter((meaning) => meaning.length > 0)
