@@ -4,6 +4,9 @@ import type { RuleKind } from "~/lib/db.server";
 
 export const REPETITION_KEY = "jv:study:repetition";
 
+/** Show the kana reading on the question side of a card that has one. */
+export const FRONT_READING_KEY = "jv:study:front-reading";
+
 /** The three independent study sections. */
 export type StudyKind = "words" | "phrases" | "forms";
 

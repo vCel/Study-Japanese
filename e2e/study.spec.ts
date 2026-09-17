@@ -427,6 +427,175 @@ test.describe("saved study sessions", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// "Reading on the front" (the flashcards builder's Options card).
+//
+// A word written in kanji is *asked* as kanji, so a learner who cannot read it
+// yet is guessing at the reading as well as the meaning; the setting puts the
+// kana under the word to take that second guess away. It must not do so on a
+// front that is the meaning — there the reading hands over the kanji — and it
+// must leave a card whose headword is already its own reading alone.
+// ---------------------------------------------------------------------------
+
+/** Any kana at all. The meanings are English, so kana on a meaning-side front is a leak. */
+const KANA = /[\u3040-\u309f\u30a0-\u30ff]/;
+/** A line written *only* in kana — a headword that is its own reading. */
+const KANA_ONLY = /^[\u3040-\u309f\u30a0-\u30ff]+$/;
+/** The hint a meaning-side front carries — how a spec tells the two sides apart. */
+const GUESS_HINT = /\s*guess the answer, then click to check\s*/i;
+
+interface CardRead {
+  /** The front's raw text, hint included. */
+  frontText: string;
+  /** True when the front is the Japanese side rather than the meaning. */
+  titleSide: boolean;
+  /** The front's own lines, with the click hint stripped off. */
+  frontLines: string[];
+  /** The answer side. Both faces are mounted at once, so this costs no click. */
+  backText: string;
+}
+
+async function readCard(page: Page): Promise<CardRead> {
+  const frontText = await page.locator("[data-slot='flashcard-front']").innerText();
+  return {
+    frontText,
+    titleSide: REVEAL_HINT.test(frontText),
+    frontLines: frontText
+      .replace(REVEAL_HINT, "")
+      .replace(GUESS_HINT, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+    backText: await page.locator("[data-slot='flashcard-back']").innerText(),
+  };
+}
+
+/**
+ * Answer every card of the session and report what each one showed.
+ *
+ * The deck size comes off the header rather than being assumed, so this still
+ * walks the whole deck if the starter pack grows.
+ */
+async function walkDeck(page: Page): Promise<CardRead[]> {
+  const header = /drew (\d+) random card/.exec(await page.locator("main").innerText());
+  expect(header, "the session header reports its deck size").not.toBeNull();
+  const size = Number(header![1]);
+
+  const cards: CardRead[] = [];
+  for (let index = 0; index < size; index += 1) {
+    const card = await readCard(page);
+    cards.push(card);
+    await page.getByRole("button", { name: /Got it/ }).click();
+    // Answering swaps in the next card, which remounts the flip card — reading
+    // it before the swap would report the card just answered. Polled on
+    // `innerText` rather than asserted with `toHaveText`, which compares the
+    // whitespace-normalised `textContent` and so would match nothing here and
+    // pass without ever waiting.
+    if (index < size - 1) {
+      await expect
+        .poll(() => page.locator("[data-slot='flashcard-front']").innerText())
+        .not.toBe(card.frontText);
+    }
+  }
+  return cards;
+}
+
+test.describe("reading on the front", () => {
+  test("puts the kana under the word on the question side", async ({ page }) => {
+    await page.goto("/study/flashcards/session?kind=words&limit=100");
+    await waitForHydration(page);
+
+    const cards = await walkDeck(page);
+    // The words tab holds only words written in kanji, so every card here has a
+    // reading to add and every question side dealt should be carrying it.
+    const questions = cards.filter((card) => card.titleSide);
+    expect(questions.length, "some cards were dealt their Japanese side").toBeGreaterThan(0);
+    for (const card of questions) {
+      expect(card.frontLines, "the word, then its reading").toHaveLength(2);
+      expect(card.frontLines[1], "the reading is written in kana").toMatch(KANA_ONLY);
+      expect(card.frontLines[1], "and is not the word over again").not.toBe(card.frontLines[0]);
+    }
+
+    // A front that *is* the meaning never carries it: the reading is written
+    // with the very kanji the card is asking for. Both sides have to be dealt
+    // for that to mean anything, so their presence is asserted, not assumed.
+    const meanings = cards.filter((card) => !card.titleSide);
+    expect(meanings.length, "some cards were dealt their meaning side").toBeGreaterThan(0);
+    for (const card of meanings) {
+      expect(card.frontText, "no reading on a meaning-side front").not.toMatch(KANA);
+    }
+
+    // The answer side still states the card in full, which is what keeps this a
+    // hint rather than a removal.
+    for (const card of cards) expect(card.backText).toMatch(KANA);
+
+    // Rules never get the setting: a rule's title is its *name*, not a reading
+    // of the ポイント the card asks about, so there is nothing for it to act on.
+    await page.goto("/study/flashcards?kind=forms");
+    await waitForHydration(page);
+    await expect(
+      panelFor(page, "forms").getByRole("switch", { name: "Reading on the front" })
+    ).toHaveCount(0);
+  });
+
+  test("off means the question side is just the word", async ({ page }) => {
+    await page.goto("/study/flashcards");
+    await waitForHydration(page);
+
+    // On by default, before anything has been stored.
+    const toggle = page.getByRole("switch", { name: "Reading on the front" });
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(
+      await page.evaluate(() => window.localStorage.getItem("jv:study:front-reading")),
+      "the choice is stored, not just held in state"
+    ).toBe("0");
+
+    await page.goto("/study/flashcards/session?kind=words&limit=100");
+    await waitForHydration(page);
+
+    const cards = await walkDeck(page);
+    const questions = cards.filter((card) => card.titleSide);
+    expect(questions.length, "some cards were dealt their Japanese side").toBeGreaterThan(0);
+    // One line, the headword. A verb like 食べる keeps its okurigana, so the line
+    // count — not the absence of kana — is what says the reading is gone.
+    for (const card of questions) expect(card.frontLines, "just the word").toHaveLength(1);
+    // And nothing else on the front either: the meaning side is English.
+    const meanings = cards.filter((card) => !card.titleSide);
+    expect(meanings.length, "some cards were dealt their meaning side").toBeGreaterThan(0);
+    for (const card of meanings) {
+      expect(card.frontText, "no reading on a meaning-side front").not.toMatch(KANA);
+    }
+    // The reading is still on the answer side, so hiding it costs nothing.
+    for (const card of cards) expect(card.backText).toMatch(KANA);
+  });
+
+  test("a card already written in kana gains no second line", async ({ page }) => {
+    // Three of the five seeded phrases are written in kana, so their reading is
+    // the headword and a second line would only repeat it. Which side a card is
+    // dealt is the loader's coin toss, so the session is re-dealt until one of
+    // those comes up on its Japanese side — the cap is what makes a future
+    // starter pack without one fail loudly instead of looping.
+    let kanaCard: CardRead | null = null;
+    for (let attempt = 0; attempt < 6 && kanaCard === null; attempt += 1) {
+      await page.goto("/study/flashcards/session?kind=phrases&limit=100");
+      await waitForHydration(page);
+      kanaCard =
+        (await walkDeck(page)).find(
+          (card) =>
+            card.titleSide && card.frontLines.length === 1 && KANA_ONLY.test(card.frontLines[0])
+        ) ?? null;
+    }
+    expect(kanaCard, "a kana-only phrase was dealt its Japanese side").not.toBeNull();
+
+    // One line, which is the word and its reading at once…
+    expect(kanaCard!.frontLines).toHaveLength(1);
+    // …and the answer side still states the card in full.
+    expect(kanaCard!.backText).toContain(kanaCard!.frontLines[0]);
+  });
+});
+
 test.describe("json import", () => {
   test("copies the example JSON with the animated copy button", async ({ page }) => {
     await page.goto("/lists/new");

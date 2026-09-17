@@ -28,6 +28,7 @@ import { Tooltip } from "~/components/lightswind/tooltip";
 import { cn } from "~/lib/utils";
 import {
   DEFAULT_STUDY_CONFIG,
+  FRONT_READING_KEY,
   loadPreference,
   loadSessions,
   newSessionId,
@@ -131,6 +132,12 @@ export function StudySetup({
   const [repetition, setRepetition] = React.useState(
     () => loadPreference(REPETITION_KEY, "1", ["1", "0"]) === "1"
   );
+  // Read after the first render, so the switch is not rendered from a value the
+  // server could not have known (see `Flashcards`, which reads the same key).
+  const [frontReading, setFrontReading] = React.useState(true);
+  React.useEffect(() => {
+    setFrontReading(loadPreference(FRONT_READING_KEY, "1", ["1", "0"]) === "1");
+  }, []);
   // Stars are per-user and live in Convex, so they only arrive in the browser.
   const starred = useStarredIds();
 
@@ -147,6 +154,12 @@ export function StudySetup({
     const next = !repetition;
     setRepetition(next);
     savePreference(REPETITION_KEY, next ? "1" : "0");
+  };
+
+  const toggleFrontReading = () => {
+    const next = !frontReading;
+    setFrontReading(next);
+    savePreference(FRONT_READING_KEY, next ? "1" : "0");
   };
 
   return (
@@ -174,6 +187,8 @@ export function StudySetup({
             onSessionsChange={(next) => updateSessions(kind, next)}
             repetition={repetition}
             onToggleRepetition={toggleRepetition}
+            frontReading={frontReading}
+            onToggleFrontReading={toggleFrontReading}
           />
         </TabsContent>
       ))}
@@ -194,6 +209,8 @@ function StudyPanel({
   onSessionsChange,
   repetition,
   onToggleRepetition,
+  frontReading,
+  onToggleFrontReading,
 }: {
   kind: StudyKind;
   lists: WordListSummary[];
@@ -207,6 +224,8 @@ function StudyPanel({
   onSessionsChange: (next: SavedSession[]) => void;
   repetition: boolean;
   onToggleRepetition: () => void;
+  frontReading: boolean;
+  onToggleFrontReading: () => void;
 }) {
   const navigate = useNavigate();
   const isForms = kind === "forms";
@@ -557,6 +576,25 @@ function StudyPanel({
                 aria-label="Spaced repetition"
               />
             </div>
+
+            {/*
+              Words and phrases only: a rule card asks about a ポイント, and its
+              title is not a reading of that, so the switch has nothing to act
+              on. A control that cannot apply is not offered.
+            */}
+            {!isForms && (
+              <div className="flex items-center justify-between gap-4">
+                <SettingLabel
+                  label="Reading on the front"
+                  hint="Shows the kana under the word on the question side, so a kanji word can be attempted without guessing how it is said. A card already written in kana gains nothing, and a card asking for the word never shows the reading — there it is half the answer."
+                />
+                <Switch
+                  checked={frontReading}
+                  onCheckedChange={onToggleFrontReading}
+                  aria-label="Reading on the front"
+                />
+              </div>
+            )}
 
             <div className="flex items-center justify-between gap-4">
               <SettingLabel

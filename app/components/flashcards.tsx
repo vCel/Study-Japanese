@@ -9,6 +9,7 @@ import { Button } from "~/components/lightswind/button";
 import { Badge } from "~/components/lightswind/badge";
 import { Tooltip } from "~/components/lightswind/tooltip";
 import {
+  FRONT_READING_KEY,
   loadPreference,
   REPETITION_KEY,
   savePreference,
@@ -86,6 +87,19 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
   const [repetition, setRepetition] = React.useState(
     () => loadPreference(REPETITION_KEY, "1", ["1", "0"]) === "1"
   );
+
+  /**
+   * Whether a card's kana is shown on its question side.
+   *
+   * Read after the first render, unlike `repetition`: this one decides whether
+   * the front carries a line of text, so a preference read during render would
+   * make the client's first render disagree *visibly* with the HTML it is
+   * hydrating. Only the off-default case pays for that, with one frame of kana.
+   */
+  const [frontReading, setFrontReading] = React.useState(true);
+  React.useEffect(() => {
+    setFrontReading(loadPreference(FRONT_READING_KEY, "1", ["1", "0"]) === "1");
+  }, []);
 
   const statsRef = React.useRef<StatsMap>({});
   React.useEffect(() => {
@@ -290,6 +304,7 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
         side={cardSide}
         flipped={flipped}
         missedBefore={missedBefore}
+        frontReading={frontReading}
         onFlip={() => setFlipped((f) => !f)}
       />
 
@@ -311,17 +326,30 @@ function Flashcard({
   side,
   flipped,
   missedBefore,
+  frontReading,
   onFlip,
 }: {
   card: StudyCard;
   side: CardSide;
   flipped: boolean;
   missedBefore: number;
+  frontReading: boolean;
   onFlip: () => void;
 }) {
+  /*
+    The reading goes on the front only when the front is the Japanese side. A
+    meaning-side front is asking for the word, so its kana — and with it the
+    kanji — is half the answer, and the flip is what hands that over. The back
+    states the card in full either way.
+  */
   const front =
     side === "title" ? (
-      <p className="px-4 text-center text-4xl font-bold break-words md:text-6xl">{card.title}</p>
+      <>
+        <p className="px-4 text-center text-4xl font-bold break-words md:text-6xl">{card.title}</p>
+        {frontReading && card.frontKana && (
+          <p className="mt-2 text-center text-lg text-muted-foreground">{card.frontKana}</p>
+        )}
+      </>
     ) : (
       <div className="max-w-md text-center">
         <p className="text-3xl font-bold break-words">{card.meanings[0]}</p>

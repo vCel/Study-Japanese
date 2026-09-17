@@ -47,6 +47,14 @@ export interface StudyCard {
   title: string;
   /** Reading / pattern, shown on the answer side. */
   reading: string | null;
+  /**
+   * The kana to show on the *question* side, or null when there is nothing to
+   * add: a rule (its `reading` is the rule's name, not a reading of the point
+   * the card asks about) and a word already written in kana. Whether the front
+   * is the Japanese side is the caller's business — on a meaning-side front
+   * this is half the answer.
+   */
+  frontKana: string | null;
   /** Meaning lines (a rule's explanation for grammar cards). */
   meanings: string[];
   /** Which side this card leads with, decided once per session. */
@@ -59,6 +67,8 @@ export function wordToStudyCard(word: WordDetail, side: CardSide): StudyCard {
     key: `w:${word.id}`,
     title: word.word,
     reading: word.kana,
+    // A headword that is already its own reading adds nothing but a repeat.
+    frontKana: word.kana && word.kana !== word.word ? word.kana : null,
     meanings: word.meanings.length > 0 ? word.meanings : ["—"],
     side,
     examples: word.examples.map((example) => ({
@@ -90,6 +100,9 @@ export function ruleToStudyCards(rule: RuleDetail): StudyCard[] {
     key: `r:${rule.id}:${index}`,
     title: point,
     reading: hasPoints ? rule.title : null,
+    // Never a reading of the point: a rule's title is its *name*, and the point
+    // is what the card asks about.
+    frontKana: null,
     meanings: [rule.explanation],
     side: "title",
     examples: rule.examples.map((example) => ({
