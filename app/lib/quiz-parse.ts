@@ -12,10 +12,10 @@
  * see {@link leaksAnswer}.
  */
 
-import type { QuizQuestion, QuizQuestionType } from "./quiz-types";
+import type { QuizInputForm, QuizQuestion, QuizQuestionType } from "./quiz-types";
 import { QUIZ_QUESTION_TYPES } from "./quiz-types";
 import { extractJson } from "./quiz-prompt";
-import { stripEmphasis, stripFurigana } from "./furigana";
+import { KANA_ONLY, stripEmphasis, stripFurigana } from "./furigana";
 
 /** Fisher-Yates, so an option pool can be relied on to be unordered. */
 function shuffle<T>(items: T[]): T[] {
@@ -78,6 +78,26 @@ const JAPANESE = /[\u3005\u3006\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uf
 /** The comparison form of a string: annotations and emphasis markers gone. */
 function comparable(text: string): string {
   return stripEmphasis(stripFurigana(text)).trim().toLowerCase();
+}
+
+/**
+ * Which of the three typing shapes a question is, read off its own fields.
+ *
+ * **Derived rather than declared, and deliberately so.** A question whose
+ * sentence carries a gap *is* a fill-the-gap question whatever it calls itself,
+ * and a mislabelled one must not cost the learner a question — so nothing here
+ * can fail, and nothing here drops anything.
+ *
+ * The sentence decides it. With a gap it is a `blank`: the gap is the question
+ * and the answer is what goes in it. Without one it is a `transform`, where the
+ * sentence is the material to rewrite. Only a question with no sentence at all
+ * can be a `reading`, and then only when its answer is kana — a reading is what
+ * a kana answer to a bare prompt has to be. Anything else stays `undefined`,
+ * meaning a plain prompt-and-type question, which is what an English gloss is.
+ */
+function inputForm(answer: string, sentence: string | null): QuizInputForm | undefined {
+  if (sentence !== null) return countBlanks(sentence) > 0 ? "blank" : "transform";
+  return KANA_ONLY.test(comparable(answer)) ? "reading" : undefined;
 }
 
 /**
@@ -147,6 +167,8 @@ function uninflected(needle: string): string | null {
  *  * `multiple-choice` needs 2+ *distinct* options, with the answer among them
  *  * `fill-blanks` needs a sentence containing at least one gap
  *  * `true-false` normalises its answer to "true"/"false"
+ *  * `input` has its shape read off its sentence rather than trusted (see
+ *    `inputForm`)
  *  * no type but `true-false` may contain its own answer (see `leaksAnswer`)
  *
  * What this cannot check is whether a distractor is *semantically* also valid —
@@ -180,11 +202,14 @@ function parseQuestion(raw: unknown, index: number): QuizQuestion | null {
     sourceKind,
   };
 
+  // Read once, here: the giveaway check needs it, and so does the shape of an
+  // `input` question (see `inputForm`).
+  const sentence = asString(entry.sentence);
+
   // `true-false` is exempt: its answer is the word "true" or "false", which a
   // prompt reading "True or false: …" contains by construction. Everything else
   // is checked against both strings the learner sees, prompt and sentence.
   if (type !== "true-false") {
-    const sentence = asString(entry.sentence);
     if (leaksAnswer(prompt, answer) || (sentence !== null && leaksAnswer(sentence, answer))) {
       return null;
     }
@@ -195,24 +220,24 @@ function parseQuestion(raw: unknown, index: number): QuizQuestion | null {
     const truthy = ["true", "yes", "correct", "正しい", "○", "o"].includes(normalized);
     const falsy = ["false", "no", "incorrect", "incorrect.", "誤り", "×", "x"].includes(normalized);
     if (!truthy && !falsy) return null;
-    const sentence = asString(entry.sentence) ?? undefined;
+    const shown = sentence ?? undefined;
     return {
       ...base,
       answer: truthy ? "true" : "false",
-      sentence,
+      sentence: shown,
       // Show the sentence as the prompt when the model only filled "sentence".
-      prompt: sentence && prompt.length < sentence.length ? `${prompt}\n${sentence}` : prompt,
+      prompt: shown && prompt.length < shown.length ? `${prompt}\n${shown}` : prompt,
     };
   }
 
   if (type === "fill-blanks") {
-    const sentence = asString(entry.sentence) ?? prompt;
-    const blanks = countBlanks(sentence);
+    const gapped = sentence ?? prompt;
+    const blanks = countBlanks(gapped);
     if (blanks === 0) return null;
     const options = asStringArray(entry.options);
     return {
       ...base,
-      sentence,
+      sentence: gapped,
       blanks: typeof entry.blanks === "number" ? entry.blanks : blanks,
       // Re-shuffle so the bank order is never a hint.
       options: options.length > 0 ? shuffle(options) : undefined,
@@ -237,6 +262,10 @@ function parseQuestion(raw: unknown, index: number): QuizQuestion | null {
   // input
   return {
     ...base,
+    // `form` is read off the question rather than taken from the model (see
+    // `inputForm`); `sentence` is what the UI shows above the box.
+    sentence: sentence ?? undefined,
+    form: inputForm(answer, sentence),
     answer,
     acceptableAnswers: asStringArray(entry.acceptableAnswers),
   };
@@ -246,6 +275,46 @@ export interface ParseResult {
   questions: QuizQuestion[];
   /** How many raw entries were rejected, for logging/diagnostics. */
   dropped: number;
+}
+
+/**
+ * Deal the questions out so the types do not arrive in blocks.
+ *
+ * Models write one type at a time — every multiple-choice question, then every
+ * typing question, then every fill-in-the-blank — however evenly the prompt
+ * asks them to spread the questions. That is the same failure `shuffle` above
+ * already handles for the option pool ("in a random order" is an instruction
+ * the model may quietly ignore), so the order is settled here rather than asked
+ * for a second time in the prompt.
+ *
+ * **Round-robin rather than a plain shuffle**, because a shuffle does not
+ * actually guarantee what was asked for: four multiple-choice and four typing
+ * questions come back from a shuffle as two blocks often enough to be noticed,
+ * and two blocks is the complaint. Dealing one from each type in turn cannot
+ * produce them. Which type leads, and the order within each type, are still
+ * random — so a retake does not replay the same sequence.
+ *
+ * A type with more questions than the others keeps its surplus at the end. That
+ * tail is a block, but it is the block no arrangement can avoid.
+ */
+function interleaveByType(questions: QuizQuestion[]): QuizQuestion[] {
+  const buckets = new Map<string, QuizQuestion[]>();
+  for (const question of questions) {
+    const bucket = buckets.get(question.type);
+    if (bucket) bucket.push(question);
+    else buckets.set(question.type, [question]);
+  }
+
+  const groups = shuffle([...buckets.values()].map((bucket) => shuffle(bucket)));
+
+  const dealt: QuizQuestion[] = [];
+  for (let round = 0; dealt.length < questions.length; round++) {
+    for (const group of groups) {
+      const next = group[round];
+      if (next) dealt.push(next);
+    }
+  }
+  return dealt;
 }
 
 /**
@@ -281,5 +350,7 @@ export function parseQuizQuestions(text: string, limit: number): ParseResult {
     throw new Error("Every generated question was malformed.");
   }
 
-  return { questions, dropped };
+  // The order the model chose is the one thing about it worth overruling: it
+  // writes by type, so a grouped run is what reaches the learner otherwise.
+  return { questions: interleaveByType(questions), dropped };
 }

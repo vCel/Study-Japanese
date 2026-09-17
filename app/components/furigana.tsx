@@ -72,14 +72,27 @@ export function useFurigana(): FuriganaControls {
  * With the readings off this is the plain text, so call sites do not need a
  * second branch — every place that showed `question.prompt` before now shows
  * `<Ruby>{question.prompt}</Ruby>` and gets both behaviours.
+ *
+ * `plain` overrides the quiz-wide toggle for the text under a question that is
+ * *asking* for a reading. 学生《がくせい》 in a prompt whose answer is がくせい
+ * hands the answer over, so those questions show no readings whatever the
+ * toggle says. It is per question, and only for the question itself: the
+ * explanation shown *after* the learner answers still carries them, which is
+ * where they earn their place.
  */
-export function Ruby({ children }: { children?: string | null }) {
+export function Ruby({
+  children,
+  plain = false,
+}: {
+  children?: string | null;
+  plain?: boolean;
+}) {
   const { show } = React.useContext(FuriganaContext);
 
   if (!children) return null;
   // Nothing annotated: skip the parse entirely, which is the common case for
   // English prompts and for the kana-only options.
-  if (!show) return <>{stripFurigana(children)}</>;
+  if (!show || plain) return <>{stripFurigana(children)}</>;
 
   const segments = parseFurigana(children);
   if (segments.length === 1 && !segments[0].reading) return <>{children}</>;
@@ -116,24 +129,35 @@ export function Ruby({ children }: { children?: string | null }) {
  *
  * Only `**` is treated as emphasis — see `stripEmphasis` for why the single
  * forms are left alone.
+ *
+ * `plain` is passed straight through to `Ruby`, so a question that is asking
+ * for a reading renders its prose plainly too (see `Ruby`).
  */
-export function RichText({ children }: { children?: string | null }) {
+export function RichText({
+  children,
+  plain = false,
+}: {
+  children?: string | null;
+  plain?: boolean;
+}) {
   if (!children) return null;
 
   // The capture group keeps the delimiters, so the array alternates
   // plain / bold / plain. A string with no markers splits to a single part.
   const parts = children.split(/(\*\*[^*\n]+\*\*)/g);
-  if (parts.length === 1) return <Ruby>{children}</Ruby>;
+  if (parts.length === 1) return <Ruby plain={plain}>{children}</Ruby>;
 
   return (
     <>
       {parts.map((part, index) =>
         part.length > 4 && part.startsWith("**") && part.endsWith("**") ? (
           <strong key={index} className="font-semibold text-foreground">
-            <Ruby>{part.slice(2, -2)}</Ruby>
+            <Ruby plain={plain}>{part.slice(2, -2)}</Ruby>
           </strong>
         ) : (
-          <Ruby key={index}>{part}</Ruby>
+          <Ruby key={index} plain={plain}>
+            {part}
+          </Ruby>
         )
       )}
     </>

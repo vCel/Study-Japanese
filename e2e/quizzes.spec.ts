@@ -32,6 +32,13 @@ function facetPanel(page: Page, source: "words" | "lists") {
 interface StubQuestion {
   type: string;
   prompt: string;
+  /**
+   * The typing shape. Derived server-side by `quiz-parse.ts` rather than
+   * declared by the model, so a stub that omits it is not the shape a live
+   * generation returns — and the runner reads it to decide whether a prompt
+   * may show its readings.
+   */
+  form?: "blank" | "transform" | "reading";
   sentence?: string;
   blanks?: number;
   options?: string[];
@@ -1066,6 +1073,142 @@ test.describe("quiz session", () => {
 
     await expect(page.locator('[data-slot="quiz-answer-input"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Kana bank")).toHaveCount(0);
+  });
+
+  /**
+   * A typing question is bounded by material the learner is handed, rather than
+   * asking them to compose something. A gap puts the sentence on screen and
+   * takes the missing word alone.
+   */
+  test("shows the gap sentence on a typing question and grades only the gap", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, [
+      {
+        type: "input",
+        form: "blank",
+        prompt: "Fill the gap. Type the missing word.",
+        sentence: "駅《えき》まで___で行《い》きます。",
+        answer: "電車《でんしゃ》",
+        acceptableAnswers: ["でんしゃ", "densha"],
+        explanation: "電車《でんしゃ》 is a train, and で marks the means of getting there.",
+        sourceId: 3,
+        sourceKind: "word",
+      },
+    ]);
+
+    await page.goto("/study/quizzes/session?sources=words&count=1&types=input");
+    await expectHydrated(page);
+
+    const input = page.locator('[data-slot="quiz-answer-input"]');
+    await expect(input).toBeVisible({ timeout: 15_000 });
+
+    // The sentence IS the question here: without it the field would be asking
+    // for a word with nothing to put it into.
+    const sentence = page.locator('[data-slot="quiz-sentence"]');
+    await expect(sentence).toContainText("駅");
+    await expect(sentence).toContainText("で行");
+
+    await input.fill("densha");
+    await page.getByRole("button", { name: "Check answer" }).click();
+    await expect(page.getByText("Correct!")).toBeVisible();
+    // What was typed lands in the gap and nowhere else — the answer to this
+    // question is the missing word, not the sentence around it.
+    await expect(sentence).toContainText("densha");
+  });
+
+  /**
+   * The other bounded shape: a sentence to rewrite with the rule under test.
+   * The sentence it is given is what belongs on screen — showing the rewritten
+   * form would be showing the answer.
+   */
+  test("grades a rewrite against the sentence it was given", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, [
+      {
+        type: "input",
+        form: "transform",
+        prompt: "Rewrite the sentence with 〜てある, so it says the ticket has been bought.",
+        sentence: "チケットを買《か》いました。",
+        answer: "チケットを買《か》ってあります。",
+        acceptableAnswers: ["ちけっとをかってあります", "chiketto wo katte arimasu"],
+        explanation: "〜てある describes the state something was left in on purpose.",
+        sourceId: 2,
+        sourceKind: "rule",
+      },
+    ]);
+
+    await page.goto("/study/quizzes/session?sources=rules&count=1&types=input");
+    await expectHydrated(page);
+
+    const input = page.locator('[data-slot="quiz-answer-input"]');
+    await expect(input).toBeVisible({ timeout: 15_000 });
+
+    // Tolerant of the ruby the sentence carries: the reading renders inline in
+    // `textContent`, so an exact string would fail on the annotation alone.
+    const sentence = page.locator('[data-slot="quiz-sentence"]');
+    await expect(sentence).toContainText(/チケットを買(?:か)?いました/);
+    await expect(sentence).not.toContainText("買ってあります");
+
+    // Typed in romaji, because the learner this quiz is written for cannot
+    // write 買 — which is the whole reason `acceptableAnswers` carries it.
+    await input.fill("chiketto wo katte arimasu");
+    await page.getByRole("button", { name: "Check answer" }).click();
+    await expect(page.getByText("Correct!")).toBeVisible();
+  });
+
+  /**
+   * A question asking for a reading must not show one, and that has to beat the
+   * quiz-wide toggle — which defaults to on, and which the learner may have
+   * turned on deliberately.
+   *
+   * The prompt carries an annotation on an *unrelated* word, so the assertion
+   * is discriminating: with the suppression removed, `rt` would render and the
+   * count would be 1.
+   */
+  test("hides the readings on the question that is asking for one", async ({ page }) => {
+    await stubConvex(page);
+    await stubGeneration(page, [
+      {
+        type: "input",
+        form: "reading",
+        prompt: "Type the reading of 学生 in kana — the word as it is used in 学校《がっこう》.",
+        answer: "がくせい",
+        acceptableAnswers: ["gakusei"],
+        explanation: "学生《がくせい》 is read がくせい.",
+        sourceId: 3,
+        sourceKind: "word",
+      },
+      {
+        type: "multiple-choice",
+        prompt: "What does 図書館《としょかん》 mean?",
+        options: ["library", "hospital"],
+        answer: "library",
+        explanation: "図書館《としょかん》 is where you borrow books.",
+        sourceId: 4,
+        sourceKind: "word",
+      },
+    ]);
+
+    await page.goto("/study/quizzes/session?sources=words&count=2&types=input,multiple-choice");
+    await expectHydrated(page);
+
+    const toggle = page.getByRole("button", { name: /Furigana/ });
+    await expect(toggle).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
+    // The readings are on, and the prompt still shows none: 学生《がくせい》 here
+    // would be the answer, written above the word it was asking about.
+    await expect(page.locator("rt")).toHaveCount(0);
+
+    await page.locator('[data-slot="quiz-answer-input"]').fill("がくせい");
+    await page.getByRole("button", { name: "Check answer" }).click();
+    await expect(page.getByText("Correct!")).toBeVisible();
+
+    // Only the question loses them. The explanation shown afterwards is where
+    // the readings earn their place, so it still carries them.
+    await expect(page.locator("rt").first()).toHaveText("がくせい");
+
+    await page.getByRole("button", { name: "Next question →" }).click();
+    // And the next question, which is not asking for a reading, has them back.
+    await expect(page.locator("rt").first()).toHaveText("としょかん");
   });
 
   test("omitting seconds means the quiz is untimed", async ({ page }) => {

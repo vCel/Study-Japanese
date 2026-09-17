@@ -285,7 +285,6 @@ export function QuizRunner({
     index: number;
     total: number;
   } | null>(null);
-  const [liveAttempts, setLiveAttempts] = React.useState<GenerationAttempt[]>([]);
   /**
    * Set when the chain restarts for a second pass. Named for the `round` event
    * that carries it, not for the retry it replaced — the walk no longer retries
@@ -302,7 +301,6 @@ export function QuizRunner({
     setError("");
     setRoundNote(null);
     setProgress(null);
-    setLiveAttempts([]);
     setAnswers([]);
 
     /** The attempts seen live — the fallback when a failure carries no list. */
@@ -370,9 +368,10 @@ export function QuizRunner({
         // Only ever fires between passes, never after the last one.
         onRound: () =>
           setRoundNote("Every model failed — starting the chain again."),
+        // Collected for the failure path below, never rendered: which models
+        // failed is the app's problem, not the learner's.
         onAttemptDone: (attempt) => {
           seen.push(attempt);
-          setLiveAttempts([...seen]);
         },
       });
 
@@ -405,12 +404,7 @@ export function QuizRunner({
     <FuriganaProvider>
       <div>
         {phase === "generating" && (
-          <GeneratingPanel
-            config={config}
-            progress={progress}
-            attempts={liveAttempts}
-            roundNote={roundNote}
-          />
+          <GeneratingPanel config={config} progress={progress} roundNote={roundNote} />
         )}
 
         {phase === "error" && (
@@ -522,12 +516,10 @@ const CHAIN_LENGTH = CHAIN_LABELS.length;
 function GeneratingPanel({
   config,
   progress,
-  attempts,
   roundNote,
 }: {
   config: QuizRunConfig;
   progress: { model: string; index: number; total: number } | null;
-  attempts: GenerationAttempt[];
   roundNote: string | null;
 }) {
   const total = progress?.total ?? CHAIN_LENGTH;
@@ -580,9 +572,6 @@ function GeneratingPanel({
             {roundNote}
           </p>
         )}
-
-        {/* What has actually happened so far, not a prediction. */}
-        {attempts.length > 0 && <AttemptList attempts={attempts} />}
 
         <p className="max-w-md text-xs text-muted-foreground">
           If a model is busy or rate limited, the next one in the chain is tried automatically —
@@ -695,6 +684,23 @@ function QuestionFlow({
 
   const question = questions[index];
 
+  /**
+   * A question that is *asking* for a reading must not show one: annotating
+   * 学生《がくせい》 in a prompt whose answer is がくせい hands the answer over,
+   * so the readings are off for this question whatever the toggle says. Only
+   * the question itself — the explanation that follows still carries them,
+   * which is where they help.
+   */
+  const asksReading = question.form === "reading";
+
+  /**
+   * The sentence panel's text. A `reading` question carries no sentence by
+   * construction and `true-false` folds its own into the prompt, so only the
+   * two types that put the material on screen for the learner can reach this.
+   */
+  const sentence =
+    question.type === "fill-blanks" || question.type === "input" ? question.sentence : undefined;
+
   /** Commit an answer and show the feedback card. */
   const submit = React.useCallback(
     (value: string, timedOut = false) => {
@@ -803,7 +809,7 @@ function QuestionFlow({
             <CardContent className="p-6 md:p-8">
               <div className="mb-4 flex items-start justify-between gap-4">
                 <p className="text-xl leading-relaxed font-medium whitespace-pre-line">
-                  <RichText>{question.prompt}</RichText>
+                  <RichText plain={asksReading}>{question.prompt}</RichText>
                 </p>
                 {timeLimitSeconds !== null && !submitted && (
                   <span
@@ -820,9 +826,16 @@ function QuestionFlow({
                 )}
               </div>
 
-              {question.type === "fill-blanks" && question.sentence && (
-                <p className="mb-5 rounded-[var(--radius)] border border-border bg-muted/40 p-4 text-xl leading-loose">
-                  {renderSentence(question.sentence, submitted?.given ?? null, submitted?.question.answer ?? null)}
+              {sentence && (
+                <p
+                  // A hook for the specs: the sentence is the question on a
+                  // fill-the-gap or rewrite, and its text is generated, so a
+                  // locator built on the copy could not tell a question that
+                  // shows its sentence from one that forgot to.
+                  data-slot="quiz-sentence"
+                  className="mb-5 rounded-[var(--radius)] border border-border bg-muted/40 p-4 text-xl leading-loose"
+                >
+                  {renderSentence(sentence, submitted?.given ?? null, submitted?.question.answer ?? null)}
                 </p>
               )}
 
@@ -853,6 +866,9 @@ function QuestionFlow({
 /**
  * The sentence with its gaps. Before answering, blank underscores; after, the
  * gap shows what the user put (green when right, red when wrong).
+ *
+ * A sentence with no gap — the one a `transform` question hands the learner to
+ * rewrite — is rendered as it stands, which is what makes this serve both.
  *
  * The sentence around the gaps is annotated Japanese like everything else, so
  * it goes through `RichText`; the gap contents are options lifted straight out

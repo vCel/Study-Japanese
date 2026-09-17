@@ -33,7 +33,8 @@ export const QUIZ_TYPE_LABELS: Record<QuizQuestionType, string> = {
 
 export const QUIZ_TYPE_HINTS: Record<QuizQuestionType, string> = {
   "multiple-choice": "Pick the correct option from a list of four.",
-  input: "Type the answer in yourself — kana or romaji both count.",
+  input:
+    "One bounded answer you type yourself, kana or romaji both counting: fill a gap, rewrite a sentence with the rule, or give the reading of a word written in kanji.",
   "fill-blanks":
     "A sentence with one or two gaps, filled from a shuffled bank of buttons.",
   "true-false": "Decide whether a generated sentence is correct.",
@@ -244,6 +245,26 @@ export const DEFAULT_QUIZ_CONFIG: QuizConfig = {
 // ---------------------------------------------------------------------------
 
 /**
+ * Which of the three shapes a typing question takes.
+ *
+ * `input` used to be open-ended: the model was free to ask the learner to
+ * compose a sentence of their own, which cannot be graded fairly — any
+ * defensible sentence is marked wrong — and cannot be typed at all by someone
+ * who does not write kanji. The prompt asks for these three shapes and no
+ * others, and each is bounded by material the learner has already been given:
+ *
+ * - `blank` — a sentence with a gap; the answer is the missing piece alone.
+ * - `transform` — a sentence to rewrite with the rule under test.
+ * - `reading` — a word written in kanji; the answer is its reading in kana.
+ *
+ * **Derived from the question's own fields by `quiz-parse.ts`, never taken from
+ * the model.** A question carrying a gapped sentence *is* a fill-the-gap
+ * question whatever it calls itself, and a mislabelled one must not cost the
+ * learner a question.
+ */
+export type QuizInputForm = "blank" | "transform" | "reading";
+
+/**
  * One generated question. Every field the runner needs is present for every
  * type, so the component branches on `type` only for the input control.
  */
@@ -254,11 +275,20 @@ export interface QuizQuestion {
   /** The question text, e.g. "What does 食べる mean?". */
   prompt: string;
   /**
-   * Fill-in-the-blanks only: the sentence with `___` marking each gap, in
-   * reading order. `blanks` counts the gaps.
+   * The sentence under test, in reading order: the gapped sentence of a
+   * `fill-blanks` question or a `blank` typing question, or the sentence to
+   * rewrite in a `transform` one. Absent elsewhere.
    */
   sentence?: string;
+  /** `fill-blanks` only: how many gaps `sentence` carries. */
   blanks?: number;
+  /**
+   * Typing questions only, and only when the shape is one of the three above
+   * (see `QuizInputForm`). Absent on a typing question means a plain
+   * prompt-and-type question — an English gloss, say — which carries no
+   * sentence to fill and no reading to hide.
+   */
+  form?: QuizInputForm;
   /**
    * The unordered pool the user picks from — the multiple-choice options, or
    * the fill-in bank. Shuffled by the server so the first entry is never

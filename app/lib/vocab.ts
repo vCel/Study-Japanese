@@ -3,6 +3,8 @@
  * Accepts a single object or an array, with tolerant key aliases.
  */
 
+import { kanaFormName } from "./form-names";
+
 export interface VocabExample {
   japanese: string;
   translation: string | null;
@@ -162,6 +164,7 @@ export const POS_SUBTYPES: Record<string, { value: string; label: string }[]> = 
   noun: [
     { value: "common", label: "Common noun" },
     { value: "proper", label: "Proper noun" },
+    { value: "suffix", label: "Suffix (接尾辞)" },
   ],
   // Adverb classes (日本語の副詞の分類): time, frequency, manner, degree and
   // statement/illocutionary adverbs.
@@ -374,6 +377,15 @@ const SUBTYPE_ALIASES: Record<string, string> = {
   "proper name": "proper",
   "固有名詞": "proper",
   "固有名": "proper",
+  // Suffixes (接尾辞): ～さん, ～人. A noun subtype, so these words stay in the
+  // Nouns filter while keeping the suffix distinction.
+  suffix: "suffix",
+  suffixes: "suffix",
+  "suffix noun": "suffix",
+  "noun suffix": "suffix",
+  "接尾辞": "suffix",
+  "接尾語": "suffix",
+  "せつびじ": "suffix",
   // Adverbs: temporal / frequency / manner / degree / statement classes
   temporal: "temporal",
   "time adverb": "temporal",
@@ -433,6 +445,41 @@ const SUBTYPE_ALIASES_COLLAPSED: Record<string, string> = (() => {
 })();
 
 /**
+ * Parts of speech that are really a noun subtype. "suffix" has no place in
+ * `POS_VALUES`, so an import saying `"pos": "suffix"` is stored as pos "noun"
+ * plus subtype "suffix" — the shape the UI's selects produce, so the two entry
+ * paths cannot disagree about where a suffix lives.
+ */
+const POS_AS_SUBTYPE: Record<string, { pos: string; subtype: string }> = {
+  suffix: { pos: "noun", subtype: "suffix" },
+  suffixes: { pos: "noun", subtype: "suffix" },
+  "suffix noun": { pos: "noun", subtype: "suffix" },
+  "noun suffix": { pos: "noun", subtype: "suffix" },
+  "接尾辞": { pos: "noun", subtype: "suffix" },
+  "接尾語": { pos: "noun", subtype: "suffix" },
+};
+
+const POS_AS_SUBTYPE_COLLAPSED: Record<string, { pos: string; subtype: string }> = (() => {
+  const map: Record<string, { pos: string; subtype: string }> = {};
+  for (const [key, target] of Object.entries(POS_AS_SUBTYPE)) {
+    map[key.replace(ALIAS_COLLAPSE, "")] = target;
+  }
+  return map;
+})();
+
+/** The pos/subtype pair a bare pos value stands for, or null if it is a pos. */
+function posAsSubtype(value: unknown): { pos: string; subtype: string } | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  return (
+    POS_AS_SUBTYPE[trimmed] ??
+    POS_AS_SUBTYPE_COLLAPSED[trimmed.replace(ALIAS_COLLAPSE, "")] ??
+    null
+  );
+}
+
+/**
  * Normalize a subtype value against the pos's catalog. Values outside the
  * catalog are dropped for pos with a catalog (keeps the data clean); other pos
  * accept short free text.
@@ -461,7 +508,10 @@ function normalizeNotes(value: unknown): string | null {
   return asTrimmedString(value)?.slice(0, 2000) ?? null;
 }
 
-/** Forms arrive as [{name, value}], a {name: value} map, or a bare string. */
+/**
+ * Forms arrive as [{name, value}], a {name: value} map, or a bare string. Names
+ * are converted to kana here, so an import cannot put `te` in the library.
+ */
 function normalizeForms(value: unknown): VocabForm[] {
   if (Array.isArray(value)) {
     const out: VocabForm[] = [];
@@ -473,7 +523,7 @@ function normalizeForms(value: unknown): VocabForm[] {
       }
       if (item && typeof item === "object") {
         const obj = item as Record<string, unknown>;
-        const name = asTrimmedString(pick(obj, ["name", "form", "type", "label"])) ?? "";
+        const name = kanaFormName(asTrimmedString(pick(obj, ["name", "form", "type", "label"])) ?? "");
         const formValue =
           asTrimmedString(pick(obj, ["value", "word", "japanese", "conjugation", "text"])) ?? "";
         if (name || formValue) out.push({ name, value: formValue });
@@ -486,7 +536,7 @@ function normalizeForms(value: unknown): VocabForm[] {
     const out: VocabForm[] = [];
     for (const [name, raw] of Object.entries(value as Record<string, unknown>).slice(0, MAX_FORMS)) {
       const formValue = asTrimmedString(raw) ?? "";
-      if (name.trim() || formValue) out.push({ name: name.trim(), value: formValue });
+      if (name.trim() || formValue) out.push({ name: kanaFormName(name), value: formValue });
     }
     return out;
   }
@@ -512,8 +562,10 @@ function normalizeEntry(raw: unknown, index: number): VocabEntry | { error: stri
   }
 
   const examples = normalizeExamples(pick(obj, EXAMPLE_KEYS));
-  const pos = normalizePos(pick(obj, POS_KEYS));
-  const subtype = normalizeSubtype(pick(obj, SUBTYPE_KEYS), pos);
+  const posField = pick(obj, POS_KEYS);
+  const asSubtype = posAsSubtype(posField);
+  const pos = asSubtype?.pos ?? normalizePos(posField);
+  const subtype = asSubtype?.subtype ?? normalizeSubtype(pick(obj, SUBTYPE_KEYS), pos);
   const notes = normalizeNotes(pick(obj, NOTE_KEYS));
   const forms = normalizeForms(pick(obj, FORM_KEYS));
 
@@ -571,9 +623,9 @@ export const SAMPLE_JSON = `[
     "forms": [
       { "name": "Dictionary", "value": "食べる" },
       { "name": "ます", "value": "食べます" },
-      { "name": "te", "value": "食べて" },
-      { "name": "ta", "value": "食べた" },
-      { "name": "nai", "value": "食べない" }
+      { "name": "て", "value": "食べて" },
+      { "name": "た", "value": "食べた" },
+      { "name": "ない", "value": "食べない" }
     ],
     "examples": [
       { "japanese": "朝ごはんを食べました。", "translation": "I ate breakfast." }

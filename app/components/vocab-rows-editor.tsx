@@ -7,6 +7,7 @@ import { Button } from "~/components/lightswind/button";
 import { Input } from "~/components/lightswind/input";
 import { ReorderList, ReorderRow } from "~/components/lightswind/reorder";
 import { SelectField } from "~/components/select-field";
+import { kanaFormName } from "~/lib/form-names";
 import { subtypeOptionsFor } from "~/lib/vocab";
 import { POS_OPTIONS, type VocabRow } from "~/lib/vocab-rows";
 
@@ -357,7 +358,7 @@ export function VocabRowsEditor({
                       <p className="text-xs font-medium text-muted-foreground">
                         Forms{" "}
                         <span className="font-normal normal-case text-muted-foreground/60">
-                          (dictionary / masu / te / ta / nai …)
+                          (辞書形 / ます / て / た / ない … — romaji is converted)
                         </span>
                       </p>
                       <button
@@ -378,7 +379,7 @@ export function VocabRowsEditor({
                     </div>
                     {draft.forms.length === 0 ? (
                       <p className="text-xs text-muted-foreground/60">
-                        No forms yet. e.g. ます-form → 食べます
+                        No forms yet. e.g. ます → 食べます
                       </p>
                     ) : (
                       draft.forms.map((form, formIndex) => (
@@ -395,7 +396,15 @@ export function VocabRowsEditor({
                                   ),
                                 })
                               }
-                              placeholder="Form name (ます, te, …)"
+                              // On blur, not per keystroke: "te" becoming て must not fight the caret.
+                              onBlur={() =>
+                                patch(draft.id, {
+                                  forms: draft.forms.map((row) =>
+                                    row.id === form.id ? { ...row, name: kanaFormName(row.name) } : row
+                                  ),
+                                })
+                              }
+                              placeholder="Form name (ます / て)"
                               aria-label={`Word ${index + 1} form ${formIndex + 1} name`}
                             />
                             <Input

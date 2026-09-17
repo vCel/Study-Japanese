@@ -11,7 +11,7 @@ export interface VocabRowExample {
   translation: string;
 }
 
-/** One conjugation form pair (dictionary / masu / te / ta / …). */
+/** One conjugation form pair (辞書形 / ます / て / た / …). */
 export interface VocabRowForm {
   name: string;
   value: string;

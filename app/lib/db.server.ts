@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 
+import { kanaFormName } from "./form-names";
 import type { VocabEntry } from "./vocab";
 
 /** Row shape for the `words` table. */
@@ -15,11 +16,11 @@ export interface WordRow {
 }
 
 /**
- * One conjugation form of a word, e.g. dictionary / ます / て / た / ない.
+ * One conjugation form of a word, e.g. 辞書形 / ます / て / た / ない.
  * Stored as a JSON array in `words.forms`, in display order.
  */
 export interface WordForm {
-  /** The form name, e.g. "ます" / "te-form" / "negative". */
+  /** The form name in kana, e.g. "ます" / "て形". */
   name: string;
   /** The form itself, e.g. "食べます". */
   value: string;
@@ -249,7 +250,8 @@ export async function copyStarterPack(ownerId: string): Promise<{
           newListId,
           word.important ?? 0,
           word.notes ?? null,
-          word.forms ?? null,
+          // Round-tripped: a pre-mapping template row must not seed romaji.
+          serializeWordForms(parseWordForms(word.forms)),
           ownerId
         )
     );
@@ -504,7 +506,13 @@ export async function listWords(
   };
 }
 
-/** Parse the `words.forms` JSON column, tolerating a null/empty value. */
+/**
+ * Parse the `words.forms` JSON column, tolerating a null/empty value.
+ *
+ * Names are normalized to kana here as well as on the way in, so a row written
+ * before the mapping existed — or by a browser still running the old bundle —
+ * reads back in kana instead of waiting for its next save.
+ */
 function parseWordForms(raw: string | null): WordForm[] {
   if (!raw) return [];
   try {
@@ -516,7 +524,7 @@ function parseWordForms(raw: string | null): WordForm[] {
           !!item && typeof item === "object"
       )
       .map((item) => ({
-        name: typeof item.name === "string" ? item.name.trim() : "",
+        name: kanaFormName(typeof item.name === "string" ? item.name : ""),
         value: typeof item.value === "string" ? item.value.trim() : "",
       }))
       .filter((form) => form.name.length > 0 || form.value.length > 0)
@@ -530,7 +538,7 @@ function parseWordForms(raw: string | null): WordForm[] {
 function serializeWordForms(forms: WordForm[]): string | null {
   const list = forms
     .map((form) => ({
-      name: form.name.trim(),
+      name: kanaFormName(form.name),
       value: form.value.trim(),
     }))
     .filter((form) => form.name.length > 0 || form.value.length > 0)

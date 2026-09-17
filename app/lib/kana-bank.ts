@@ -11,7 +11,7 @@
  * `quiz-runner.tsx` only offers a bank whose reading the grader would accept.
  */
 
-import { parseFurigana, stripEmphasis } from "./furigana";
+import { KANA_ONLY, parseFurigana, stripEmphasis } from "./furigana";
 
 /** The kana a bank can spell, and the tiles it spells them with. */
 export interface KanaBank {
@@ -34,9 +34,6 @@ const DECOYS = 10;
 /** The gojūon — the kana a learner at this level is expected to recognise. */
 const GOJUON =
   "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん";
-
-/** Kana only: hiragana and katakana, including ー and the small forms. */
-const KANA_ONLY = /^[\u3041-\u309f\u30a0-\u30ff]+$/;
 
 /** Fisher-Yates, so the bank's order is never a hint. */
 function shuffle<T>(items: T[]): T[] {

@@ -85,20 +85,51 @@ function usesOptions(type: QuizQuestionType): boolean {
   return type === "multiple-choice" || type === "fill-blanks";
 }
 
+/**
+ * What the prompt has to know before it can describe a question type.
+ *
+ * `input` is the reason this is an object rather than a boolean: two of its
+ * three shapes need material the quiz may not have loaded — a rewrite needs a
+ * rule to rewrite with, a reading needs a word written in kanji — and asking
+ * for a shape the material cannot support is how a quiz ends up asking about
+ * nothing.
+ */
+interface TypeContext {
+  /** A particle rule is in scope, so a gap holding a particle is a real question. */
+  particleRules: boolean;
+  /** Rules are in scope: the only material a `transform` question can come from. */
+  hasRules: boolean;
+  /** The `words` source is in scope: the only material a `reading` can come from. */
+  hasWords: boolean;
+}
+
 /** One requirement paragraph per selected question type. */
-function typeInstruction(type: QuizQuestionType, particleRules: boolean): string {
+function typeInstruction(type: QuizQuestionType, ctx: TypeContext): string {
   switch (type) {
     case "multiple-choice":
       return `- "multiple-choice": ${QUIZ_TYPE_HINTS["multiple-choice"]} Provide exactly 4 options in "options", only one of which is correct. Put the correct option in "answer". Every distractor must be clearly WRONG here — not merely unlikely, and never a near-synonym of the answer.`;
     case "input":
-      return `- "input": ${QUIZ_TYPE_HINTS.input} Put the canonical answer in "answer" and every accepted spelling in "acceptableAnswers" — "What the answer must look like" below says exactly what that field has to contain.`;
+      return [
+        `- "input": ${QUIZ_TYPE_HINTS.input}`,
+        `  The learner types this one, so the answer has to be short enough to type and bounded by material you hand them. Never ask them to compose a sentence of their own: every "input" question is one of the shapes below, and "answer" holds only the part being asked for.`,
+        `  - **Fill a gap.** Write the sentence in "sentence" with "___" (three underscores) where the missing piece goes, and put that piece alone in "answer" — one word or one particle, never the whole sentence. The gap stands for a whole word: put "answer" back into it and read the sentence again, because a gap that splits one leaves a sentence that is not Japanese — ___ご with the answer 中国《ちゅうごく》 gives 中国ご, and 中国語《ちゅうごくご》 is the word.`,
+        ctx.hasRules
+          ? `  - **Rewrite a sentence.** Put the sentence to rewrite in "sentence" and the rewritten sentence in "answer". The rewrite must change one thing only — the form the rule governs — so a learner cannot be marked wrong for a rewrite that was also correct.`
+          : "",
+        ctx.hasWords
+          ? `  - **Type a reading.** Ask for the reading of a word written in kanji. Put the word in "prompt" and its reading in kana in "answer". Leave that word bare: no 《》 annotation anywhere in "prompt", because the annotation is the answer.`
+          : "",
+        `  Whichever shape it is, "answer" holds the canonical answer and "acceptableAnswers" every spelling the learner may reasonably type — "What the answer must look like" below says exactly what those two fields have to contain.`,
+      ]
+        .filter((line) => line !== "")
+        .join("\n");
     case "fill-blanks":
       return [
         `- "fill-blanks": ${QUIZ_TYPE_HINTS["fill-blanks"]}`,
         `  Write a natural Japanese sentence in "sentence" and replace each missing word with "___" (three underscores).`,
         `  Set "blanks" to the number of gaps.`,
         `  Put the correct fillers in "answer", joined by ", " in gap order.`,
-        particleRules
+        ctx.particleRules
           ? `  For a question about one of the particle rules below, the gaps MUST be the particles themselves — e.g. 「私___学生です」 with the answer 「は」 — and "options" must add plausible distractor particles (が, を, に, で, と, も) so the bank is not trivially solvable. For any other item, "options" must contain the correct fillers plus at least three plausible distractors of the same word class, in a shuffled order.`
           : `  "options" must contain the correct fillers plus at least three plausible distractors of the same word class, in a shuffled order.`,
         `  Every distractor must be wrong in the sentence you wrote — test each one against it before returning. A bank of two options is a coin flip, so there must be at least three distractors.`,
@@ -191,12 +222,12 @@ const ANSWER_FORM = [
   '- Write "answer" as the exact string a learner would type. Never a gloss, never a parenthetical, and never two variants joined by "/" or "or" — `to eat / eat` matches neither.',
   '- For an English answer use the shortest natural form: `eat`, not `to eat`; `company cafeteria`, not `the company cafeteria`. A leading article or "to" is not ignored.',
   '- For a Japanese answer, use the form the library item uses. Annotate its kanji like everything else — the annotation is stripped before comparing.',
-  '- **An "input" answer containing kanji MUST list both its kana reading and that reading in romaji in "acceptableAnswers".** 図書館《としょかん》 → ["としょかん", "toshokan"]. The input box promises the learner that "kana or romaji both count", and this field is the only thing that makes that true. Nothing else in the app converts romaji.',
+  '- **Every "input" answer has to be typeable by someone who does not write kanji, and "acceptableAnswers" is the only thing that makes it so.** The input box promises the learner that "kana or romaji both count", and nothing in the app converts romaji, so list every spelling that promise covers: for a kanji answer, its kana reading and that reading in romaji (図書館《としょかん》 → ["としょかん", "toshokan"]); for a kana answer, the romaji (がくせい → ["gakusei"]); for a sentence, the same sentence written entirely in kana, and its romaji.',
   '- Also list the other forms a learner might reasonably type — a plain or polite variant of the same verb, a second reading in common use — but never a string that would be equally right for a different question.',
 ].join("\n");
 
 /**
- * Three examples of the whole thing done properly.
+ * Five examples of the whole thing done properly.
  *
  * `RESPONSE_SCHEMA` says what the fields are; it cannot show the *shape* of a
  * good question — a prompt that does not contain its answer, options where
@@ -206,12 +237,16 @@ const ANSWER_FORM = [
  * fill-blanks sentence verbatim, which is why the preamble now forbids reusing
  * them and why that example was moved off the material's own vocabulary.
  *
+ * The three typing shapes are here for the same reason. A shape described only
+ * in prose is a shape the models read past — the open-ended "type the Japanese
+ * for departure" this replaced was itself an example, and got copied as one.
+ *
  * The items are invented, and the preamble says so: examples drawn from the
  * real material is how a quiz ends up asking about 図書館 in a quiz that never
  * mentioned it.
  */
 const WORKED_EXAMPLES = [
-  "## Three worked examples",
+  "## Worked examples",
   'These items are from an unrelated library. Copy the *shape* and never the content — the ids are placeholders, and none of this may appear in your answer.',
   'They illustrate field shapes, not a menu: write only the question types listed under "Question types to use" above.',
   "**Write your own sentences.** These are illustrations, not a bank: never reuse one of their sentences, and never ask the same sentence twice.",
@@ -230,12 +265,32 @@ const WORKED_EXAMPLES = [
     },
     {
       "type": "input",
-      "prompt": "Type the Japanese for \\"departure\\".",
-      "answer": "出発《しゅっぱつ》",
-      "acceptableAnswers": ["しゅっぱつ", "shuppatsu"],
-      "explanation": "出発《しゅっぱつ》 is the moment you leave to begin a journey — the noun, rather than the verb 出発《しゅっぱつ》する.",
+      "prompt": "Type the reading of 出発 in kana.",
+      "answer": "しゅっぱつ",
+      "acceptableAnswers": ["shuppatsu"],
+      "explanation": "出発《しゅっぱつ》 is read しゅっぱつ — the noun for the moment a journey begins, rather than the する-verb built on it.",
       "sourceId": 9,
       "sourceKind": "word"
+    },
+    {
+      "type": "input",
+      "prompt": "Fill the gap. Type the missing word.",
+      "sentence": "駅《えき》まで___で行《い》きます。",
+      "answer": "電車《でんしゃ》",
+      "acceptableAnswers": ["でんしゃ", "densha"],
+      "explanation": "電車《でんしゃ》 is a train, and で marks the means of getting somewhere: 駅《えき》まで電車《でんしゃ》で行《い》きます。 The answer is that one word — not the whole sentence.",
+      "sourceId": 7,
+      "sourceKind": "word"
+    },
+    {
+      "type": "input",
+      "prompt": "Rewrite the sentence with 〜てある, so it says the ticket has been bought in advance.",
+      "sentence": "チケットを買《か》いました。",
+      "answer": "チケットを買《か》ってあります。",
+      "acceptableAnswers": ["ちけっとをかってあります", "chiketto wo katte arimasu"],
+      "explanation": "〜てある describes the state something was left in on purpose: 買《か》いました says what happened, 買《か》ってあります says the ticket is now bought. Only the verb changes — the rest of the sentence stays as it was.",
+      "sourceId": 1,
+      "sourceKind": "rule"
     },
     {
       "type": "fill-blanks",
@@ -255,9 +310,12 @@ const WORKED_EXAMPLES = [
   "",
   "- The first prompt names the Japanese and asks for the meaning. It never states the meaning *and* offers meanings — that question answers itself, and the learner can score without reading a word of Japanese.",
   '- Every wrong option is wrong *in this question*, not merely less likely. "hospital" and "post office" are real places; they are simply not what 図書館《としょかん》 means.',
-  "- The third one is the harder lesson: 通りやすい is perfectly grammatical, and the sentence is what rules it out. Letting 狭《せま》くて decide is the whole question.",
+  "- The second is a reading question, and its prompt leaves the word under test bare. 出発《しゅっぱつ》 there would be the answer, written out.",
+  "- The third is a gap: the sentence carries the gap and the answer is the missing word on its own. Answering with the whole sentence is not what was asked for.",
+  "- The fourth is a rewrite, and only the verb form changes — a learner who produces a different but equally defensible rewrite cannot be marked wrong. Its alternatives carry the kana and the romaji, because someone who cannot write kanji cannot type 買.",
+  "- The fifth one is the harder lesson: 通りやすい is perfectly grammatical, and the sentence is what rules it out. Letting 狭《せま》くて decide is the whole question.",
   '- The explanations say why the answer fits and, where it matters, why the alternative does not. None of them restates the question or gives a bare dictionary gloss.',
-  '- The input question carries kana *and* romaji in "acceptableAnswers", so a learner who types either is marked right.',
+  '- The input questions carry the spellings a learner might type in "acceptableAnswers", so kana and romaji are both marked right.',
 ].join("\n");
 
 /**
@@ -303,7 +361,7 @@ const RESPONSE_SCHEMA = `{
     {
       "type": "multiple-choice" | "input" | "fill-blanks" | "true-false",
       "prompt": "the question text shown to the user — English, with any Japanese inside it annotated",
-      "sentence": "optional — the Japanese sentence, required for fill-blanks",
+      "sentence": "optional — the Japanese sentence: the gapped sentence for fill-blanks and a gap, the source for a rewrite",
       "blanks": 0,
       "options": ["optional", "unordered", "pool"],
       "answer": "the correct answer",
@@ -351,6 +409,8 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
   const particleRules = wantsRules && rules.some(looksLikeParticle);
   // Only worth saying when a question will actually offer a set of options.
   const offersOptions = config.types.some(usesOptions);
+  // What an "input" question is allowed to be, given the material in scope.
+  const typeContext: TypeContext = { particleRules, hasRules: wantsRules, hasWords: wantsWords };
 
   const focusOption = WORD_FOCUS_OPTIONS.find((option) => option.value === config.focus);
   const focusInstruction = !wantsLists
@@ -417,7 +477,7 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     `${config.difficulty} — ${QUIZ_DIFFICULTY_HINTS[config.difficulty]}`,
     "",
     "## Question types to use",
-    config.types.map((type) => typeInstruction(type, particleRules)).join("\n"),
+    config.types.map((type) => typeInstruction(type, typeContext)).join("\n"),
     distributionInstruction(config),
     spreadInstruction,
     focusInstruction,
@@ -437,6 +497,7 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     '- Do not test the same fact twice. A word\'s meaning and its reading are different facts and both may be asked; the same meaning asked twice is a wasted question.',
     '- For any question with "options", the options MUST be listed in an arbitrary, shuffled order — the correct answer must NOT reliably come first.',
     '- Never reveal the answer inside the "prompt" text.',
+    '- An "input" answer holds only the part being asked for — the missing word of a gap, the rewritten sentence, or a reading in kana. Never a sentence the learner had to invent.',
     offersOptions
       ? "- Before returning, re-read every question with options and check three things: that exactly one option is defensible; that the answer text does not appear anywhere in \"prompt\" or \"sentence\"; and that the answer is not the only option repeating a word or character from the question. Rewrite any question that fails any of the three."
       : "",

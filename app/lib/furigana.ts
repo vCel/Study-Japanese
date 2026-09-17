@@ -22,6 +22,18 @@
  */
 
 /**
+ * Kana only: hiragana and katakana, including ー and the small forms.
+ *
+ * Shared rather than written out per module. `kana-bank.ts` uses it to decide
+ * whether a bank can be built at all, and `quiz-parse.ts` to tell a question
+ * asking for a reading from one asking for anything else. Two copies of the
+ * range would drift, and a drifted copy does not fail loudly — it reads as
+ * "this answer is not kana", which silently costs a kana bank or mislabels a
+ * question.
+ */
+export const KANA_ONLY = /^[\u3041-\u309f\u30a0-\u30ff]+$/;
+
+/**
  * What a reading may attach to: CJK ideographs, the two iteration marks, and
  * the small ヶ that turns up in place names and counters.
  *

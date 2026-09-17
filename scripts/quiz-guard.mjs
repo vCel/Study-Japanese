@@ -277,7 +277,7 @@ let exampleFailures = 0;
 
   const rendered = buildQuizPrompt(
     {
-      sources: ["words"],
+      sources: ["words", "rules"],
       focus: "all",
       questionCount: 3,
       types: ["multiple-choice", "input", "fill-blanks"],
@@ -287,9 +287,9 @@ let exampleFailures = 0;
     { rules: [], words: [] }
   ).messages[1].content;
 
-  const fenced = rendered.match(/## Three worked examples[\s\S]*?```json\n([\s\S]*?)\n```/);
+  const fenced = rendered.match(/## Worked examples[\s\S]*?```json\n([\s\S]*?)\n```/);
   if (!fenced) {
-    console.log("  FAIL  no fenced json block under 'Three worked examples' — the section moved or went away.");
+    console.log("  FAIL  no fenced json block under 'Worked examples' — the section moved or went away.");
     exampleFailures = 1;
   } else {
     for (const question of JSON.parse(fenced[1]).questions) {

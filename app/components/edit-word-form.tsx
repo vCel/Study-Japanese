@@ -11,6 +11,7 @@ import { ReorderList, ReorderRow } from "~/components/lightswind/reorder";
 import { FormMessage } from "~/components/form-message";
 import { okMessage, useActionToast } from "~/components/action-toast";
 import { SelectField } from "~/components/select-field";
+import { kanaFormName } from "~/lib/form-names";
 import { subtypeOptionsFor } from "~/lib/vocab";
 import { useReturnTo } from "~/lib/return-to";
 import type { WordDetail } from "~/lib/db.server";
@@ -332,7 +333,7 @@ export function WordEditForm({
               <p className="text-sm font-semibold">
                 Forms{" "}
                 <span className="text-xs font-normal text-muted-foreground">
-                  (dictionary / masu / te / ta / nai …)
+                  (辞書形 / ます / て / た / ない … — romaji is converted)
                 </span>
               </p>
               <button
@@ -349,7 +350,7 @@ export function WordEditForm({
               </button>
             </div>
             {forms.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No forms yet. e.g. ます-form → 食べます</p>
+              <p className="text-xs text-muted-foreground">No forms yet. e.g. ます → 食べます</p>
             ) : (
               <ReorderList values={forms} onReorder={setForms}>
                 {forms.map((row, index) => (
@@ -369,7 +370,15 @@ export function WordEditForm({
                             )
                           )
                         }
-                        placeholder="Form name (ます, te, …)"
+                        // On blur, not per keystroke: "te" becoming て must not fight the caret.
+                        onBlur={() =>
+                          setForms((prev) =>
+                            prev.map((item) =>
+                              item.id === row.id ? { ...item, name: kanaFormName(item.name) } : item
+                            )
+                          )
+                        }
+                        placeholder="Form name (ます / て)"
                         aria-label={`Form ${index + 1} (name)`}
                       />
                       <Input
