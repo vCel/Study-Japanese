@@ -13,6 +13,13 @@ import { cn } from "~/lib/utils";
  * to sit together. Here the outline belongs to the group and the items sit
  * flush inside it, so the options read as one control with one hit area.
  *
+ * The focus ring belongs to the group for the same reason. On an item it draws
+ * a *second* rounded outline 2px inside the group's border — the nested-ring
+ * look this component exists to avoid — and `ring-offset-2` then pushes that
+ * ring 2px past the border as well, so a focused item breaks the outline it
+ * sits in. Arrow keys move focus and selection together, so a ring on the group
+ * cannot point at a different option than the tint does.
+ *
  * **The builder's pill treatment.** Spacing, type and the states are the ones
  * `quiz-setup.tsx` already uses for its option rows — `px-4 py-1.5 text-sm
  * font-medium`, hover on `bg-muted`, selected as a `primarylw` tint with
@@ -134,6 +141,7 @@ const ToggleGroup = React.forwardRef<HTMLDivElement, ToggleGroupProps>(
           onKeyDown={handleKeyDown}
           className={cn(
             "inline-flex items-center rounded-full border p-0.5",
+            "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primarylw/50 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-background",
             disabled ? "border-border/60" : "border-border",
             className
           )}
@@ -175,7 +183,9 @@ const ToggleGroupItem = React.forwardRef<HTMLButtonElement, ToggleGroupItemProps
         onClick={() => onChange(value)}
         className={cn(
           "inline-flex items-center justify-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primarylw/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          // The ring is the group's (see the doc comment): `outline-none` here
+          // only suppresses the browser default.
+          "focus-visible:outline-none",
           isDisabled
             ? "cursor-not-allowed text-muted-foreground/50"
             : isActive

@@ -1524,7 +1524,11 @@ function QuizPanel({
           <p className="font-semibold">
             {config.retryMissed
               ? `${retryCount} ${noun}${retryCount === 1 ? "" : "s"} you keep missing`
-              : `${matchCount} ${noun}${matchCount === 1 ? "" : "s"} · ${listWords(kindNames)}`}
+              : // A single source kind is already named by the count, so naming it
+                // again beside itself read as a bug: "3 rules · rules".
+                `${matchCount} ${noun}${matchCount === 1 ? "" : "s"}${
+                  config.sources.length > 1 ? ` · ${listWords(kindNames)}` : ""
+                }`}
             {config.starredOnly && !config.retryMissed ? " · ★ starred only" : ""}
           </p>
           <p className="text-xs text-muted-foreground">

@@ -605,6 +605,28 @@ test.describe("quiz builder", () => {
     }
   });
 
+  test("the focus ring wraps the whole control, not an option", async ({ page }) => {
+    await stubConvex(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+
+    const group = page.getByRole("radiogroup", { name: "Mode" });
+    const shadowOf = (target: Locator) => styleOf(target, ["box-shadow"]);
+
+    // Nothing is ringed at rest.
+    expect((await shadowOf(group))["box-shadow"]).toBe("none");
+
+    await group.getByRole("radio", { name: "Exam" }).focus();
+    // The ring is the control's. On an option it is a *second* rounded outline
+    // inside the control's border — the nested-ring look the tests above go out
+    // of their way to avoid at rest — and, being 2px offset plus 2px wide
+    // against the group's 2px padding, it reaches past that border as well.
+    expect((await shadowOf(group))["box-shadow"]).not.toBe("none");
+    for (const item of await group.getByRole("radio").all()) {
+      expect((await shadowOf(item))["box-shadow"], "no ring on an option").toBe("none");
+    }
+  });
+
   test("difficulty is a slider across easy, normal and hard", async ({ page }) => {
     await stubConvex(page);
     await page.goto("/study/quizzes");
