@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { gotoHydrated, stubConvex } from "./helpers";
+import { expectHydrated, gotoHydrated, stubConvex, wordIdByTitle } from "./helpers";
 
 /**
  * Exercises the server actions without signing in. Signed-out users can create
@@ -57,6 +57,42 @@ test.describe("signed-out creation", () => {
     await expect(page).toHaveURL(/\/$/);
     await expect(
       page.locator("main").getByRole("heading", { name: "e2e temporary list" }),
+    ).toBeVisible();
+  });
+
+  test("an import whose pos and subtype disagree is stored as the subtype's class", async ({
+    page,
+  }) => {
+    await stubConvex(page);
+    await gotoHydrated(page, "/lists/new");
+    await page.locator("#title").fill("e2e subtype precedence");
+    await page.getByRole("button", { name: /Bulk import from JSON/ }).click();
+    // `suffix` is a noun subtype, so the noun class has to win over the pos
+    // field. Storing `other` here — which is what a pos field alone would give —
+    // hides the word from the Nouns filter and leaves a subtype the pos has no
+    // option for.
+    await page
+      .locator("[data-slot='json-import-textarea']")
+      .fill(
+        '[{"word":"〜さん","kana":"さん","pos":"expression","subtype":"suffix","meanings":["Mr./Ms."]}]',
+      );
+    await page.getByRole("button", { name: "Fill form from JSON", exact: true }).click();
+    await expect(page).toHaveURL(/\/lists\/new$/);
+
+    await page.getByRole("button", { name: "Create word list", exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    // The stored pair is what the edit form renders back into its hidden inputs.
+    await page.goto(`/words/${await wordIdByTitle(page, "〜さん")}/edit`);
+    await expectHydrated(page);
+    await expect(page.locator('input[name="pos"]')).toHaveValue("noun");
+    await expect(page.locator('input[name="subtype"]')).toHaveValue("suffix");
+
+    // And it is reachable through the Nouns pill, which is the visible
+    // consequence of the class being right.
+    await page.goto("/words?pos=noun");
+    await expect(
+      page.locator("main [data-slot='word-card']").filter({ hasText: "〜さん" }),
     ).toBeVisible();
   });
 });
