@@ -329,9 +329,10 @@ function QuizPanel({
   const clearTags = () => onChange({ tags: [], excludedTags: [] });
 
   /**
-   * The lists on offer, merged by id. A list can hold both words and phrases,
-   * and the counts are summed over whichever kinds are switched on — so one
-   * `config.lists` selection scopes both queries correctly.
+   * The lists on offer, merged by id — the shape the *counts* are computed
+   * from, not the shape they are drawn in. A list can hold both words and
+   * phrases, so the two arrays overlap; summing per id is what keeps the match
+   * total from counting a mixed list twice.
    */
   const mergedLists = React.useMemo(() => {
     const byId = new Map<
@@ -354,6 +355,36 @@ function QuizPanel({
       count: (wantsWords ? entry.words : 0) + (wantsPhrases ? entry.phrases : 0),
     }));
   }, [wordLists, phraseLists, wantsWords, wantsPhrases]);
+
+  /**
+   * The picker's groups — words apart from phrases, one grid each.
+   *
+   * A card therefore states how much *of its kind* the list holds, rather than
+   * a sum over both, which is the number that actually predicts what a quiz
+   * drawing on that list will ask. A mixed list appears in both groups; the
+   * selection is by list id, so ticking either card ticks the list.
+   */
+  const listGroups = React.useMemo(() => {
+    type ListGroup = {
+      kind: "words" | "phrases";
+      label: string;
+      /** Every list of this kind, before the tag filter. */
+      all: WordListSummary[];
+      /** The ones the tag filter leaves. */
+      lists: WordListSummary[];
+    };
+    const groups: ListGroup[] = [];
+    const add = (kind: ListGroup["kind"], label: string, source: WordListSummary[]) =>
+      groups.push({
+        kind,
+        label,
+        all: source,
+        lists: source.filter((list) => matchesTagFilter(list.tags)),
+      });
+    if (wantsWords) add("words", "Word lists", wordLists);
+    if (wantsPhrases) add("phrases", "Phrase lists", phraseLists);
+    return groups;
+  }, [wordLists, phraseLists, wantsWords, wantsPhrases, matchesTagFilter]);
 
   const tagFiltered = mergedLists.filter((list) => matchesTagFilter(list.tags));
 
@@ -762,16 +793,40 @@ function QuizPanel({
    */
   const sectionClass = "rounded-[var(--radius)] bg-muted/40 p-4";
 
+  const listCard = (list: WordListSummary) => {
+    const active = config.lists.length === 0 || config.lists.includes(list.id);
+    return (
+      <button
+        key={list.id}
+        type="button"
+        onClick={() => toggleList(list.id)}
+        aria-pressed={active}
+        className={cn(
+          "flex items-center justify-between gap-2 rounded-[var(--radius)] border p-3 text-left transition-colors",
+          active
+            ? "cursor-pointer border-primarylw/60 bg-primarylw/10"
+            : "cursor-pointer border-border hover:border-primarylw/40"
+        )}
+      >
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-medium">{list.title}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {list.tags.map((tag) => `#${tag}`).join(" ") || "no tags"}
+          </span>
+        </span>
+        <Badge variant="secondary" className="shrink-0">
+          {list.wordCount}
+        </Badge>
+      </button>
+    );
+  };
+
   const listsSection: React.ReactNode = !wantsLists ? null : (
     <section className={sectionClass}>
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium">
-            {wantsWords && wantsPhrases
-              ? "Word & phrase lists"
-              : wantsPhrases
-                ? "Phrase lists"
-                : "Word lists"}
+          <p className="text-sm font-medium" data-slot="quiz-list-title">
+            {listGroups.length > 1 ? "Lists" : (listGroups[0]?.label ?? "Lists")}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {config.lists.length === 0
@@ -796,38 +851,27 @@ function QuizPanel({
             : "No lists match the selected tags."}
         </p>
       ) : (
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {tagFiltered.map((list) => {
-            const active = config.lists.length === 0 || config.lists.includes(list.id);
-            const disabled = list.count === 0;
-            return (
-              <button
-                key={list.id}
-                type="button"
-                disabled={disabled}
-                onClick={() => toggleList(list.id)}
-                aria-pressed={active}
-                className={cn(
-                  "flex items-center justify-between gap-2 rounded-[var(--radius)] border p-3 text-left transition-colors",
-                  disabled
-                    ? "cursor-not-allowed opacity-40"
-                    : active
-                      ? "cursor-pointer border-primarylw/60 bg-primarylw/10"
-                      : "cursor-pointer border-border hover:border-primarylw/40"
-                )}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{list.title}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {list.tags.map((tag) => `#${tag}`).join(" ") || "no tags"}
-                  </span>
-                </span>
-                <Badge variant="secondary" className="shrink-0">
-                  {list.count}
-                </Badge>
-              </button>
-            );
-          })}
+        <div className="space-y-4">
+          {listGroups.map((group) => (
+            <div key={group.kind} data-slot="quiz-list-group" data-kind={group.kind}>
+              {/* The heading earns its line only when there are two groups to
+                  tell apart; with one, the section header already names it. */}
+              {listGroups.length > 1 && (
+                <p className="mb-2 text-xs font-semibold text-muted-foreground">{group.label}</p>
+              )}
+              {group.lists.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {group.all.length === 0
+                    ? `No ${group.label.toLowerCase()} yet — create one and it appears here.`
+                    : `No ${group.label.toLowerCase()} match the selected tags.`}
+                </p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {group.lists.map(listCard)}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </section>

@@ -553,6 +553,47 @@ test.describe("quiz builder", () => {
     await expect(pill).toHaveCount(0);
   });
 
+  test("separates the word lists from the phrase lists", async ({ page }) => {
+    await stubConvex(page);
+    await seedStarterPack(page);
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+    // Both sources, so both kinds of list are on offer.
+    await page.getByRole("button", { name: "Words", exact: true }).click();
+    await page.getByRole("button", { name: "Phrases", exact: true }).click();
+
+    // One group per kind, words first: the phrase list is no longer a card among
+    // the word lists, which is what a mixed grid made it look like.
+    const groups = page.locator("[data-slot='quiz-list-group']");
+    await expect(groups).toHaveCount(2);
+    await expect(groups.nth(0)).toHaveAttribute("data-kind", "words");
+    await expect(groups.nth(1)).toHaveAttribute("data-kind", "phrases");
+
+    // Seeded: JLPT N5 Starter and Daily Conversation hold words, Everyday
+    // Phrases holds phrases — and each appears in exactly one group.
+    await expect(groups.nth(0).getByRole("button", { name: /JLPT N5 Starter/ })).toBeVisible();
+    await expect(groups.nth(0).getByRole("button", { name: /Daily Conversation/ })).toBeVisible();
+    await expect(groups.nth(0).getByRole("button", { name: /Everyday Phrases/ })).toHaveCount(0);
+    await expect(groups.nth(1).getByRole("button", { name: /Everyday Phrases/ })).toBeVisible();
+    await expect(groups.nth(1).getByRole("button", { name: /JLPT N5 Starter/ })).toHaveCount(0);
+
+    // The header is the umbrella once there are two groups to tell apart, and
+    // the sub-headings name them.
+    const lists = page.locator("section").filter({ has: page.locator("[data-slot='quiz-list-title']") });
+    const title = page.locator("[data-slot='quiz-list-title']");
+    await expect(title).toHaveText("Lists");
+    await expect(lists.getByText("Word lists")).toBeVisible();
+    await expect(lists.getByText("Phrase lists")).toBeVisible();
+
+    // One kind alone has nothing to separate, so the header names it and the
+    // sub-heading goes — rather than the two repeating each other.
+    await page.getByRole("button", { name: "Phrases", exact: true }).click();
+    await expect(groups).toHaveCount(1);
+    await expect(groups.nth(0)).toHaveAttribute("data-kind", "words");
+    await expect(title).toHaveText("Word lists");
+    await expect(lists.getByText("Phrase lists")).toHaveCount(0);
+  });
+
   test("the tags step is second, and its search narrows the chips", async ({ page }) => {
     await stubConvex(page);
     await seedStarterPack(page);

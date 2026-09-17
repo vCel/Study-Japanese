@@ -6,9 +6,19 @@ import { getWord } from "~/lib/db.server";
 import { subtypeLabel } from "~/lib/vocab";
 import { ownerContext } from "~/lib/owner.server";
 import { PageHeader } from "~/components/page-header";
-import { Badge } from "~/components/lightswind/badge";
 import { Button } from "~/components/lightswind/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/lightswind/card";
+
+/**
+ * The word's class and subclass as one line, e.g. "Noun · Common noun".
+ *
+ * Capitalised because it reads as the opening line of the definitions rather
+ * than a label: the stored values are lowercase keys ("noun", "common").
+ */
+function describePos(pos: string, subtype: string | null): string {
+  const line = [pos, subtype ? subtypeLabel(subtype) : null].filter(Boolean).join(" · ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -36,6 +46,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function WordDetail({ loaderData }: Route.ComponentProps) {
   const { word } = loaderData;
+  const pos = word.pos ? describePos(word.pos, word.subtype) : null;
 
   return (
     <div className="w-full">
@@ -56,21 +67,20 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
       />
 
       {/*
-        Meanings and conjugation forms share the width on large screens: a
-        one-line meanings list no longer floats in a card stretched the whole
+        Definitions and conjugation forms share the width on large screens: a
+        one-line definitions list no longer floats in a card stretched the whole
         way across the page. The row is stretched (no `items-start`) so the two
         cards measure the same height.
+
+        Both cards are always drawn, empty or not. A card that disappears when
+        it has nothing in it is one you cannot tell apart from a word that has
+        no forms at all, and the placeholder is what says which.
       */}
       <div className="grid items-stretch gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
-          <CardHeader className="flex-row items-center justify-between space-y-0">
-            <CardTitle className="text-lg">Meanings</CardTitle>
-            {word.pos && (
-              <Badge variant="secondary" className="text-sm">
-                {word.pos}
-                {word.subtype ? ` · ${subtypeLabel(word.subtype)}` : ""}
-              </Badge>
-            )}
+          <CardHeader>
+            <CardTitle className="text-lg">Definitions</CardTitle>
+            {pos && <p className="text-sm text-muted-foreground">{pos}</p>}
           </CardHeader>
           <CardContent>
             {word.meanings.length === 0 ? (
@@ -86,16 +96,20 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
         </Card>
 
         {/* Conjugation forms — listed before the example sentences. */}
-        {word.forms.length > 0 && (
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-lg">
-                Forms{" "}
-                <span className="text-sm font-normal text-muted-foreground">
-                  ({word.forms.length})
-                </span>
-              </CardTitle>
-            </CardHeader>
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-lg">
+              Forms{" "}
+              <span className="text-sm font-normal text-muted-foreground">
+                ({word.forms.length})
+              </span>
+            </CardTitle>
+          </CardHeader>
+          {word.forms.length === 0 ? (
+            <CardContent>
+              <p className="text-sm text-muted-foreground">No forms yet for this word.</p>
+            </CardContent>
+          ) : (
             <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {word.forms.map((form, index) => (
                 <div
@@ -109,8 +123,8 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
                 </div>
               ))}
             </CardContent>
-          </Card>
-        )}
+          )}
+        </Card>
       </div>
 
       <Card className="mt-6">
@@ -141,19 +155,18 @@ export default function WordDetail({ loaderData }: Route.ComponentProps) {
         </CardContent>
       </Card>
 
-      {/* Notes */}
-      {word.notes && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-lg">Notes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
-              {word.notes}
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      {/* Notes — always drawn, so an empty one reads as "none", not as a card
+          that failed to render. */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-lg">Notes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+            {word.notes || "No notes yet for this word."}
+          </p>
+        </CardContent>
+      </Card>
 
       {word.listId && word.listTitle && (
         <p className="mt-6 text-sm text-muted-foreground">

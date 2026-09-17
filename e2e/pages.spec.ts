@@ -257,23 +257,35 @@ test.describe("tag filters", () => {
 });
 
 /**
- * Word pages read like a dictionary entry: meanings as running text, examples,
- * and the list it belongs to at the very bottom.
+ * Word pages read like a dictionary entry: definitions as running text, the
+ * forms and notes cards below (drawn even when empty), examples, and the list
+ * it belongs to at the very bottom.
  */
 test.describe("word detail", () => {
   test("lists meanings as text and links its list at the bottom", async ({ page }) => {
     await page.goto(`/words/${await wordIdByTitle(page, WORD)}`);
 
-    // Meanings are a numbered list, not badges.
+    // Definitions are a numbered list, not badges.
     await expect(page.locator("main ol li").first()).toBeVisible();
     await expect(page.getByText("Japanese language")).toBeVisible();
+
+    // The class sits under the heading as plain text: below it, not beside it
+    // as a badge, and capitalised rather than the lowercase value stored.
+    await waitForFonts(page);
+    const heading = page.locator("main").getByText("Definitions", { exact: true });
+    const pos = page.locator("main").getByText("Noun", { exact: true });
+    await expect(pos).toBeVisible();
+    const headingBox = await heading.boundingBox();
+    const posBox = await pos.boundingBox();
+    expect(headingBox, "definitions heading").not.toBeNull();
+    expect(posBox, "class line").not.toBeNull();
+    expect(posBox!.y).toBeGreaterThan(headingBox!.y);
 
     // There is no "study this list" button on a word page…
     await expect(page.getByRole("link", { name: "Study this list" })).toHaveCount(0);
 
     // …and the list it belongs to is linked below the examples. Comparing two
     // y-positions only means something once text metrics have settled.
-    await waitForFonts(page);
     const list = page.getByRole("link", { name: "JLPT N5 Starter" });
     const examples = page.getByText("Example sentences").first();
     const listBox = await list.boundingBox();
@@ -281,6 +293,19 @@ test.describe("word detail", () => {
     expect(listBox, "list link").not.toBeNull();
     expect(examplesBox, "examples heading").not.toBeNull();
     expect(listBox!.y).toBeGreaterThan(examplesBox!.y);
+  });
+
+  test("keeps the Forms and Notes cards when the word has neither", async ({ page }) => {
+    await page.goto(`/words/${await wordIdByTitle(page, WORD)}`);
+
+    // The starter pack ships no conjugation forms and no notes, so both cards
+    // are drawn empty, headings and all. A card that disappears says nothing;
+    // the placeholder is what distinguishes "this word has none" from "this did
+    // not render".
+    await expect(page.locator("main").getByText(/^Forms/).first()).toBeVisible();
+    await expect(page.locator("main").getByText("Notes", { exact: true })).toBeVisible();
+    await expect(page.getByText("No forms yet for this word.")).toBeVisible();
+    await expect(page.getByText("No notes yet for this word.")).toBeVisible();
   });
 
   test("puts Forms before Examples, with the side-by-side cards the same height", async ({
@@ -291,12 +316,10 @@ test.describe("word detail", () => {
     // Every assertion here is a height comparison.
     await waitForFonts(page);
 
-    // No word in the starter pack carries conjugation forms, so there is no
-    // Forms card to lay out. (This used to skip because `/words/1` 404'd for a
-    // fresh owner — the reason was wrong, even though the outcome was right.)
-    if ((await page.getByText(/^Forms/).count()) === 0) {
-      test.skip(true, "the starter pack ships no conjugation forms");
-    }
+    // The starter pack ships no conjugation forms, so this is the empty card —
+    // which is laid out all the same. It used to be conditional, and this spec
+    // used to skip on the word that had no forms to show.
+    await expect(page.getByText("No forms yet for this word.")).toBeVisible();
 
     const forms = page.getByText(/^Forms/).first();
     const examples = page.getByText(/^Example sentences/).first();
@@ -310,30 +333,31 @@ test.describe("word detail", () => {
     // The forms card swapped places with the examples card.
     expect(formsBox!.y).toBeLessThan(examplesBox!.y);
 
-    // The two cards that share the row (meanings | forms) are stretched to the
-    // same height rather than sizing to their own content.
+    // The two cards that share the row (definitions | forms) are stretched to
+    // the same height rather than sizing to their own content.
     const heights = await page.evaluate(() => {
       const heading = Array.from(document.querySelectorAll("main div, main h2, main h3")).find(
-        (el) => (el.textContent ?? "").trim() === "Meanings"
+        (el) => (el.textContent ?? "").trim() === "Definitions"
       );
-      const meaningsCard = heading?.closest("[class*='rounded-']") as HTMLElement | null;
+      const definitionsCard = heading?.closest("[class*='rounded-']") as HTMLElement | null;
       const formsHeading = Array.from(document.querySelectorAll("main div")).find((el) =>
         (el.textContent ?? "").trim().startsWith("Forms")
       );
       const formsCard = formsHeading?.closest("[class*='rounded-']") as HTMLElement | null;
-      if (!meaningsCard || !formsCard) return null;
+      if (!definitionsCard || !formsCard) return null;
       return {
-        meanings: Math.round(meaningsCard.getBoundingClientRect().height),
+        definitions: Math.round(definitionsCard.getBoundingClientRect().height),
         forms: Math.round(formsCard.getBoundingClientRect().height),
         sameRow:
-          Math.abs(meaningsCard.getBoundingClientRect().y - formsCard.getBoundingClientRect().y) <
-          4,
+          Math.abs(
+            definitionsCard.getBoundingClientRect().y - formsCard.getBoundingClientRect().y
+          ) < 4,
       };
     });
 
     expect(heights).not.toBeNull();
     expect(heights!.sameRow).toBe(true);
-    expect(heights!.meanings).toBe(heights!.forms);
+    expect(heights!.definitions).toBe(heights!.forms);
   });
 });
 
