@@ -1,4 +1,5 @@
 import {
+  data,
   isRouteErrorResponse,
   Links,
   Meta,
@@ -18,9 +19,11 @@ import { PageSkeleton } from "~/components/page-skeleton";
 import { Toaster } from "~/components/lightswind/toast";
 import { useBrowsingPageRecorder } from "~/lib/return-to";
 import {
+  AuthUnavailableError,
   deviceCookieHeader,
   ownerContext,
   resolveOwnerFromRequest,
+  type OwnerInfo,
 } from "~/lib/owner.server";
 import { cn } from "~/lib/utils";
 import "./app.css";
@@ -42,10 +45,23 @@ export const links: Route.LinksFunction = () => [
  * Resolves who this request belongs to (account user or device) and persists a
  * freshly created device cookie. Runs for every page and action so loaders and
  * actions can read `ownerContext` instead of re-authenticating individually.
+ *
+ * When the viewer cannot be identified because the auth service is unreachable,
+ * the request fails instead of falling through to the device owner: a signed-in
+ * user must not be shown a library that is not theirs, and they would have no
+ * way to tell that it happened.
  */
 export const middleware: Route.MiddlewareFunction[] = [
   async ({ request, context }, next) => {
-    const owner = await resolveOwnerFromRequest(request);
+    let owner: OwnerInfo;
+    try {
+      owner = await resolveOwnerFromRequest(request);
+    } catch (error) {
+      if (error instanceof AuthUnavailableError) {
+        throw data(error.message, { status: 503, statusText: error.message });
+      }
+      throw error;
+    }
     context.set(ownerContext, owner);
 
     const response = await next();

@@ -1,7 +1,19 @@
 import { createContext } from "react-router";
 
-import { getConvexSession, refreshConvexTokens, type ConvexUser } from "~/lib/auth.server";
+import { checkConvexSession, refreshConvexTokens, type ConvexUser } from "~/lib/auth.server";
 import { JWT_COOKIE, REFRESH_COOKIE } from "~/lib/token-cookies";
+
+/**
+ * Thrown when the request presented a token but Convex could not be reached, so
+ * the viewer is genuinely unknown. Middleware turns this into a 503 rather than
+ * rendering the device-scoped library, which would show a signed-in user content
+ * that is not theirs — and, worse, let them add to it under the device owner.
+ */
+export class AuthUnavailableError extends Error {
+  constructor() {
+    super("Could not verify your session — the authentication service is unreachable.");
+  }
+}
 
 /**
  * The resolved viewer identity for one request. The owner scopes every content
@@ -55,6 +67,11 @@ export function readCookie(header: string | null, name: string): string | null {
  * writer of the token cookies (it renews within a second of the first load), and
  * a second writer here would race the sign-out path — which clears the cookie
  * precisely while a request that read it is still in flight.
+ *
+ * Throws `AuthUnavailableError` when a token was presented but Convex never
+ * answered. A viewer we could not identify is not a signed-out viewer, and a
+ * request with no token at all is unaffected — so the blast radius is signed-in
+ * requests during an outage, not the site.
  */
 export async function resolveOwnerFromRequest(request: Request): Promise<OwnerInfo> {
   const cookies = request.headers.get("Cookie");
@@ -63,22 +80,28 @@ export async function resolveOwnerFromRequest(request: Request): Promise<OwnerIn
   if (!deviceId) deviceId = crypto.randomUUID();
 
   const jwt = readCookie(cookies, JWT_COOKIE);
-  let session = jwt ? await getConvexSession(jwt) : null;
+  let session = await checkConvexSession(jwt);
+  if (session.status === "unreachable") throw new AuthUnavailableError();
 
-  if (!session) {
+  if (session.status === "rejected") {
     const refreshToken = readCookie(cookies, REFRESH_COOKIE);
     if (refreshToken) {
-      const tokens = await refreshConvexTokens(refreshToken);
-      // Verified like any other token before it is trusted.
-      if (tokens) session = await getConvexSession(tokens.token);
+      const renewed = await refreshConvexTokens(refreshToken);
+      if (renewed.status === "unreachable") throw new AuthUnavailableError();
+      if (renewed.status === "ok") {
+        // Verified like any other token before it is trusted.
+        session = await checkConvexSession(renewed.tokens.token);
+        if (session.status === "unreachable") throw new AuthUnavailableError();
+      }
     }
   }
 
+  const user = session.status === "ok" ? session.user : null;
   return {
-    ownerId: session?.user.id ?? deviceId,
+    ownerId: user?.id ?? deviceId,
     deviceId,
-    user: session?.user ?? null,
-    isAdmin: session?.isAdmin ?? false,
+    user,
+    isAdmin: session.status === "ok" ? session.isAdmin : false,
     deviceIsNew,
   };
 }

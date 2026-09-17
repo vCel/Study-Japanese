@@ -17,20 +17,67 @@ export function isConvexConfigured(): boolean {
   return Boolean(import.meta.env.VITE_CONVEX_URL);
 }
 
-/**
- * Verifies a Convex Auth token (sent by the browser) against the Convex
- * backend and returns the authenticated user plus their admin status,
- * or null if unauthenticated.
- */
-export async function getConvexSession(
-  token: string | null
-): Promise<{ user: ConvexUser; isAdmin: boolean } | null> {
-  const url = import.meta.env.VITE_CONVEX_URL as string | undefined;
-  if (!url || !token) return null;
+/** A Convex HTTP call that either produced a value or failed. */
+type ConvexCall<T> = { ok: true; value: T } | { ok: false; reachable: boolean };
 
-  const client = new ConvexHttpClient(url);
+/**
+ * Runs a Convex HTTP call and reports whether the deployment answered at all.
+ *
+ * `ConvexHttpClient` collapses "no response" and "answered with an error" into
+ * one thrown `Error`, but the two mean opposite things here: a token Convex
+ * refuses is a signed-out viewer, while a deployment that never answered is an
+ * outage. The status recorded by the fetch wrapper is the only place that
+ * difference is visible.
+ */
+async function callConvex<T>(
+  token: string | null,
+  run: (client: ConvexHttpClient) => Promise<T>
+): Promise<ConvexCall<T>> {
+  const url = import.meta.env.VITE_CONVEX_URL as string;
+  let status: number | null = null;
+  const client = new ConvexHttpClient(url, {
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      status = response.status;
+      return response;
+    },
+  });
+  if (token) client.setAuth(token);
+
   try {
-    client.setAuth(token);
+    return { ok: true, value: await run(client) };
+  } catch {
+    // Convex answers a token it refuses with 401 and a well-formed request it
+    // cannot serve with 200 + `{status:"error"}`; measured against the
+    // deployment, `InvalidAuthHeader` comes back as a 401. So only a 2xx, 401 or
+    // 403 is an answer about the token. No response at all, a 5xx, or any other
+    // 4xx (something in between the Worker and Convex) is the service being
+    // unavailable, which is not the same claim.
+    return {
+      ok: false,
+      reachable: status !== null && (status < 300 || status === 401 || status === 403),
+    };
+  }
+}
+
+/**
+ * The result of verifying a Convex Auth token (sent by the browser) against the
+ * Convex backend. Three outcomes rather than two, because callers have to tell
+ * them apart: a refused token is a signed-out viewer, an unreachable deployment
+ * is an outage, and reading the second as the first is what silently served a
+ * signed-in user the device-scoped library.
+ */
+export type ConvexSession =
+  | { status: "ok"; user: ConvexUser; isAdmin: boolean }
+  | { status: "rejected" }
+  | { status: "unreachable" };
+
+export async function checkConvexSession(token: string | null): Promise<ConvexSession> {
+  const url = import.meta.env.VITE_CONVEX_URL as string | undefined;
+  // No token is not an outage — the viewer simply is not signed in.
+  if (!url || !token) return { status: "rejected" };
+
+  const found = await callConvex(token, async (client) => {
     const user = await client.query(api.users.getAuthenticatedUser, {});
     if (!user) return null;
 
@@ -42,22 +89,22 @@ export async function getConvexSession(
       isAdmin = false;
     }
     return { user, isAdmin };
-  } catch {
-    // Invalid/expired token or Convex not reachable — treat as unauthenticated.
-    return null;
-  }
+  });
+
+  if (!found.ok) return found.reachable ? { status: "rejected" } : { status: "unreachable" };
+  if (!found.value) return { status: "rejected" };
+  return { status: "ok", user: found.value.user, isAdmin: found.value.isAdmin };
 }
 
-/** Convenience wrapper that ignores the admin flag. */
-export async function getConvexUserFromToken(token: string | null): Promise<ConvexUser | null> {
-  const session = await getConvexSession(token);
-  return session?.user ?? null;
-}
+export type RefreshOutcome =
+  | { status: "ok"; tokens: { token: string; refreshToken: string } }
+  | { status: "rejected" }
+  | { status: "unreachable" };
 
 /**
  * Exchange a refresh token for a fresh JWT — the same call the browser makes on
- * mount (`auth:signIn` with no provider). Null when the refresh token has been
- * spent, revoked, or has aged out.
+ * mount (`auth:signIn` with no provider). `rejected` when the refresh token has
+ * been spent, revoked, or has aged out.
  *
  * The rotated refresh token that comes back is deliberately dropped: Convex Auth
  * treats a replay of one outside a 10s window as theft and revokes the whole
@@ -65,22 +112,19 @@ export async function getConvexUserFromToken(token: string | null): Promise<Conv
  * cookie. Persisting the rotation here would fork that chain and sign the user
  * out.
  */
-export async function refreshConvexTokens(
-  refreshToken: string
-): Promise<{ token: string; refreshToken: string } | null> {
+export async function refreshConvexTokens(refreshToken: string): Promise<RefreshOutcome> {
   const url = import.meta.env.VITE_CONVEX_URL as string | undefined;
-  if (!url) return null;
+  if (!url) return { status: "rejected" };
 
-  try {
-    const result = (await new ConvexHttpClient(url).action(api.auth.signIn, {
-      refreshToken,
-    })) as { tokens?: { token: string; refreshToken: string } | null } | null;
-    return result?.tokens ?? null;
-  } catch {
-    // Spent/revoked refresh token, or Convex unreachable — either way there is
-    // no session to recover.
-    return null;
-  }
+  const result = await callConvex(null, async (client) => {
+    const value = (await client.action(api.auth.signIn, { refreshToken })) as {
+      tokens?: { token: string; refreshToken: string } | null;
+    } | null;
+    return value?.tokens ?? null;
+  });
+
+  if (!result.ok) return result.reachable ? { status: "rejected" } : { status: "unreachable" };
+  return result.value ? { status: "ok", tokens: result.value } : { status: "rejected" };
 }
 
 export function extractBearerToken(request: Request): string | null {
@@ -102,6 +146,22 @@ export function readFormToken(form: FormData): string | null {
 
 function jsonResponse(body: unknown, status: number, headers?: HeadersInit): Response {
   return Response.json(body, { status, headers });
+}
+
+/**
+ * 503 rather than 401 when the auth service could not be reached: a 401 tells
+ * the caller to throw away a token that may well be fine, and it hides an outage
+ * behind "you are not signed in".
+ */
+function unavailableResponse(): Response {
+  return jsonResponse(
+    {
+      error:
+        "Could not verify your session — the authentication service is unreachable. Please try again.",
+    },
+    503,
+    { "Retry-After": "5" }
+  );
 }
 
 /**
@@ -140,8 +200,11 @@ export async function guardApiRequest(
     };
   }
 
-  const user = await getConvexUserFromToken(extractBearerToken(request));
-  if (!user) {
+  const check = await checkConvexSession(extractBearerToken(request));
+  if (check.status === "unreachable") {
+    return { ok: false, response: unavailableResponse() };
+  }
+  if (check.status === "rejected") {
     return {
       ok: false,
       response: jsonResponse(
@@ -155,7 +218,7 @@ export async function guardApiRequest(
     };
   }
 
-  return { ok: true, user };
+  return { ok: true, user: check.user };
 }
 
 /**
@@ -221,8 +284,11 @@ export async function guardAdminRequest(
     };
   }
 
-  const session = await getConvexSession(token ?? extractBearerToken(request));
-  if (!session) {
+  const session = await checkConvexSession(token ?? extractBearerToken(request));
+  if (session.status === "unreachable") {
+    return { ok: false, response: unavailableResponse() };
+  }
+  if (session.status === "rejected") {
     return {
       ok: false,
       response: jsonResponse(
@@ -281,8 +347,11 @@ export async function guardUserRequest(
     };
   }
 
-  const session = await getConvexSession(token ?? extractBearerToken(request));
-  if (!session) {
+  const session = await checkConvexSession(token ?? extractBearerToken(request));
+  if (session.status === "unreachable") {
+    return { ok: false, response: unavailableResponse() };
+  }
+  if (session.status === "rejected") {
     return {
       ok: false,
       response: jsonResponse({ error: "Please sign in to do that." }, 401, {
