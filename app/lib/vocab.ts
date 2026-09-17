@@ -133,10 +133,17 @@ const POS_SYNONYMS: Record<string, string> = {
   phrase: "phrase",
   phrases: "phrase",
   p: "phrase",
-  expr: "expression",
-  expression: "expression",
   greeting: "phrase",
   greetings: "phrase",
+  // Values the table held that no pos option matches. They map to the class
+  // migration 0015 gave those rows, so an import cannot put a value back that
+  // POS_VALUES does not know and word-edit's select has no option for.
+  expr: "other",
+  expression: "other",
+  pronoun: "noun",
+  pron: "noun",
+  interjection: "other",
+  intj: "other",
 };
 
 /** Normalize a part-of-speech value ("v", "Verbs", "adjective"…) to a canonical tag. */

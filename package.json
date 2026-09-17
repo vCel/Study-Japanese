@@ -15,6 +15,7 @@
     "quiz:input": "node scripts/quiz-input-guard.mjs",
     "grader:guard": "node scripts/grader-guard.mjs",
     "forms:guard": "node scripts/form-names-guard.mjs",
+    "pos:guard": "node scripts/pos-guard.mjs",
     "owner:guard": "node scripts/owner-refresh-guard.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
