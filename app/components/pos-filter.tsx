@@ -1,9 +1,10 @@
 import { Link } from "react-router";
 
+import { POS_VALUES } from "~/lib/vocab";
 import { cn } from "~/lib/utils";
 
-/** Canonical part-of-speech values used across the app. */
-export const POS_VALUES = ["noun", "verb", "adjective", "adverb", "other"] as const;
+/** Canonical part-of-speech values — re-exported so callers keep one import. */
+export { POS_VALUES };
 
 export function isValidPos(value: string | null | undefined): boolean {
   return !!value && (POS_VALUES as readonly string[]).includes(value);

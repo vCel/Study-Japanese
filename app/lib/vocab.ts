@@ -116,6 +116,24 @@ function normalizeExamples(value: unknown): VocabExample[] {
   return out;
 }
 
+/**
+ * The pos values a word can be stored with.
+ *
+ * `other` is the class for a word that is none of the four, and it is where
+ * `normalizePos` puts anything it does not recognise. Free text was the old
+ * behaviour and it loses rows twice over: `word-edit.tsx`'s own whitelist is
+ * the write guard for the edit form, so a stored pos it has no option for is
+ * blanked the next time the row is saved, and every pill on /words filters on
+ * this list, so the row is invisible to them in the meantime.
+ *
+ * `phrase` is deliberately absent: it is the Phrases-page discriminator rather
+ * than a class, and /words excludes it on purpose (see `listWords`).
+ */
+export const POS_VALUES = ["noun", "verb", "adjective", "adverb", "other"] as const;
+
+/** A pos the table can hold: the classes above, plus the Phrases page's marker. */
+const STORABLE_POS: readonly string[] = [...POS_VALUES, "phrase"];
+
 const POS_SYNONYMS: Record<string, string> = {
   n: "noun",
   noun: "noun",
@@ -147,11 +165,12 @@ const POS_SYNONYMS: Record<string, string> = {
 };
 
 /** Normalize a part-of-speech value ("v", "Verbs", "adjective"…) to a canonical tag. */
-function normalizePos(value: unknown): string | null {
+export function normalizePos(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return null;
-  return POS_SYNONYMS[trimmed] ?? trimmed.slice(0, 24);
+  const canonical = POS_SYNONYMS[trimmed] ?? trimmed;
+  return STORABLE_POS.includes(canonical) ? canonical : "other";
 }
 
 /**
@@ -491,7 +510,7 @@ function posAsSubtype(value: unknown): { pos: string; subtype: string } | null {
  * catalog are dropped for pos with a catalog (keeps the data clean); other pos
  * accept short free text.
  */
-function normalizeSubtype(value: unknown, pos: string | null): string | null {
+export function normalizeSubtype(value: unknown, pos: string | null): string | null {
   if (typeof value !== "string" || !pos) return null;
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return null;

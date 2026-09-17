@@ -1,4 +1,4 @@
-import { parseVocabJson, type VocabEntry } from "~/lib/vocab";
+import { normalizePos, normalizeSubtype, parseVocabJson, type VocabEntry } from "~/lib/vocab";
 
 /**
  * The row model behind the word-list and phrase create forms. Shared by the
@@ -175,30 +175,36 @@ export function readVocabRows(
 
 /** Normalized database entries for every complete row. */
 export function toEntries(rows: VocabRow[], { forcePos }: { forcePos?: string } = {}): VocabEntry[] {
-  return rows.filter(isRowComplete).map((row) => ({
-    word: row.word.trim().slice(0, 64),
-    kana: row.kana.trim().slice(0, 64),
-    pos: forcePos ?? (row.pos.trim() ? row.pos.trim() : null),
-    subtype: forcePos ? null : (row.subtype.trim() ? row.subtype.trim().slice(0, 24) : null),
-    meanings: row.meanings
-      .map((meaning) => meaning.trim())
-      .filter((meaning) => meaning.length > 0)
-      .slice(0, MAX_MEANINGS)
-      .map((meaning) => meaning.slice(0, 200)),
-    examples: row.examples
-      .filter((example) => example.japanese.trim().length > 0)
-      .slice(0, MAX_EXAMPLES)
-      .map((example) => ({
-        japanese: example.japanese.trim().slice(0, 500),
-        translation: example.translation.trim() ? example.translation.trim().slice(0, 500) : null,
-      })),
-    notes: row.notes.trim() ? row.notes.trim().slice(0, 2000) : null,
-    forms: row.forms
-      .filter((form) => form.name.trim().length > 0 || form.value.trim().length > 0)
-      .slice(0, MAX_FORMS)
-      .map((form) => ({
-        name: form.name.trim().slice(0, 64),
-        value: form.value.trim().slice(0, 128),
-      })),
-  }));
+  return rows.filter(isRowComplete).map((row) => {
+    // Through the same normalizers as the JSON import. This is the write path
+    // for the bulk editor, the uploads and the phrase form, and a pos or subtype
+    // the edit form has no option for is blanked the next time the row is saved.
+    const pos = forcePos ?? normalizePos(row.pos);
+    return {
+      word: row.word.trim().slice(0, 64),
+      kana: row.kana.trim().slice(0, 64),
+      pos,
+      subtype: forcePos ? null : normalizeSubtype(row.subtype, pos),
+      meanings: row.meanings
+        .map((meaning) => meaning.trim())
+        .filter((meaning) => meaning.length > 0)
+        .slice(0, MAX_MEANINGS)
+        .map((meaning) => meaning.slice(0, 200)),
+      examples: row.examples
+        .filter((example) => example.japanese.trim().length > 0)
+        .slice(0, MAX_EXAMPLES)
+        .map((example) => ({
+          japanese: example.japanese.trim().slice(0, 500),
+          translation: example.translation.trim() ? example.translation.trim().slice(0, 500) : null,
+        })),
+      notes: row.notes.trim() ? row.notes.trim().slice(0, 2000) : null,
+      forms: row.forms
+        .filter((form) => form.name.trim().length > 0 || form.value.trim().length > 0)
+        .slice(0, MAX_FORMS)
+        .map((form) => ({
+          name: form.name.trim().slice(0, 64),
+          value: form.value.trim().slice(0, 128),
+        })),
+    };
+  });
 }

@@ -76,13 +76,19 @@ const check = (label, actual, expected) => {
 const LEGACY = { expression: "other", pronoun: "noun", interjection: "other" };
 /** Labels an import may use for the same value, all of which must agree. */
 const ALIASES = { expr: "expression", pron: "pronoun", intj: "interjection" };
+/**
+ * Labels the app has no synonym for. They must land on the fallback rather than
+ * being stored as free text: that is the half of the rule covering a label
+ * nobody listed, and the reason an unknown import cannot create a row the edit
+ * form has no option for.
+ */
+const UNKNOWN = ["onomatopoeia", "counters", "determiner", "連体詞"];
 
 console.log("1. The legacy values are genuinely outside the catalog");
-const filterSource = fs.readFileSync(FILTER, "utf8");
-const valuesMatch = filterSource.match(/POS_VALUES\s*=\s*\[([^\]]*)\]/);
+const valuesMatch = fs.readFileSync(VOCAB, "utf8").match(/POS_VALUES\s*=\s*\[([^\]]*)\]/);
 let POS_VALUES = [];
 if (!valuesMatch) {
-  fail("POS_VALUES not found in app/components/pos-filter.tsx — this guard's anchor moved.");
+  fail("POS_VALUES not found in app/lib/vocab.ts — this guard's anchor moved.");
 } else {
   POS_VALUES = valuesMatch[1].split(",").map((v) => v.trim().replace(/^"|"$/g, "")).filter(Boolean);
   ok(`POS_VALUES = ${POS_VALUES.join(", ")}`);
@@ -127,6 +133,9 @@ for (const [value, target] of Object.entries(LEGACY)) {
 for (const [alias, value] of Object.entries(ALIASES)) {
   check(`pos "${alias}" (alias of ${value})`, imported({ word: "x", kana: "x", pos: alias, meanings: ["x"] }), `${LEGACY[value]}/null`);
 }
+for (const label of UNKNOWN) {
+  check(`pos "${label}" (unknown)`, imported({ word: "x", kana: "x", pos: label, meanings: ["x"] }), "other/null");
+}
 
 console.log("\n4. Every target is a value the app can store and show");
 for (const target of new Set(Object.values(LEGACY))) {
@@ -140,20 +149,116 @@ check("pos \"phrase\" still reaches the Phrases page", imported({ word: "いら�
 if ("suffix" in assigned) fail("0015 rewrites pos='suffix' too — 0014 already did that");
 else ok("0015 leaves pos='suffix' to 0014");
 
-console.log("\n6. Self-test — with the synonym lines gone, every case must lose its class");
+console.log("\n6. The pos lists agree with each other");
+/** The `value: "…"` entries of a `const NAME … = [ … ];` block in a source file. */
+function optionValues(file, name) {
+  const source = fs.readFileSync(path.join(REPO, file), "utf8");
+  const block = source.match(new RegExp(`const ${name}[^=]*=\\s*\\[([\\s\\S]*?)\\];`));
+  if (!block) return null;
+  return [...block[1].matchAll(/value:\s*"([^"]*)"/g)].map((match) => match[1]).filter(Boolean);
+}
+const lists = {};
+for (const [label, file, name] of [
+  ["edit-word-form POS_OPTIONS", "app/components/edit-word-form.tsx", "POS_OPTIONS"],
+  ["vocab-rows POS_OPTIONS", "app/lib/vocab-rows.ts", "POS_OPTIONS"],
+  ["quiz-setup POS_OPTIONS", "app/components/quiz-setup.tsx", "POS_OPTIONS"],
+  ["study-setup POS_OPTIONS", "app/components/study-setup.tsx", "POS_OPTIONS"],
+  ["pos-filter POS_FILTERS", "app/components/pos-filter.tsx", "POS_FILTERS"],
+]) {
+  const values = optionValues(file, name);
+  if (!values) fail(`${label} not found in ${file} — this guard's anchor moved.`);
+  else lists[label] = values;
+}
+const editOptions = lists["edit-word-form POS_OPTIONS"];
+const routeSource = fs.readFileSync(path.join(REPO, "app", "routes", "word-edit.tsx"), "utf8");
+const whitelistMatch = routeSource.match(/\["noun",\s*"verb"[\s\S]*?\]\.includes/);
+const routeWhitelist = whitelistMatch
+  ? [...whitelistMatch[0].matchAll(/"([^"]+)"/g)].map((match) => match[1])
+  : null;
+if (!routeWhitelist) fail("word-edit.tsx's pos whitelist not found — this guard's anchor moved.");
+
+if (editOptions && routeWhitelist) {
+  const dropped = editOptions.filter((value) => !routeWhitelist.includes(value));
+  if (dropped.length) {
+    fail(`word-edit.tsx rejects ${dropped.join(", ")}, which its own form offers — saving one blanks the pos`);
+  } else {
+    ok("the word form's route accepts every option the form offers");
+  }
+}
+
+if (editOptions) {
+  const storables = [...POS_VALUES, "phrase"];
+  const missing = storables.filter((value) => !editOptions.includes(value));
+  if (missing.length) fail(`the word form has no option for ${missing.join(", ")}, which a row can be stored with`);
+  else ok(`every storable pos has a form option (${storables.join(", ")})`);
+
+  // Nothing may offer a value the edit form cannot round-trip. That is the bug
+  // that blanked 22 rows before 0015, and the bulk editor, the quiz and study
+  // filters are all separate literals.
+  for (const [label, values] of Object.entries(lists)) {
+    if (label === "edit-word-form POS_OPTIONS") continue;
+    const extra = values.filter((value) => !editOptions.includes(value));
+    if (extra.length) fail(`${label} offers ${extra.join(", ")}, which the word form cannot round-trip`);
+    else ok(`${label} offers nothing the word form cannot round-trip`);
+  }
+}
+
+if (lists["pos-filter POS_FILTERS"]) {
+  const stray = lists["pos-filter POS_FILTERS"].filter((value) => !POS_VALUES.includes(value));
+  if (stray.length) fail(`a filter pill filters on ${stray.join(", ")}, which is not in POS_VALUES`);
+  else ok("every filter pill filters on a value POS_VALUES knows");
+}
+
+console.log("\n7. Self-test — every case must fail without the code it pins");
 const vocabSource = fs.readFileSync(VOCAB, "utf8").replace(/\r\n/g, "\n");
-const stripped = vocabSource.replace(/\n {2}\/\/ Values the table held[\s\S]*?\n {2}intj: "other",/, "");
-if (stripped === vocabSource) {
-  fail("could not delete the synonym lines — the anchor moved, so this self-test proved nothing.");
-} else {
-  const DOCTORED = path.join(OUT_DIR, "vocab-doctored.mjs");
-  await bundle(DOCTORED, stripped);
-  const { parseVocabJson: doctored } = await import(pathToFileURL(DOCTORED).href);
-  for (const value of Object.keys(LEGACY)) {
-    const result = doctored(JSON.stringify({ word: "x", kana: "x", pos: value, meanings: ["x"] }));
-    const pos = result.ok ? result.entries[0].pos : `error: ${result.error}`;
-    if (pos === LEGACY[value]) fail(`without the mapping, "${value}" still resolves to ${pos} — the cases above are not testing it`);
-    else ok(`without the mapping, "${value}" falls through to ${JSON.stringify(pos)}`);
+
+/** Bundle a doctored vocab.ts and hand back its `parseVocabJson`. */
+async function doctored(label, from, to) {
+  const source = typeof from === "string" ? vocabSource.replace(from, to) : vocabSource.replace(from, to);
+  if (source === vocabSource) {
+    fail(`${label}: the anchor moved, so this self-test proved nothing.`);
+    return null;
+  }
+  const out = path.join(OUT_DIR, `vocab-${label}.mjs`);
+  await bundle(out, source);
+  return (await import(pathToFileURL(out).href)).parseVocabJson;
+}
+
+const parse = (parseVocabJson, value) => {
+  const result = parseVocabJson(JSON.stringify({ word: "x", kana: "x", pos: value, meanings: ["x"] }));
+  return result.ok ? result.entries[0].pos : `error: ${result.error}`;
+};
+
+// The clamp is what stops a value the app has no option for from being stored
+// at all — it is the half that covers every label nobody thought of.
+const freeText = await doctored(
+  "freetext",
+  'return STORABLE_POS.includes(canonical) ? canonical : "other";',
+  "return canonical;"
+);
+if (freeText) {
+  if (UNKNOWN.length === 0) fail("no unknown label to test the clamp with — this check is vacuous");
+  for (const label of UNKNOWN) {
+    const pos = parse(freeText, label);
+    if (pos === "other") fail(`without the clamp, "${label}" still resolves to other`);
+    else ok(`without the clamp, "${label}" falls through to ${JSON.stringify(pos)}`);
+  }
+}
+
+// The synonym table is what puts a legacy label on its own class rather than on
+// the fallback, so it is only checkable where the two differ.
+const noSynonyms = await doctored(
+  "nosynonyms",
+  /\n {2}\/\/ Values the table held[\s\S]*?\n {2}intj: "other",/,
+  ""
+);
+if (noSynonyms) {
+  const specific = Object.entries(LEGACY).filter(([, target]) => target !== "other");
+  if (specific.length === 0) fail("no case depends on the synonym table — this check is vacuous");
+  for (const [value, target] of specific) {
+    const pos = parse(noSynonyms, value);
+    if (pos === target) fail(`without the synonym table, "${value}" still resolves to ${pos}`);
+    else ok(`without the synonym table, "${value}" falls through to ${JSON.stringify(pos)}`);
   }
 }
 
