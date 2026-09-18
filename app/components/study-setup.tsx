@@ -611,11 +611,35 @@ function StudyPanel({
               </div>
             )}
 
+            <div className="flex items-center justify-between gap-4">
+              <SettingLabel
+                label="Fixed deck size"
+                hint={`Draws every ${noun} in the current selection, so nothing is left out and there is no deck size to pick. Off, the deck is a sample of the chosen size.`}
+              />
+              <Switch
+                checked={config.fixedSize}
+                onCheckedChange={(next) => onChange({ fixedSize: next })}
+                aria-label="Fixed deck size"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <SettingLabel
+                label="Shuffle deck"
+                hint="Deals the cards in a random order. Turn it off to study them in the order the list shows them — the order of the words in a list, the points in a rule, the rules on the rules page."
+              />
+              <Switch
+                checked={config.shuffle}
+                onCheckedChange={(next) => onChange({ shuffle: next })}
+                aria-label="Shuffle deck"
+              />
+            </div>
+
             {/*
-              Deck size is only a question while the deck is sized: a fixed deck
-              is whatever the selection holds, so the row goes with the choice.
-              The stored limit survives the toggle, so turning it back off
-              restores the size that was picked before.
+              Last, so the row it removes sits under the switch that removes it:
+              a fixed deck is whatever the selection holds, so the size is only a
+              question while the deck is sized. The stored limit survives the
+              toggle, so turning it back off restores the size picked before.
             */}
             {!config.fixedSize && (
               <div className="flex items-center justify-between gap-4">
@@ -638,30 +662,6 @@ function StudyPanel({
                 </div>
               </div>
             )}
-
-            <div className="flex items-center justify-between gap-4">
-              <SettingLabel
-                label="Fixed deck size"
-                hint={`Draws every ${noun} in the current selection, so nothing is left out and there is no deck size to pick. Off, the deck is a sample of the size chosen above.`}
-              />
-              <Switch
-                checked={config.fixedSize}
-                onCheckedChange={(next) => onChange({ fixedSize: next })}
-                aria-label="Fixed deck size"
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-4">
-              <SettingLabel
-                label="Shuffle deck"
-                hint="Deals the cards in a random order. Turn it off to study them in the order the list shows them — the order of the words in a list, the points in a rule, the rules on the rules page."
-              />
-              <Switch
-                checked={config.shuffle}
-                onCheckedChange={(next) => onChange({ shuffle: next })}
-                aria-label="Shuffle deck"
-              />
-            </div>
           </div>
         </CardContent>
       </Card>
