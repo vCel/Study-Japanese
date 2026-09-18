@@ -32,7 +32,12 @@ export interface StudyConfig {
   ruleKind: StudyRuleKind;
   /** Drill only the cards starred as important — all three tabs. */
   important: boolean;
+  /** Cards to draw — ignored when {@link fixedSize} is set. */
   limit: number;
+  /** Draw every card in the selection instead of `limit` of them. */
+  fixedSize: boolean;
+  /** Deal the deck in random order; off keeps the order the source list shows. */
+  shuffle: boolean;
 }
 
 export const DEFAULT_STUDY_CONFIG: StudyConfig = {
@@ -42,6 +47,8 @@ export const DEFAULT_STUDY_CONFIG: StudyConfig = {
   ruleKind: "",
   important: false,
   limit: 40,
+  fixedSize: false,
+  shuffle: true,
 };
 
 export function loadPreference<T extends string>(key: string, fallback: T, allowed: T[]): T {
@@ -87,6 +94,9 @@ function normalizeSession(item: unknown): SavedSession | null {
     ruleKind: raw.ruleKind === "word" || raw.ruleKind === "sentence" ? raw.ruleKind : "",
     important: raw.important === true,
     limit: raw.limit,
+    // Sessions saved before these two existed were a shuffled, sized draw.
+    fixedSize: raw.fixedSize === true,
+    shuffle: raw.shuffle !== false,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
   };
 }

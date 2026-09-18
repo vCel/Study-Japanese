@@ -93,7 +93,9 @@ function describeSession(session: SavedSession): string {
     if (session.pos) parts.push(session.pos);
   }
   if (session.important) parts.push("★ starred only");
-  parts.push(`${session.limit} cards`);
+  parts.push(session.fixedSize ? "all cards" : `${session.limit} cards`);
+  // Only the off-default is worth a word: a shuffled deck needs no saying.
+  if (!session.shuffle) parts.push("in list order");
   return parts.join(" · ");
 }
 
@@ -102,9 +104,9 @@ function describeSession(session: SavedSession): string {
  * and grammar forms. Each tab keeps its own selection *and* its own saved
  * sessions, so switching tabs never mixes decks up.
  *
- * The source-selection steps get a card each; the three single-setting choices
- * (priority, deck size, review schedule) share one "Options" card instead of
- * three near-empty ones.
+ * The source-selection steps get a card each; the single-setting choices
+ * (priority, deck size and order, review schedule) share one "Options" card
+ * instead of one near-empty card each.
  */
 export function StudySetup({
   wordLists,
@@ -265,9 +267,11 @@ function StudyPanel({
 
   const noun = isForms ? "rule" : kind === "phrases" ? "phrase" : "word";
 
+  // A fixed deck has no size to name; it is whatever the selection holds.
+  const deckLabel = config.fixedSize ? "all cards" : `${config.limit} cards`;
   const suggestedName = isForms
-    ? `${config.ruleKind ? RULE_KIND_OPTIONS.find((o) => o.value === config.ruleKind)?.label : "All rules"} · ${config.limit} cards`
-    : `${eligible.length} list${eligible.length === 1 ? "" : "s"}${config.pos ? ` · ${config.pos}` : ""} · ${config.limit} cards`;
+    ? `${config.ruleKind ? RULE_KIND_OPTIONS.find((o) => o.value === config.ruleKind)?.label : "All rules"} · ${deckLabel}`
+    : `${eligible.length} list${eligible.length === 1 ? "" : "s"}${config.pos ? ` · ${config.pos}` : ""} · ${deckLabel}`;
 
   const toggleTag = (tag: string) =>
     onChange({
@@ -336,6 +340,8 @@ function StudyPanel({
       ruleKind: config.ruleKind,
       important: config.important,
       limit: config.limit,
+      fixedSize: config.fixedSize,
+      shuffle: config.shuffle,
       createdAt: Date.now(),
     };
     onSessionsChange([session, ...sessions].slice(0, 30));
@@ -358,6 +364,8 @@ function StudyPanel({
       ruleKind: session.ruleKind,
       important: session.important,
       limit: session.limit,
+      fixedSize: session.fixedSize,
+      shuffle: session.shuffle,
     });
     setLoadOpen(false);
     toast({ title: `Loaded “${session.name}”`, description: describeSession(session), variant: "info" });
@@ -365,7 +373,14 @@ function StudyPanel({
 
   const start = () => {
     if (matchCount === 0) return;
-    const qs = new URLSearchParams({ kind, limit: String(config.limit) });
+    // "all" is the fixed deck: the session loader draws the whole selection
+    // instead of a sample of it.
+    const qs = new URLSearchParams({
+      kind,
+      limit: config.fixedSize ? "all" : String(config.limit),
+    });
+    // Absent means shuffled, so only the off case needs saying.
+    if (!config.shuffle) qs.set("shuffle", "0");
     // A starred-only deck is drawn from the user's starred ids; the server
     // intersects them with the selected lists / kind / part of speech.
     if (config.important) qs.set("starredIds", [...starredIds].join(","));
@@ -536,7 +551,7 @@ function StudyPanel({
 
       {/*
         One card, one row per setting, and the help text lives in a hover
-        tooltip instead of a paragraph — no dividers needed to separate three
+        tooltip instead of a paragraph — no dividers needed to separate the
         single-control rows.
       */}
       <Card>
@@ -596,24 +611,56 @@ function StudyPanel({
               </div>
             )}
 
+            {/*
+              Deck size is only a question while the deck is sized: a fixed deck
+              is whatever the selection holds, so the row goes with the choice.
+              The stored limit survives the toggle, so turning it back off
+              restores the size that was picked before.
+            */}
+            {!config.fixedSize && (
+              <div className="flex items-center justify-between gap-4">
+                <SettingLabel
+                  label="Deck size"
+                  hint="How many cards to draw for this session."
+                />
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {DECK_SIZES.map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => onChange({ limit: size })}
+                      aria-pressed={config.limit === size}
+                      className={pill(config.limit === size)}
+                    >
+                      {size} cards
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between gap-4">
               <SettingLabel
-                label="Deck size"
-                hint="How many cards to draw for this session."
+                label="Fixed deck size"
+                hint={`Draws every ${noun} in the current selection, so nothing is left out and there is no deck size to pick. Off, the deck is a sample of the size chosen above.`}
               />
-              <div className="flex flex-wrap justify-end gap-1.5">
-                {DECK_SIZES.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => onChange({ limit: size })}
-                    aria-pressed={config.limit === size}
-                    className={pill(config.limit === size)}
-                  >
-                    {size} cards
-                  </button>
-                ))}
-              </div>
+              <Switch
+                checked={config.fixedSize}
+                onCheckedChange={(next) => onChange({ fixedSize: next })}
+                aria-label="Fixed deck size"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <SettingLabel
+                label="Shuffle deck"
+                hint="Deals the cards in a random order. Turn it off to study them in the order the list shows them — the order of the words in a list, the points in a rule, the rules on the rules page."
+              />
+              <Switch
+                checked={config.shuffle}
+                onCheckedChange={(next) => onChange({ shuffle: next })}
+                aria-label="Shuffle deck"
+              />
             </div>
           </div>
         </CardContent>
@@ -632,8 +679,10 @@ function StudyPanel({
                 : `${eligible.length} list${eligible.length === 1 ? "" : "s"} · ≈${matchCount} matching ${noun}s${config.pos ? ` · ${config.pos} only` : ""}`}
           </p>
           <p className="text-xs text-muted-foreground">
-            Up to {config.limit} {config.important ? "starred " : ""}
-            {config.pos ? `${config.pos} ` : ""}cards from your selection.
+            {config.fixedSize ? "Every" : `Up to ${config.limit}`}{" "}
+            {config.important ? "starred " : ""}
+            {config.pos ? `${config.pos} ` : ""}
+            {config.fixedSize ? "card in your selection." : "cards from your selection."}
           </p>
         </div>
 

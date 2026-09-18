@@ -83,7 +83,21 @@ function saveStats(stats: StatsMap) {
 /** Cards answered "Again" are re-queued this many positions ahead. */
 const REQUEUE_DISTANCE = 3;
 
-export function Flashcards({ deck }: { deck: StudyCard[] }) {
+/**
+ * Drill a deck, one card at a time.
+ *
+ * `shuffled` says whether a restart may reorder the queue. The deck itself
+ * arrives in the order the session asked for — the loader dealt it — so this
+ * only has to hold for rebuilds; a learner who turned shuffling off keeps the
+ * list's order across a restart.
+ */
+export function Flashcards({
+  deck,
+  shuffled = true,
+}: {
+  deck: StudyCard[];
+  shuffled?: boolean;
+}) {
   const [repetition, setRepetition] = React.useState(
     () => loadPreference(REPETITION_KEY, "1", ["1", "0"]) === "1"
   );
@@ -113,8 +127,9 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
    *
    * `shuffleOrder` is only set for rebuilds the user asked for. The very first
    * queue is built during render, where a random order would desync the server
-   * markup from the hydrated client — and the deck already arrives in random
-   * order from the loader, so there is nothing to shuffle anyway.
+   * markup from the hydrated client — and the deck already arrives in the order
+   * the session asked for (shuffled, or the list's own order), so there is
+   * nothing to re-shuffle anyway.
    */
   const buildQueue = React.useCallback(
     (withRepetition: boolean, shuffleOrder: boolean): number[] => {
@@ -157,7 +172,7 @@ export function Flashcards({ deck }: { deck: StudyCard[] }) {
       : 0;
 
   const resetSession = (withRepetition: boolean) => {
-    setQueue(buildQueue(withRepetition, true));
+    setQueue(buildQueue(withRepetition, shuffled));
     setPos(0);
     setFlipped(false);
     setKnownCount(0);

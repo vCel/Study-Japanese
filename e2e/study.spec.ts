@@ -428,6 +428,87 @@ test.describe("saved study sessions", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The deck's size and its order are two independent choices in the builder's
+// Options card: "Fixed deck size" decides *how many* cards are dealt — all of
+// the selection, or a sample of it — and "Shuffle deck" decides the order they
+// arrive in. Neither may imply the other.
+// ---------------------------------------------------------------------------
+
+test.describe("deck size and order", () => {
+  test("a fixed deck drops the size choice and deals the whole selection", async ({ page }) => {
+    await page.goto("/study/flashcards");
+    await waitForHydration(page);
+    const panel = panelFor(page, "words");
+
+    // Sized by default, and the pills are what says so.
+    const forty = panel.getByRole("button", { name: "40 cards" });
+    await expect(forty).toBeVisible();
+    const fixed = panel.getByRole("switch", { name: "Fixed deck size" });
+    await expect(fixed).toHaveAttribute("aria-checked", "false");
+
+    await fixed.click();
+    await expect(fixed).toHaveAttribute("aria-checked", "true");
+    // The choice goes away rather than sitting there disabled…
+    await expect(forty).toHaveCount(0);
+    // …and the summary says what the deck now is.
+    await expect(panel).toContainText("Every card in your selection.");
+
+    await panel.getByRole("button", { name: "Start studying" }).click();
+    await expect(page).toHaveURL(/limit=all/);
+
+    // The whole selection, and the session says so: the footer reports the deck
+    // it dealt, which for a fixed deck is everything the scope holds. The two
+    // numbers agreeing is the assertion — the starter pack's size is not
+    // hard-coded, so this still means something if it grows.
+    const main = page.locator("main");
+    const scope = /(\d+) available/.exec(await main.innerText());
+    expect(scope, "the session header reports the scope").not.toBeNull();
+    expect(Number(scope![1])).toBeGreaterThan(0);
+    await expect(main).toContainText(`Deck size ${scope![1]} cards`);
+
+    // Per tab, like the rest of the panel: fixing the words deck leaves the
+    // phrases tab with its own size choice.
+    await page.goto("/study/flashcards");
+    await waitForHydration(page);
+    await page.getByRole("tab", { name: "Phrases" }).click();
+    await expect(
+      panelFor(page, "phrases").getByRole("button", { name: "40 cards" })
+    ).toBeVisible();
+  });
+
+  test("shuffle off deals the deck in the list's own order", async ({ page }) => {
+    const listId = await listIdByTitle(page, STARTER_LIST);
+    await page.goto(`/lists/${listId}`);
+    await waitForHydration(page);
+    const listed = (await page.locator("main [data-slot='word-card'] h2").allInnerTexts()).map(
+      (word) => word.trim()
+    );
+    // A one-word list could not tell a shuffle from an order.
+    expect(listed.length, "the list holds words to order").toBeGreaterThan(1);
+
+    // The same words, in the order the list page shows them. Fixed size rides
+    // along so the whole list is dealt — the order is what this spec is about,
+    // and the two toggles have to hold together.
+    await page.goto(`/study/flashcards/session?lists=${listId}&limit=all&shuffle=0`);
+    await waitForHydration(page);
+    expect((await walkDeck(page)).map(cardWord)).toEqual(listed);
+
+    // The builder is where that flag comes from, and it defaults to shuffled.
+    await page.goto("/study/flashcards");
+    await waitForHydration(page);
+    const toggle = panelFor(page, "words").getByRole("switch", { name: "Shuffle deck" });
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+
+    await panelFor(page, "words").getByRole("button", { name: "Start studying" }).click();
+    await expect(page).toHaveURL(/shuffle=0/);
+    // The session reports the order it used instead of claiming a random draw.
+    await expect(page.locator("main")).toContainText("in list order");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // "Reading on the front" (the flashcards builder's Options card).
 //
 // A word written in kanji is *asked* as kanji, so a learner who cannot read it
@@ -471,15 +552,27 @@ async function readCard(page: Page): Promise<CardRead> {
 }
 
 /**
+ * The word a card is asking about, whichever side it was dealt. A Japanese-side
+ * front leads with it; a meaning-side front hands it over on the back, which is
+ * mounted alongside the front.
+ */
+function cardWord(card: CardRead): string {
+  return card.titleSide ? card.frontLines[0] : card.backText.split("\n")[0].trim();
+}
+
+/**
  * Answer every card of the session and report what each one showed.
  *
  * The deck size comes off the header rather than being assumed, so this still
- * walks the whole deck if the starter pack grows.
+ * walks the whole deck if the starter pack grows. A shuffled deck says it "drew
+ * N random cards"; an unshuffled one deals the selection in its own order.
  */
 async function walkDeck(page: Page): Promise<CardRead[]> {
-  const header = /drew (\d+) random card/.exec(await page.locator("main").innerText());
+  const header = /(?:drew (\d+) random card|dealt (\d+) card)/.exec(
+    await page.locator("main").innerText()
+  );
   expect(header, "the session header reports its deck size").not.toBeNull();
-  const size = Number(header![1]);
+  const size = Number(header![1] ?? header![2]);
 
   const cards: CardRead[] = [];
   for (let index = 0; index < size; index += 1) {

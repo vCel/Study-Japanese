@@ -27,6 +27,25 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Flashcards · 日本語Vocab" }];
 }
 
+/**
+ * The deck's source items, together with the total they were drawn from.
+ *
+ * A sized deck knows its limit, so the count and the fetch go out together. A
+ * fixed-size deck *is* the count — the fetch cannot be asked for everything
+ * until the count says how much that is — so that one pays a round-trip.
+ */
+async function fetchWithTotal<T>(
+  count: () => Promise<number>,
+  fetch: (limit: number) => Promise<T[]>,
+  limit: number | null
+): Promise<[number, T[]]> {
+  if (limit === null) {
+    const total = await count();
+    return [total, await fetch(total)];
+  }
+  return Promise.all([count(), fetch(limit)]);
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const owner = context.get(ownerContext);
@@ -38,8 +57,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const ruleKindParam = url.searchParams.get("ruleKind");
   const ruleKind: RuleKind | null =
     ruleKindParam === "word" || ruleKindParam === "sentence" ? ruleKindParam : null;
+  // "all" is the builder's fixed deck: every card in the selection, so there is
+  // no number to clamp and none to slice to. Anything else is a deck size.
+  const fixedSize = url.searchParams.get("limit") === "all";
   const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "40", 10);
-  const limit = Number.isNaN(limitParam) ? 40 : Math.min(Math.max(limitParam, 5), 100);
+  const limit = fixedSize
+    ? null
+    : Number.isNaN(limitParam)
+      ? 40
+      : Math.min(Math.max(limitParam, 5), 100);
+  // Absent means shuffled — the builder only says so when the user turned it
+  // off. It reorders the deck; which side a card leads with is unaffected.
+  const shuffled = url.searchParams.get("shuffle") !== "0";
 
   // Stars are per-user and live in Convex, so the browser passes the signed-in
   // user's starred ids along; the deck is then narrowed to whichever of them
@@ -84,17 +113,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
 
   if (kind === "forms") {
-    const [totalAvailable, rules] = await Promise.all([
-      countRules(ownerId, ruleKind, filter, tagNames),
-      getRuleStudyDeck(ownerId, limit, ruleKind, filter, tagNames),
-    ]);
+    const [totalAvailable, rules] = await fetchWithTotal(
+      () => countRules(ownerId, ruleKind, filter, tagNames),
+      (fetchLimit) =>
+        getRuleStudyDeck(ownerId, fetchLimit, ruleKind, filter, tagNames, null, shuffled),
+      limit
+    );
     // Each ポイント of a rule becomes its own card, so one rule can contribute
     // several. The rule list is fetched at the deck size (every rule yields at
     // least one card, so there is always enough to fill the deck), flattened,
     // then re-shuffled and trimmed: without the shuffle a rule's points would
     // arrive as a block and the rule straddling the cut-off would lose its
-    // later points to the deck's other cards.
-    const deck = shuffle(rules.flatMap((rule) => ruleToStudyCards(rule))).slice(0, limit);
+    // later points to the deck's other cards. Asking for that block order is
+    // exactly what an unshuffled deck does.
+    const cards = rules.flatMap((rule) => ruleToStudyCards(rule));
+    const deck = (shuffled ? shuffle(cards) : cards).slice(0, limit ?? cards.length);
     return {
       kind,
       deck,
@@ -104,16 +137,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       limit,
       totalAvailable,
       starredOnly,
+      shuffled,
     };
   }
 
   // Phrases are all `pos = 'phrase'`, so the part-of-speech filter only applies
   // to the words tab.
   const pos = kind === "words" && isValidPos(posParam) ? posParam : null;
-  const [totalAvailable, words] = await Promise.all([
-    countWordsInLists(ownerId, listIds, pos, kind, filter),
-    getStudyDeck(ownerId, listIds, limit, pos, kind, filter),
-  ]);
+  const [totalAvailable, words] = await fetchWithTotal(
+    () => countWordsInLists(ownerId, listIds, pos, kind, filter),
+    (fetchLimit) => getStudyDeck(ownerId, listIds, fetchLimit, pos, kind, filter, shuffled),
+    limit
+  );
 
   return {
     kind,
@@ -124,11 +159,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     limit,
     totalAvailable,
     starredOnly,
+    shuffled,
   };
 }
 
 export default function StudySession({ loaderData }: Route.ComponentProps) {
-  const { deck, kind, listIds, pos, ruleKind, limit, totalAvailable, starredOnly } =
+  const { deck, kind, listIds, pos, ruleKind, limit, totalAvailable, starredOnly, shuffled } =
     loaderData;
 
   const scope =
@@ -136,12 +172,17 @@ export default function StudySession({ loaderData }: Route.ComponentProps) {
       ? `${starredOnly ? "★ " : ""}${totalAvailable} ${ruleKind ? `${ruleKind} ` : ""}rules`
       : `${listIds.length} list${listIds.length === 1 ? "" : "s"}${pos ? ` · ${pos} only` : ""} · ${starredOnly ? "★ " : ""}${totalAvailable} available`;
 
+  // An unshuffled deck is not a draw — it is the selection, in its own order.
+  const dealt = shuffled
+    ? `drew ${deck.length} random card${deck.length === 1 ? "" : "s"}`
+    : `dealt ${deck.length} card${deck.length === 1 ? "" : "s"} in list order`;
+
   return (
     <div className="w-full">
       <PageHeader
         title={`Flashcards · ${STUDY_KIND_LABELS[kind]}`}
         breadcrumbs={[{ label: "Flashcards", to: `/study/flashcards?kind=${kind}` }]}
-        description={`${scope} · drew ${deck.length} random card${deck.length === 1 ? "" : "s"}. Click the card or press Space to flip.`}
+        description={`${scope} · ${dealt}. Click the card or press Space to flip.`}
       />
 
       {deck.length === 0 ? (
@@ -154,10 +195,13 @@ export default function StudySession({ loaderData }: Route.ComponentProps) {
           .
         </div>
       ) : (
-        <Flashcards deck={deck} />
+        <Flashcards deck={deck} shuffled={shuffled} />
       )}
 
-      <p className="mt-4 text-center text-xs text-muted-foreground">Deck size {limit} cards</p>
+      {/* A fixed deck has no size to report but the one it dealt. */}
+      <p className="mt-4 text-center text-xs text-muted-foreground">
+        Deck size {limit ?? deck.length} cards
+      </p>
     </div>
   );
 }

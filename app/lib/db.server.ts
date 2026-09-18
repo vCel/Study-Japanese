@@ -867,13 +867,21 @@ export async function countWordsInLists(
   return row?.n ?? 0;
 }
 
+/**
+ * Draw a deck of words or phrases.
+ *
+ * `shuffled: false` walks the selection in the order the rest of the app shows
+ * it — `listWords` orders by id — so a learner who turned shuffling off gets the
+ * list they are looking at, not a random sample of it.
+ */
 export async function getStudyDeck(
   ownerId: string,
   listIds: number[],
   limit = 40,
   pos?: string | null,
   kind: StudyListKind = "words",
-  starredIds?: CardIdFilter
+  starredIds?: CardIdFilter,
+  shuffled = true
 ): Promise<WordDetail[]> {
   const db = getDb();
   if (listIds.length === 0) return [];
@@ -888,7 +896,7 @@ export async function getStudyDeck(
   const idClause = cardIdClause(starredIds, params);
   if (idClause) clause += ` AND ${idClause}`;
   const { results } = await db
-    .prepare(`SELECT id FROM words WHERE ${clause} ORDER BY RANDOM() LIMIT ?`)
+    .prepare(`SELECT id FROM words WHERE ${clause} ORDER BY ${shuffled ? "RANDOM()" : "id"} LIMIT ?`)
     .bind(...params, limit)
     .all<{ id: number }>();
   const ids = (results ?? []).map((r) => r.id);
@@ -1957,14 +1965,20 @@ export async function listRuleChoices(ownerId: string, limit = 500): Promise<Rul
   }));
 }
 
-/** A random deck of rules (with their examples) for the forms study tab. */
+/**
+ * A deck of rules (with their examples) for the forms study tab.
+ *
+ * `shuffled: false` uses the order the rules page lists them in, so the deck
+ * reads the same as the collection it came from.
+ */
 export async function getRuleStudyDeck(
   ownerId: string,
   limit = 40,
   kind?: RuleKind | null,
   starredIds?: CardIdFilter,
   tags?: string[] | null,
-  excludedTags?: string[] | null
+  excludedTags?: string[] | null,
+  shuffled = true
 ): Promise<RuleDetail[]> {
   const db = getDb();
   const params: (string | number)[] = [ownerId];
@@ -1978,8 +1992,10 @@ export async function getRuleStudyDeck(
   const tagClause = ruleTagClause(tags, excludedTags, params);
   if (tagClause) clauses.push(tagClause);
   const where = `WHERE ${clauses.join(" AND ")}`;
+  // Same order as `listRules`, so an unshuffled deck matches the rules page.
+  const order = shuffled ? "RANDOM()" : "created_at DESC, id DESC";
   const { results } = await db
-    .prepare(`SELECT id FROM rules ${where} ORDER BY RANDOM() LIMIT ?`)
+    .prepare(`SELECT id FROM rules ${where} ORDER BY ${order} LIMIT ?`)
     .bind(...params, limit)
     .all<{ id: number }>();
 
