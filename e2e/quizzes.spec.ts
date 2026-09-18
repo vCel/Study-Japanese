@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
-import { expectHydrated, seedStarterPack, stubConvex, wordIdByTitle } from "./helpers";
+import { expectHydrated, hydrationFailures, seedStarterPack, stubConvex, wordIdByTitle } from "./helpers";
 
 /** One tinted panel inside the merged "What to ask about" step. */
 function facetPanel(page: Page, source: "words" | "lists") {
@@ -1052,6 +1052,40 @@ test.describe("quiz builder", () => {
     await expect
       .poll(() => getRequest())
       .toMatchObject({ config: { tags: ["particles"], excludedTags: ["n5"] } });
+  });
+
+  /**
+   * The builder remembers its settings in localStorage, and applies them after
+   * the first render rather than during it.
+   *
+   * The server cannot read localStorage, so a remembered config read during
+   * render makes the client paint a tree the server did not — measured as
+   * `Hydration failed because the server rendered text didn't match the client`
+   * on every visit once any setting had been changed, with React discarding and
+   * rebuilding the whole builder. A stored config that differs from the defaults
+   * is the only thing that shows it, which is why this writes one rather than
+   * clicking it into place.
+   */
+  test("applies a remembered config without a hydration failure", async ({ page }) => {
+    await stubConvex(page);
+    const failures = hydrationFailures(page);
+
+    await page.goto("/study/quizzes");
+    await expectHydrated(page);
+    await page.evaluate(() =>
+      window.localStorage.setItem("jv:quiz:config", JSON.stringify({ difficulty: "hard" }))
+    );
+
+    await page.reload();
+    await expectHydrated(page);
+
+    // The stored config is what the builder comes back to…
+    await expect(page.getByRole("slider", { name: "Difficulty" })).toHaveAttribute(
+      "aria-valuetext",
+      "Hard"
+    );
+    // …and applying it did not cost the tree it was applied to.
+    expect(failures).toEqual([]);
   });
 });
 

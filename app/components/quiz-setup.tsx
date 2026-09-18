@@ -39,6 +39,7 @@ import {
   type SavedQuizSession,
 } from "~/lib/quiz-prefs";
 import {
+  DEFAULT_QUIZ_CONFIG,
   QUIZ_DIFFICULTIES,
   QUIZ_DIFFICULTY_HINTS,
   QUIZ_DIFFICULTY_LABELS,
@@ -185,19 +186,36 @@ export function QuizSetup({
   preselectedLists: number[];
   initialSources: QuizSourceKind[];
 }) {
-  const [config, setConfig] = React.useState<QuizConfig>(() => {
+  const [config, setConfig] = React.useState<QuizConfig>(() => ({
+    ...DEFAULT_QUIZ_CONFIG,
+    lists: preselectedLists,
+    // ?kind=words preselects that source.
+    sources: initialSources.length > 0 ? initialSources : DEFAULT_QUIZ_CONFIG.sources,
+  }));
+  const [sessions, setSessions] = React.useState<SavedQuizSession[]>(() => loadQuizSessions());
+  const starred = useStarredIds();
+  const { stats } = useQuizStats();
+
+  /**
+   * The remembered config, applied after the first render rather than during it.
+   *
+   * The server cannot read localStorage, so reading it in the initializer above
+   * made the client paint a tree the server had not: measured as `Hydration
+   * failed because the server rendered text didn't match the client` on every
+   * visit once any setting had been changed, with React discarding and
+   * rebuilding the whole builder. The price is one frame of the default config,
+   * paid only by a user who has changed something.
+   */
+  React.useEffect(() => {
     const remembered = loadQuizConfig();
-    return {
+    setConfig({
       ...remembered,
       // A deep link (?lists=…) wins over whatever was remembered.
       lists: preselectedLists.length > 0 ? preselectedLists : remembered.lists,
       // ?kind=words preselects that source; otherwise keep the remembered one.
       sources: initialSources.length > 0 ? initialSources : remembered.sources,
-    };
-  });
-  const [sessions, setSessions] = React.useState<SavedQuizSession[]>(() => loadQuizSessions());
-  const starred = useStarredIds();
-  const { stats } = useQuizStats();
+    });
+  }, []);
 
   const onChange = (patch: Partial<QuizConfig>) =>
     setConfig((prev) => {
