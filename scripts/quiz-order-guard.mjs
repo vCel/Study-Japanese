@@ -1,5 +1,6 @@
 /**
- * Guards the question order in `app/lib/quiz-parse.ts`.
+ * Guards the list `parseQuizQuestions` hands the runner: its order, and its
+ * membership.
  *
  * Models write one question type at a time. Ask for an even split across
  * multiple-choice, typing and fill-in-the-blank and what comes back is still
@@ -21,6 +22,17 @@
  * other half of "random order": a deterministic round-robin — always starting
  * with multiple-choice — would satisfy the spread check and give every retake
  * the same sequence.
+ *
+ * The same complaint arrives on a second axis: a model that fixates writes its
+ * questions about one library item together as well, and a fixation is a single
+ * type too — so the type spread cannot see it. `spreadBySource` deals within
+ * each type, and it gets its own check *and* its own self-test, because dropping
+ * it moves nothing else here.
+ *
+ * The third section is membership rather than order: a question the model
+ * returned twice is dropped (`factKey`), and that is invisible in the same way —
+ * the quiz is simply one question shorter, with nothing to say which question
+ * went or why.
  *
  * Run with `npm run quiz:order`.
  */
@@ -93,6 +105,33 @@ function repeats(questions, upTo = questions.length) {
   const found = [];
   for (let i = 1; i < upTo; i++) {
     if (questions[i].type === questions[i - 1].type) found.push(i);
+  }
+  return found;
+}
+
+/**
+ * One question about a given library item, citing it the way a model does.
+ *
+ * The prompt varies per item on purpose: `parseQuizQuestions` drops a question
+ * it has already seen, and a fixture that asked the same thing about two items
+ * in identical words would come back short for that reason instead.
+ */
+function aboutItem(id, n) {
+  return {
+    type: "input",
+    prompt: `How is 学生 read? (item ${id}, question ${n})`,
+    answer: "がくせい",
+    sourceId: id,
+    sourceKind: "word",
+  };
+}
+
+/** Indices where a question repeats the library item of the one before it. */
+function sourceRepeats(questions, upTo = questions.length) {
+  const key = (question) => `${question.sourceKind ?? "?"}:${question.sourceId ?? "?"}`;
+  const found = [];
+  for (let i = 1; i < upTo; i++) {
+    if (key(questions[i]) === key(questions[i - 1])) found.push(i);
   }
   return found;
 }
@@ -201,6 +240,92 @@ console.log("\nvariation — the same quiz must not come back in the same order 
 }
 
 /**
+ * The item axis, on its own fixture.
+ *
+ * Deliberately lopsided — five questions about one item and three about another
+ * — because that is what makes the self-test below deterministic: five of eight
+ * cannot be separated by three others, so *every* order of the raw fixture has
+ * two neighbours from the same item, and only the deal can take them apart.
+ *
+ * `ITEM_SPREAD_TO` is the usual smallest-block × items: how far one question per
+ * item carries before the shorter item runs out and the surplus has to follow
+ * itself. That tail is not a failure — no arrangement avoids it.
+ */
+const itemFixture = [
+  ...Array.from({ length: 5 }, (_, i) => aboutItem(7, i + 1)),
+  ...Array.from({ length: 3 }, (_, i) => aboutItem(8, i + 1)),
+];
+const ITEM_SPREAD_TO = 6;
+
+console.log("\nsource spread — questions about one item must not sit next to each other");
+{
+  const out = parsed(itemFixture);
+
+  if (out.length !== itemFixture.length) {
+    console.log(`  FAIL  ${out.length} of ${itemFixture.length} questions survived`);
+    failures += 1;
+  } else if (sourceRepeats(itemFixture).length === 0) {
+    console.log("  FAIL  the fixture is not grouped by item, so it cannot test anything");
+    failures += 1;
+  } else {
+    const stuck = sourceRepeats(out, ITEM_SPREAD_TO);
+    if (stuck.length > 0) {
+      const at = stuck[0];
+      console.log(
+        `  FAIL  item ${out[at].sourceId} twice in a row at position ${at} of ${out.length}`
+      );
+      failures += 1;
+    } else {
+      console.log(`  ok    items apart through ${ITEM_SPREAD_TO} of ${out.length}`);
+    }
+  }
+}
+
+/**
+ * Membership: a question the model returned twice.
+ *
+ * The prompt forbids repeating a fact and the parser drops the repeat
+ * (`factKey`), which is invisible — the quiz is simply one question shorter.
+ * The interesting part is how narrow the key is, so the second case is the
+ * control: two questions about one library item that are genuinely different
+ * questions both have to survive, because a key that merged those would take
+ * real questions out of every quiz without a symptom.
+ */
+const dedupeCases = [
+  {
+    name: "an exact repeat is dropped, and one copy is kept",
+    questions: [aboutItem(7, 1), aboutItem(7, 1)],
+    kept: 1,
+  },
+  {
+    name: "a repeat differing only by its annotation is still a repeat",
+    questions: [
+      { type: "input", prompt: "Type the Japanese for company cafeteria.", answer: "社食《しゃしょく》" },
+      { type: "input", prompt: "Type the Japanese for company cafeteria.", answer: "社食" },
+    ],
+    kept: 1,
+  },
+  {
+    name: "meaning and reading of one word are different questions",
+    questions: [
+      { type: "input", prompt: "Type the reading of 図書館 in kana.", answer: "としょかん", sourceId: 4, sourceKind: "word" },
+      { type: "multiple-choice", prompt: "What does 図書館 mean?", options: ["library", "hospital"], answer: "library", sourceId: 4, sourceKind: "word" },
+    ],
+    kept: 2,
+  },
+];
+
+console.log("\nmembership — a question returned twice is dropped, a different one is not");
+for (const testCase of dedupeCases) {
+  const out = parsed(testCase.questions);
+  const ok = out.length === testCase.kept;
+  if (!ok) failures += 1;
+  console.log(
+    `  ${ok ? "ok  " : "FAIL"}  ${testCase.name} — ${out.length} of ${testCase.questions.length} kept`
+  );
+}
+
+/**
  * The self-test: with the interleave removed, the grouped fixture must come
  * back grouped.
  *
@@ -250,11 +375,105 @@ if (!source.includes(ANCHOR)) {
   }
 }
 
+/**
+ * The item axis's own self-test, and its own anchor.
+ *
+ * The check above is the only one that fails if `spreadBySource` is dropped
+ * while `interleaveByType` stays — and the type self-test cannot see that,
+ * because it neuters the whole deal, so a fixture of one type comes back
+ * grouped for a different reason. This one neuters the item deal alone and
+ * requires the same lopsided fixture to come back with two neighbours from one
+ * item, which every order of it has.
+ */
+const SOURCE_ANCHOR = "spreadBySource(shuffle(bucket))";
+
+console.log("\nself-test — without the item deal, the lopsided fixture must come back grouped");
+
+if (!source.includes(SOURCE_ANCHOR)) {
+  console.log(`  FAIL  the item deal has moved — no \`${SOURCE_ANCHOR}\` in quiz-parse.ts.`);
+  console.log("        Re-point SOURCE_ANCHOR at whatever now spreads the items.");
+  selfTestFailures += 1;
+} else {
+  const neutered = path.join(OUT_DIR, "quiz-parse.no-source-spread.mjs");
+  await build({
+    stdin: {
+      contents: source.replace(SOURCE_ANCHOR, "shuffle(bucket)"),
+      resolveDir: path.join(REPO, "app", "lib"),
+      loader: "ts",
+      sourcefile: "quiz-parse.ts",
+    },
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    outfile: neutered,
+    logLevel: "warning",
+  });
+  const loose = await import(pathToFileURL(neutered).href);
+
+  const out = loose.parseQuizQuestions(
+    JSON.stringify({ questions: itemFixture }),
+    itemFixture.length
+  ).questions;
+  const ok = sourceRepeats(out).length > 0;
+  if (!ok) selfTestFailures += 1;
+  console.log(
+    `  ${ok ? "ok  " : "FAIL"}  the lopsided fixture${ok ? "" : " — still spread without the item deal"}`
+  );
+}
+
+/**
+ * The membership self-test, with its own anchor.
+ *
+ * The cases above would pass against a parser that had stopped checking for
+ * repeats, as long as something else dropped the second copy — and something
+ * else easily could, since `leaksAnswer` and the option floors run on the same
+ * entries. So the check has to be seen to be the one doing the work.
+ */
+const DEDUPE_ANCHOR = "    if (seen.has(key)) {";
+
+console.log("\nself-test — without the repeat check, the dropped copies must come back");
+
+if (!source.includes(DEDUPE_ANCHOR)) {
+  console.log(`  FAIL  the repeat check has moved — no \`${DEDUPE_ANCHOR.trim()}\` in quiz-parse.ts.`);
+  console.log("        Re-point DEDUPE_ANCHOR at whatever now drops a repeated question.");
+  selfTestFailures += 1;
+} else {
+  const neutered = path.join(OUT_DIR, "quiz-parse.no-dedupe.mjs");
+  await build({
+    stdin: {
+      contents: source.replace(DEDUPE_ANCHOR, "    if (false) {"),
+      resolveDir: path.join(REPO, "app", "lib"),
+      loader: "ts",
+      sourcefile: "quiz-parse.ts",
+    },
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    outfile: neutered,
+    logLevel: "warning",
+  });
+  const loose = await import(pathToFileURL(neutered).href);
+
+  for (const testCase of dedupeCases.filter((entry) => entry.kept < entry.questions.length)) {
+    const out = loose.parseQuizQuestions(
+      JSON.stringify({ questions: testCase.questions }),
+      testCase.questions.length
+    ).questions;
+    const ok = out.length === testCase.questions.length;
+    if (!ok) selfTestFailures += 1;
+    console.log(
+      `  ${ok ? "ok  " : "FAIL"}  ${testCase.name}${ok ? "" : " — still dropped without the check"}`
+    );
+  }
+}
+
 console.log("");
 if (failures === 0 && selfTestFailures === 0) {
-  console.log(`${cases.length}/${cases.length} cases behaved as expected.`);
+  console.log(`order: ${cases.length}/${cases.length} cases behaved as expected.`);
   console.log("variation: the order is not fixed.");
-  console.log("self-test: the spread is the interleave's doing, not the fixture's.");
+  console.log("source spread: no two questions about one item sit together.");
+  console.log("membership: a repeat is dropped and a different question is not.");
+  console.log("self-test: the spreads and the drop are the parser's doing, not the fixtures'.");
 } else {
   console.log(`${failures} case failure(s), ${selfTestFailures} self-test failure(s).`);
   process.exitCode = 1;

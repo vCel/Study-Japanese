@@ -112,7 +112,7 @@ function typeInstruction(type: QuizQuestionType, ctx: TypeContext): string {
       return [
         `- "input": ${QUIZ_TYPE_HINTS.input}`,
         `  The learner types this one, so the answer has to be short enough to type and bounded by material you hand them. Never ask them to compose a sentence of their own: every "input" question is one of the shapes below, and "answer" holds only the part being asked for.`,
-        `  - **Fill a gap.** Write the sentence in "sentence" with "___" (three underscores) where the missing piece goes, and put that piece alone in "answer" — one word or one particle, never the whole sentence. The gap stands for a whole word: put "answer" back into it and read the sentence again, because a gap that splits one leaves a sentence that is not Japanese — ___ご with the answer 中国《ちゅうごく》 gives 中国ご, and 中国語《ちゅうごくご》 is the word.`,
+        `  - **Fill a gap.** Write the sentence in "sentence" with "___" (three underscores) where the missing piece goes, and put that piece alone in "answer" — one word or one particle, never the whole sentence. The gap stands for a whole word: put "answer" back into it and read the sentence again, because a gap that splits one leaves a sentence that is not Japanese — ___ご with the answer 中国《ちゅうごく》 gives 中国《ちゅうごく》ご, and 中国語《ちゅうごくご》 is the word.`,
         ctx.hasRules
           ? `  - **Rewrite a sentence.** Put the sentence to rewrite in "sentence" and the rewritten sentence in "answer". The rewrite must change one thing only — the form the rule governs — so a learner cannot be marked wrong for a rewrite that was also correct.`
           : "",
@@ -153,8 +153,8 @@ const DISTRACTOR_QUALITY = [
   "A question with two defensible answers is a broken question: the user can be marked wrong for an answer that was also correct. Before you return your JSON, go back over every question that has \"options\" and substitute each option into the sentence or context.",
   "",
   "- If a distractor makes a sentence that is grammatical AND whose meaning is plausible, it is invalid. Either change the sentence so the surrounding context settles which one fits, or replace the distractor.",
-  "- Contrastive and paired forms are the usual trap: にくい / やすい, ない / ある, まで / までに, は / が, に / で, へ / から, 〜た / 〜なかった, 大きい / 小さい, 上手 / 下手, 行く / 来る, 〜ている / 〜てある.",
-  "  「このペンは使い___です」 is NOT a valid question — both にくい and やすい fit. Fix it by letting the context choose one (「このペンは軽くて持ちやすく、とても使い___です」 → やすい) or by using a different pair.",
+  "- Contrastive and paired forms are the usual trap: にくい / やすい, ない / ある, まで / までに, は / が, に / で, へ / から, 〜た / 〜なかった, 大《おお》きい / 小《ちい》さい, 上手《じょうず》 / 下手《へた》, 行《い》く / 来《く》る, 〜ている / 〜てある.",
+  "  「このペンは使《つか》い___です」 is NOT a valid question — both にくい and やすい fit. Fix it by letting the context choose one (「このペンは軽《かる》くて持《も》ちやすく、とても使《つか》い___です」 → やすい) or by using a different pair.",
   "- A distractor must be wrong, not merely unlikely. \"Probably not what they meant\" is not wrong enough.",
   "- Never use a synonym, a paraphrase, or another conjugation of the answer as a distractor.",
   "- With several gaps, every option must be wrong in every gap it could plausibly fill — except where it is the answer.",
@@ -163,10 +163,10 @@ const DISTRACTOR_QUALITY = [
   "A question also breaks by being too *easy*. If the item under test appears verbatim in the question, the only option that repeats it is obviously the answer, and the learner scores without knowing any Japanese — which is worse than a hard question, because it teaches nothing and looks careless.",
   "- The answer must never be the only option that shares a word, a character, or a reading with the question or the sentence.",
   "- **The prompt must not contain the answer.** Before you return, search your own \"prompt\" string for the answer text: if the answer appears in it, in any language, the question is broken. Rewrite it so the answer appears only in \"options\".",
-  "- **A meaning question must make the learner go through the Japanese.** If the options are English meanings, the prompt shows the Japanese word and does NOT state the meaning: What does 定食《ていしょく》 mean? with options \"set meal\" / \"meal ticket\" / \"documents\". If the prompt states the English meaning, the options must be Japanese words: Which of these means \"set meal\"? with options 定食 / 食券 / 資料. Never state the English meaning in the prompt *and* offer English meanings as options — Which of these means set meal? with the option \"set meal\" answers itself, and the learner can pick it without reading a word of Japanese.",
-  "- **Never quote a sentence that already contains the item under test.** If a question quotes Japanese, the tested word or ending must be absent from that quotation — leave it as ___ instead. 社食で昼ごはんを食べます。 where 社食 means company cafeteria gives the answer away twice over; so does quoting お客様はもう朝食を召し上がりましたか。 and then asking which honorific verb to use, because 召し上がる is the only option that appears in the quotation. Ask instead about ___で昼ごはんを食べます。, or quote a sentence that does not contain the verb at all.",
+  "- **A meaning question must make the learner go through the Japanese.** If the options are English meanings, the prompt shows the Japanese word and does NOT state the meaning: What does 定食《ていしょく》 mean? with options \"set meal\" / \"meal ticket\" / \"documents\". If the prompt states the English meaning, the options must be Japanese words: Which of these means \"set meal\"? with options 定食《ていしょく》 / 食券《しょっけん》 / 資料《しりょう》. Never state the English meaning in the prompt *and* offer English meanings as options — Which of these means set meal? with the option \"set meal\" answers itself, and the learner can pick it without reading a word of Japanese.",
+  "- **Never quote a sentence that already contains the item under test.** If a question quotes Japanese, the tested word or ending must be absent from that quotation — leave it as ___ instead. 社食《しゃしょく》で昼《ひる》ごはんを食《た》べます。 where 社食《しゃしょく》 means company cafeteria gives the answer away twice over; so does quoting お客様《おきゃくさま》はもう朝食《ちょうしょく》を召《め》し上《あ》がりましたか。 and then asking which honorific verb to use, because 召《め》し上《あ》がる is the only option that appears in the quotation. Ask instead about ___で昼《ひる》ごはんを食《た》べます。, or quote a sentence that does not contain the verb at all.",
   "- Where the question quotes Japanese, every option must be a plausible continuation or replacement of that quotation, so simply recognising the quoted text does not pick one out.",
-  "  Asking 「学生《がくせい》」 を使った文を選びなさい where only one option contains 学生 is a giveaway. Make every option usable in the sentence and let the grammar decide which is right.",
+  "  Asking 「学生《がくせい》」 を使《つか》った文《ぶん》を選《えら》びなさい where only one option contains 学生《がくせい》 is a giveaway. Make every option usable in the sentence and let the grammar decide which is right.",
   "- Keep the options the same kind of thing — same word class, same conjugation, similar length — so the answer cannot be identified by its shape alone.",
 ].join("\n");
 
@@ -195,6 +195,10 @@ const FURIGANA_RULE = [
   '',
   '- Annotate every kanji you write, wherever it appears: 学生です → 学生《がくせい》です, 今日は寒い → 今日《きょう》は寒《さむ》い.',
   '- That includes Japanese quoted inside an English "prompt" or "explanation": Which of these means 学生《がくせい》?',
+  // `options` is named because it is the field that gets skipped: the reader
+  // meets the bank before the sentence, so a bank of bare kanji is the whole
+  // question, unread.
+  '- That includes every entry of "options" and the "sentence". An option is a word the learner has to read, so it carries its reading exactly as a sentence does.',
   '- Kana is left bare: です, ます, は, を take no annotation.',
   '- Annotate whole words, not single characters: 大学《だいがく》, never 大《だい》学《がく》.',
   '- Use the reading that fits the sentence — the same kanji can be read several ways.',
@@ -227,7 +231,7 @@ const ANSWER_FORM = [
 ].join("\n");
 
 /**
- * Five examples of the whole thing done properly.
+ * Six examples of the whole thing done properly.
  *
  * `RESPONSE_SCHEMA` says what the fields are; it cannot show the *shape* of a
  * good question — a prompt that does not contain its answer, options where
@@ -240,6 +244,11 @@ const ANSWER_FORM = [
  * The three typing shapes are here for the same reason. A shape described only
  * in prose is a shape the models read past — the open-ended "type the Japanese
  * for departure" this replaced was itself an example, and got copied as one.
+ *
+ * The sixth example exists for one field: its `options` are kanji words, each
+ * carrying its reading. The only other option bank here is kana-only, so
+ * nothing in the prompt showed the model what an annotated option looks like,
+ * and option banks came back as bare kanji.
  *
  * The items are invented, and the preamble says so: examples drawn from the
  * real material is how a quiz ends up asking about 図書館 in a quiz that never
@@ -299,9 +308,20 @@ const WORKED_EXAMPLES = [
       "blanks": 1,
       "options": ["にくい", "やすい", "たい", "ながら"],
       "answer": "にくい",
-      "explanation": "狭《せま》くて says the road is narrow, so it is hard to pass: 通りにくい. 通りやすい is grammatical but contradicts that — やすい means easy to do.",
+      "explanation": "狭《せま》くて says the road is narrow, so it is hard to pass: 通《とお》りにくい. 通《とお》りやすい is grammatical but contradicts that — やすい means easy to do.",
       "sourceId": 1,
       "sourceKind": "rule"
+    },
+    {
+      "type": "fill-blanks",
+      "prompt": "Which word fits the gap?",
+      "sentence": "寒《さむ》いので窓《まど》を___ください。",
+      "blanks": 1,
+      "options": ["閉《し》めて", "開《あ》けて", "壊《こわ》して", "拭《ふ》いて"],
+      "answer": "閉《し》めて",
+      "explanation": "寒《さむ》いので says it is cold, so the window should be shut: 閉《し》めて. 開《あ》けて is its opposite and 拭《ふ》いて is about wiping, so neither fits.",
+      "sourceId": 12,
+      "sourceKind": "word"
     }
   ]
 }`,
@@ -313,25 +333,32 @@ const WORKED_EXAMPLES = [
   "- The second is a reading question, and its prompt leaves the word under test bare. 出発《しゅっぱつ》 there would be the answer, written out.",
   "- The third is a gap: the sentence carries the gap and the answer is the missing word on its own. Answering with the whole sentence is not what was asked for.",
   "- The fourth is a rewrite, and only the verb form changes — a learner who produces a different but equally defensible rewrite cannot be marked wrong. Its alternatives carry the kana and the romaji, because someone who cannot write kanji cannot type 買.",
-  "- The fifth one is the harder lesson: 通りやすい is perfectly grammatical, and the sentence is what rules it out. Letting 狭《せま》くて decide is the whole question.",
+  "- The fifth one is the harder lesson: 通《とお》りやすい is perfectly grammatical, and the sentence is what rules it out. Letting 狭《せま》くて decide is the whole question.",
+  "- The sixth has the same shape as the fifth and is here for its options: every one of them is a kanji word carrying its reading, 閉《し》めて rather than 閉めて, because an option the learner cannot read is the whole question, unread.",
   '- The explanations say why the answer fits and, where it matters, why the alternative does not. None of them restates the question or gives a bare dictionary gloss.',
   '- The input questions carry the spellings a learner might type in "acceptableAnswers", so kana and romaji are both marked right.',
 ].join("\n");
 
 /**
  * How to spread the questions, for each axis that has something to spread over:
- * the selected question types, and the two kinds of list material.
+ * the selected question types, the two kinds of list material, and the library
+ * items themselves.
  *
- * One setting covers both axes, so "even" is said twice — once per axis — and an
- * axis with a single bucket is dropped rather than told to spread across itself.
- * The kinds axis names `type: phrase`, because that line in the material is the
- * only thing distinguishing a phrase from an individual word.
+ * One setting covers the first two, so "even" is said twice — once per axis —
+ * and an axis with a single bucket is dropped rather than told to spread across
+ * itself. The kinds axis names `type: phrase`, because that line in the
+ * material is the only thing distinguishing a phrase from an individual word.
+ *
+ * The item axis is not a setting and has no "even"/"random" branch: the count
+ * asked for and the size of the material settle it between them, so the cap is
+ * derived rather than chosen. Left to itself a model concentrates — a
+ * ten-question quiz over a thirty-item deck came back with six questions about
+ * one word — and neither of the other two axes can see that, because those six
+ * questions are one type and one kind.
  */
-function distributionInstruction(config: QuizConfig): string {
+function distributionInstruction(config: QuizConfig, itemCount: number): string {
   const typeCount = config.types.length;
   const splitsKinds = config.sources.includes("words") && config.sources.includes("phrases");
-  if (typeCount <= 1 && !splitsKinds) return "";
-
   const lines: string[] = [];
 
   if (typeCount > 1) {
@@ -350,6 +377,18 @@ function distributionInstruction(config: QuizConfig): string {
       config.distribution === "even"
         ? 'Spread the questions evenly between the individual words and the phrases — the items marked "type: phrase" are the phrases. Neither kind should carry the whole quiz. It does not have to be exact.'
         : 'Choose freely how much of the quiz draws on individual words and how much on phrases — the items marked "type: phrase" are the phrases. One kind may end up more common than the other.'
+    );
+  }
+
+  // A single item is skipped: every question has to come from it, so there is
+  // nothing to spread over and the sentence would only add noise.
+  if (itemCount > 1 && config.questionCount > 1) {
+    lines.push(
+      itemCount >= config.questionCount
+        ? `Draw each question from a different library item — there are ${itemCount} items for ${config.questionCount} questions, so no item needs to be asked about twice.`
+        : `Draw the questions from the ${itemCount} items as evenly as you can: no item should carry more than ${Math.ceil(
+            config.questionCount / itemCount
+          )} questions.`
     );
   }
 
@@ -409,6 +448,12 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
   const particleRules = wantsRules && rules.some(looksLikeParticle);
   // Only worth saying when a question will actually offer a set of options.
   const offersOptions = config.types.some(usesOptions);
+  // What the item-spread instruction counts: the items the prompt actually
+  // describes, since those are the only ids the model can cite. Both sections
+  // are capped, so the loaded deck can be longer than the material on screen.
+  const describedItems =
+    (wantsRules ? Math.min(rules.length, MAX_RULES) : 0) +
+    (wantsLists ? Math.min(words.length, MAX_WORDS) : 0);
   // What an "input" question is allowed to be, given the material in scope.
   const typeContext: TypeContext = { particleRules, hasRules: wantsRules, hasWords: wantsWords };
 
@@ -417,7 +462,7 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     ? ""
     : config.focus !== "all" && focusOption
       ? `Focus every vocabulary question on this aspect: ${focusOption.label} — ${focusOption.hint}`
-      : "Mix the vocabulary question angles freely: word meaning, reading of the kanji, the kanji for a given reading, and correct usage in a sentence.";
+      : "Mix the vocabulary question angles freely: word meaning, reading of the kanji, the kanji for a given reading, and correct usage in a sentence — pick the angle that suits each word rather than working through all of them for the same one.";
 
   const system = [
     "You are a Japanese-language teacher writing a quiz for an English-speaking learner who cannot yet read kanji.",
@@ -478,7 +523,7 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
     "",
     "## Question types to use",
     config.types.map((type) => typeInstruction(type, typeContext)).join("\n"),
-    distributionInstruction(config),
+    distributionInstruction(config, describedItems),
     spreadInstruction,
     focusInstruction,
     ANSWER_FORM,
@@ -495,6 +540,7 @@ export function buildQuizPrompt(config: QuizConfig, items: QuizSourceItems): Bui
       : '- Every question MUST set "sourceKind" to "word".',
     '- Every question MUST include a short "explanation": name the rule or word involved, say why the answer is right *in this sentence*, and — where a tempting option was wrong — say why. Do not restate the question, and do not give a bare dictionary gloss.',
     '- Do not test the same fact twice. A word\'s meaning and its reading are different facts and both may be asked; the same meaning asked twice is a wasted question.',
+    '- Ask about as many different library items as the material allows: one word or rule must not carry several questions while other items go unasked.',
     '- For any question with "options", the options MUST be listed in an arbitrary, shuffled order — the correct answer must NOT reliably come first.',
     '- Never reveal the answer inside the "prompt" text.',
     '- An "input" answer holds only the part being asked for — the missing word of a gap, the rewritten sentence, or a reading in kana. Never a sentence the learner had to invent.',

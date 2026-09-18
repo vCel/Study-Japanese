@@ -7,6 +7,11 @@
  * instead of an error page. Options are re-shuffled here too, because "in a
  * random order" is an instruction the model may quietly ignore.
  *
+ * Two more things the model is asked for and does anyway are settled here
+ * rather than asked for again: a question returned twice is dropped (see
+ * {@link factKey}), and the order is re-dealt so the quiz does not arrive in
+ * blocks (see {@link interleaveByType}).
+ *
  * One failure is neither malformed nor re-shufflable: a question that spells
  * out its own answer. The prompt asks the model not to, and it does anyway —
  * see {@link leaksAnswer}.
@@ -39,11 +44,16 @@ function asStringArray(value: unknown): string[] {
 }
 
 /**
- * Drop repeated options, comparing on a trimmed, case-folded form.
+ * Drop repeated options, comparing on {@link comparable}.
  *
  * A pool that lists the same string twice — most damagingly, the answer twice —
  * cannot be rendered as a single-choice question: the user would see two
  * identical buttons and only one of them would be marked right.
+ *
+ * The comparison is the same one every other option comparison in the app uses,
+ * so an option the model annotated in one entry and left bare in another
+ * (`乾《かわ》いて` and `乾いて`) is one option rather than two buttons the
+ * learner cannot tell apart.
  *
  * Deliberately *not* applied to fill-blanks: there the pool is a bank, and a
  * two-gap answer legitimately needs the same filler twice (「は, は」).
@@ -51,7 +61,7 @@ function asStringArray(value: unknown): string[] {
 function dedupeOptions(options: string[]): string[] {
   const seen = new Set<string>();
   return options.filter((option) => {
-    const key = option.trim().toLowerCase();
+    const key = comparable(option);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -278,6 +288,73 @@ export interface ParseResult {
 }
 
 /**
+ * A question's identity as a *fact*, for dropping an exact repeat.
+ *
+ * The prompt already forbids asking the same fact twice, and this is the part
+ * of that which can be compared rather than judged: same type, same wording,
+ * same answer. Deliberately that narrow — two questions about one word are
+ * allowed to be different questions, so anything looser starts costing real
+ * ones, and a dropped question is invisible.
+ *
+ * Compared through `comparable` because a model returning a question twice may
+ * annotate one copy and not the other.
+ */
+function factKey(question: QuizQuestion): string {
+  return [
+    question.type,
+    comparable(question.prompt),
+    comparable(question.sentence ?? ""),
+    comparable(question.answer),
+  ].join("|");
+}
+
+/**
+ * Which library item a question is about, as a comparable key.
+ *
+ * `sourceKind` and `sourceId` are the model's own citation of the item it wrote
+ * the question from, and rule ids and word ids are separate sequences — so the
+ * kind has to be part of the key, or word 7 and rule 7 would share a bucket.
+ * Questions that cite nothing share one bucket, because nothing tells them
+ * apart.
+ */
+function sourceKey(question: QuizQuestion): string {
+  return `${question.sourceKind ?? "?"}:${question.sourceId ?? "?"}`;
+}
+
+/**
+ * Deal one question per library item in turn.
+ *
+ * The second axis of the same complaint `interleaveByType` answers, and the one
+ * the type interleave cannot see: a model that fixates on a single word writes
+ * its six questions about that word together, and all six are the same type.
+ * Within a type the item is therefore what gets spread — which is also the only
+ * axis that helps in the tail, where a surplus type has no other type left to
+ * put between two neighbours.
+ *
+ * The items keep their first-appearance order and the order within an item is
+ * left alone, so the caller's shuffle still decides the sequence.
+ */
+function spreadBySource(questions: QuizQuestion[]): QuizQuestion[] {
+  const buckets = new Map<string, QuizQuestion[]>();
+  for (const question of questions) {
+    const key = sourceKey(question);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(question);
+    else buckets.set(key, [question]);
+  }
+
+  const groups = [...buckets.values()];
+  const dealt: QuizQuestion[] = [];
+  for (let round = 0; dealt.length < questions.length; round++) {
+    for (const group of groups) {
+      const next = group[round];
+      if (next) dealt.push(next);
+    }
+  }
+  return dealt;
+}
+
+/**
  * Deal the questions out so the types do not arrive in blocks.
  *
  * Models write one type at a time — every multiple-choice question, then every
@@ -296,6 +373,10 @@ export interface ParseResult {
  *
  * A type with more questions than the others keeps its surplus at the end. That
  * tail is a block, but it is the block no arrangement can avoid.
+ *
+ * Each type is dealt by item before the type deal runs — see `spreadBySource` —
+ * because the item is the axis a model's fixation shows up on and the tail is
+ * exactly where the type deal has nothing left to separate two neighbours with.
  */
 function interleaveByType(questions: QuizQuestion[]): QuizQuestion[] {
   const buckets = new Map<string, QuizQuestion[]>();
@@ -305,7 +386,7 @@ function interleaveByType(questions: QuizQuestion[]): QuizQuestion[] {
     else buckets.set(question.type, [question]);
   }
 
-  const groups = shuffle([...buckets.values()].map((bucket) => shuffle(bucket)));
+  const groups = shuffle([...buckets.values()].map((bucket) => spreadBySource(shuffle(bucket))));
 
   const dealt: QuizQuestion[] = [];
   for (let round = 0; dealt.length < questions.length; round++) {
@@ -319,8 +400,11 @@ function interleaveByType(questions: QuizQuestion[]): QuizQuestion[] {
 
 /**
  * Parse a model response into questions, keeping at most `limit` of them.
- * Throws only when nothing usable came back at all — at that point the caller
- * should treat the attempt as failed and move to the next model.
+ *
+ * Malformed entries and exact repeats are dropped, so fewer than `limit` can
+ * come back — the caller asked for a count, not a guarantee. Throws only when
+ * nothing usable came back at all: at that point the caller should treat the
+ * attempt as failed and move to the next model.
  */
 export function parseQuizQuestions(text: string, limit: number): ParseResult {
   let payload: unknown;
@@ -339,11 +423,24 @@ export function parseQuizQuestions(text: string, limit: number): ParseResult {
   if (!rawList) throw new Error("The model's JSON had no questions array.");
 
   const questions: QuizQuestion[] = [];
+  const seen = new Set<string>();
   let dropped = 0;
   for (let index = 0; index < rawList.length && questions.length < limit; index++) {
     const parsed = parseQuestion(rawList[index], questions.length);
-    if (parsed) questions.push(parsed);
-    else dropped += 1;
+    if (!parsed) {
+      dropped += 1;
+      continue;
+    }
+    // A repeat is dropped rather than kept, and the loop reads on — so a
+    // question the model wrote twice costs the quiz nothing as long as it wrote
+    // extras to spare.
+    const key = factKey(parsed);
+    if (seen.has(key)) {
+      dropped += 1;
+      continue;
+    }
+    seen.add(key);
+    questions.push(parsed);
   }
 
   if (questions.length === 0) {
