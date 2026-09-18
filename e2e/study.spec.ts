@@ -461,6 +461,10 @@ test.describe("deck size and order", () => {
     // numbers agreeing is the assertion — the starter pack's size is not
     // hard-coded, so this still means something if it grows.
     const main = page.locator("main");
+    // Wait for the session page to replace the builder: `toHaveURL` resolves on
+    // the history entry, which changes before the loader's response renders, so
+    // an innerText read straight away reads the builder — which reports no scope.
+    await expect(main).toContainText(/\d+ available/);
     const scope = /(\d+) available/.exec(await main.innerText());
     expect(scope, "the session header reports the scope").not.toBeNull();
     expect(Number(scope![1])).toBeGreaterThan(0);
