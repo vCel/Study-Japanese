@@ -49,7 +49,7 @@ export default function StudySetupPage({ loaderData }: Route.ComponentProps) {
     <div className="w-full">
       <PageHeader
         title="Build a study session"
-        description="Words, phrases and grammar forms each get their own deck. Pick lists (optionally narrowed by tags), set a deck size, then start."
+        description="Words, phrases and grammar forms each get their own deck. Pick lists (optionally narrowed by tags), then start — the deck size and order sit in the options."
       />
       <StudySetup
         wordLists={loaderData.wordLists}

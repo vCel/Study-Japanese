@@ -1,7 +1,8 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import {
   ACCORDION_TRIGGER,
+  hydrationFailures,
   listIdByTitle,
   seedStarterPack,
   stubConvex,
@@ -52,6 +53,20 @@ async function saveSession(page: Page, kind: StudyTab, name: string) {
   await expect(page.getByRole("dialog")).toHaveCount(0);
 }
 
+/**
+ * Put "Fixed deck size" in the wanted state.
+ *
+ * It is on by default, and the deck-size pills only exist while it is off — so a
+ * spec that wants to choose a size has to turn it off first, exactly as a user
+ * would. Clicking a pill without this is a locator timeout, not a failure with a
+ * readable message.
+ */
+async function setFixedSize(panel: Locator, on: boolean) {
+  const fixed = panel.getByRole("switch", { name: "Fixed deck size" });
+  if ((await fixed.getAttribute("aria-checked")) !== String(on)) await fixed.click();
+  await expect(fixed).toHaveAttribute("aria-checked", String(on));
+}
+
 test.describe("study sections", () => {
   test("offers a words, phrases and rules tab", async ({ page }) => {
     await page.goto("/study");
@@ -78,6 +93,7 @@ test.describe("study sections", () => {
     // Configure the words tab…
     const words = panelFor(page, "words");
     await words.getByRole("button", { name: "Nouns" }).click();
+    await setFixedSize(words, false);
     await words.getByRole("button", { name: "20 cards" }).click();
     await expect(words.getByRole("button", { name: "Nouns" })).toHaveAttribute(
       "aria-pressed",
@@ -90,10 +106,13 @@ test.describe("study sections", () => {
     await expect(phrases).toBeVisible();
     await expect(phrases.getByText("Phrase lists")).toBeVisible();
     await expect(phrases.getByRole("button", { name: "Nouns" })).toHaveCount(0);
-    await expect(phrases.getByRole("button", { name: "40 cards" })).toHaveAttribute(
-      "aria-pressed",
+    // Its own config rather than the words tab's, and its own default is fixed
+    // size on — which is why it has no size pills to compare against.
+    await expect(phrases.getByRole("switch", { name: "Fixed deck size" })).toHaveAttribute(
+      "aria-checked",
       "true"
     );
+    await expect(phrases.getByRole("button", { name: "20 cards" })).toHaveCount(0);
 
     // …and rules swaps the source picker for a rule-kind picker.
     await page.getByRole("tab", { name: "Rules" }).click();
@@ -107,6 +126,10 @@ test.describe("study sections", () => {
     await expect(words.getByRole("button", { name: "Nouns" })).toHaveAttribute(
       "aria-pressed",
       "true"
+    );
+    await expect(words.getByRole("switch", { name: "Fixed deck size" })).toHaveAttribute(
+      "aria-checked",
+      "false"
     );
     await expect(words.getByRole("button", { name: "20 cards" })).toHaveAttribute(
       "aria-pressed",
@@ -227,11 +250,7 @@ test.describe("starting from a word list", () => {
 
 test.describe("session rendering", () => {
   test("hydrates without a server/client mismatch", async ({ page }) => {
-    const problems: string[] = [];
-    page.on("pageerror", (error) => problems.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") problems.push(message.text());
-    });
+    const failures = hydrationFailures(page);
 
     await page.goto("/study/flashcards/session?kind=words&limit=4");
     // `networkidle` stays here on purpose: this spec is watching for errors, not
@@ -242,7 +261,7 @@ test.describe("session rendering", () => {
 
     // Both the deck's leading sides and its order are dealt by the loader, so
     // React must never have to throw the server markup away and rebuild it.
-    expect(problems.filter((text) => /hydration/i.test(text))).toEqual([]);
+    expect(failures).toEqual([]);
   });
 });
 
@@ -346,6 +365,7 @@ test.describe("saved study sessions", () => {
     await waitForHydration(page);
 
     const panel = panelFor(page, "words");
+    await setFixedSize(panel, false);
     await panel.getByRole("button", { name: "10 cards" }).click();
 
     // No sessions yet, so nothing to load.
@@ -364,12 +384,18 @@ test.describe("saved study sessions", () => {
     await expect(page.locator('[data-slot="toast"]')).toContainText("N5 quick round");
     await expect(panel.getByRole("button", { name: "Load" })).toBeEnabled();
 
-    // The tab it was saved from is recorded.
+    // The tab it was saved from is recorded, and so is the toggle that made the
+    // size mean anything.
     const stored = await page.evaluate(() =>
       JSON.parse(window.localStorage.getItem("jv:study:sessions") ?? "[]")
     );
     expect(stored).toHaveLength(1);
-    expect(stored[0]).toMatchObject({ name: "N5 quick round", kind: "words", limit: 10 });
+    expect(stored[0]).toMatchObject({
+      name: "N5 quick round",
+      kind: "words",
+      limit: 10,
+      fixedSize: false,
+    });
   });
 
   test("loads a session from the load drawer's reorderable list", async ({ page }) => {
@@ -378,6 +404,7 @@ test.describe("saved study sessions", () => {
     const panel = panelFor(page, "words");
 
     // Save one session with a 10-card deck.
+    await setFixedSize(panel, false);
     await panel.getByRole("button", { name: "10 cards" }).click();
     await saveSession(page, "words", "Ten card deck");
 
@@ -432,25 +459,20 @@ test.describe("saved study sessions", () => {
 // Options card: "Fixed deck size" decides *how many* cards are dealt — all of
 // the selection, or a sample of it — and "Shuffle deck" decides the order they
 // arrive in. Neither may imply the other.
+//
+// Fixed size is on by default, so the size pills are the thing a spec has to ask
+// for; the absence of them is what says the deck is fixed.
 // ---------------------------------------------------------------------------
 
 test.describe("deck size and order", () => {
-  test("a fixed deck drops the size choice and deals the whole selection", async ({ page }) => {
+  test("a fixed deck is the default, and deals the whole selection", async ({ page }) => {
     await page.goto("/study/flashcards");
     await waitForHydration(page);
     const panel = panelFor(page, "words");
 
-    // Sized by default, and the pills are what says so.
-    const forty = panel.getByRole("button", { name: "40 cards" });
-    await expect(forty).toBeVisible();
     const fixed = panel.getByRole("switch", { name: "Fixed deck size" });
-    await expect(fixed).toHaveAttribute("aria-checked", "false");
-
-    await fixed.click();
     await expect(fixed).toHaveAttribute("aria-checked", "true");
-    // The choice goes away rather than sitting there disabled…
-    await expect(forty).toHaveCount(0);
-    // …and the summary says what the deck now is.
+    await expect(panel.getByRole("button", { name: "40 cards" })).toHaveCount(0);
     await expect(panel).toContainText("Every card in your selection.");
 
     await panel.getByRole("button", { name: "Start studying" }).click();
@@ -470,14 +492,34 @@ test.describe("deck size and order", () => {
     expect(Number(scope![1])).toBeGreaterThan(0);
     await expect(main).toContainText(`Deck size ${scope![1]} cards`);
 
-    // Per tab, like the rest of the panel: fixing the words deck leaves the
-    // phrases tab with its own size choice.
+    // Per tab, like the rest of the panel: the phrases tab keeps its own switch,
+    // and its own default is fixed too.
     await page.goto("/study/flashcards");
     await waitForHydration(page);
     await page.getByRole("tab", { name: "Phrases" }).click();
-    await expect(
-      panelFor(page, "phrases").getByRole("button", { name: "40 cards" })
-    ).toBeVisible();
+    const phrases = panelFor(page, "phrases");
+    await expect(phrases.getByRole("switch", { name: "Fixed deck size" })).toHaveAttribute(
+      "aria-checked",
+      "true"
+    );
+    await expect(phrases.getByRole("button", { name: "40 cards" })).toHaveCount(0);
+  });
+
+  test("fixed size off deals the chosen number of cards", async ({ page }) => {
+    await page.goto("/study/flashcards");
+    await waitForHydration(page);
+    const panel = panelFor(page, "words");
+
+    // Turning it off is what brings the choice back.
+    await setFixedSize(panel, false);
+    const ten = panel.getByRole("button", { name: "10 cards" });
+    await expect(ten).toBeVisible();
+    await ten.click();
+    await expect(panel).toContainText("Up to 10 cards from your selection.");
+
+    await panel.getByRole("button", { name: "Start studying" }).click();
+    await expect(page).toHaveURL(/limit=10/);
+    await expect(page.locator("main")).toContainText("Deck size 10 cards");
   });
 
   test("shuffle off deals the deck in the list's own order", async ({ page }) => {
@@ -509,6 +551,81 @@ test.describe("deck size and order", () => {
     await expect(page).toHaveURL(/shuffle=0/);
     // The session reports the order it used instead of claiming a random draw.
     await expect(page.locator("main")).toContainText("in list order");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The builder remembers its settings in localStorage, per tab, so a reload comes
+// back to the same configuration rather than to the defaults.
+//
+// They are applied *after* the first render: the server cannot read
+// localStorage, so a config read during render makes the client paint a tree the
+// server did not, and React discards and rebuilds the whole builder. A config
+// that differs from the defaults is what makes that difference visible, which is
+// why the second spec writes one rather than clicking it into place.
+// ---------------------------------------------------------------------------
+
+test.describe("remembered settings", () => {
+  test("a reload comes back to the same configuration", async ({ page }) => {
+    await page.goto("/study/flashcards");
+    await waitForHydration(page);
+    const panel = panelFor(page, "words");
+
+    await setFixedSize(panel, false);
+    await panel.getByRole("button", { name: "10 cards" }).click();
+    await panel.getByRole("switch", { name: "Shuffle deck" }).click();
+    await panel.getByRole("button", { name: "Nouns" }).click();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const remembered = panelFor(page, "words");
+    await expect(remembered.getByRole("switch", { name: "Fixed deck size" })).toHaveAttribute(
+      "aria-checked",
+      "false"
+    );
+    await expect(remembered.getByRole("button", { name: "10 cards" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    await expect(remembered.getByRole("switch", { name: "Shuffle deck" })).toHaveAttribute(
+      "aria-checked",
+      "false"
+    );
+    await expect(remembered.getByRole("button", { name: "Nouns" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  test("a remembered config is applied without a hydration failure", async ({ page }) => {
+    const failures = hydrationFailures(page);
+
+    await page.goto("/study/flashcards");
+    await waitForHydration(page);
+    // Written, not clicked, so it is already there when the page is loaded
+    // again — that is the only way the client's first render can disagree with
+    // the server's, and so the only way to pin that it does not.
+    await page.evaluate(() =>
+      window.localStorage.setItem(
+        "jv:study:config",
+        JSON.stringify({ words: { fixedSize: false, limit: 10, shuffle: false } })
+      )
+    );
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const panel = panelFor(page, "words");
+    await expect(panel.getByRole("button", { name: "10 cards" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    await expect(panel.getByRole("switch", { name: "Shuffle deck" })).toHaveAttribute(
+      "aria-checked",
+      "false"
+    );
+    expect(failures).toEqual([]);
   });
 });
 

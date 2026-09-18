@@ -54,6 +54,28 @@ export async function expectHydrated(page: Page) {
 }
 
 /**
+ * The hydration failures this page reports from here on, collected live.
+ *
+ * React logs a mismatch as an uncaught error a tick *after* the markup is up, so
+ * this has to be called before the navigation and asserted on once the page has
+ * settled — a listener installed afterwards has nothing to look at.
+ *
+ * Only hydration is recorded. A page can emit unrelated errors, and failing on
+ * those would make the check depend on noise rather than on the tree.
+ */
+export function hydrationFailures(page: Page): string[] {
+  const failures: string[] = [];
+  const record = (text: string) => {
+    if (/hydration/i.test(text)) failures.push(text);
+  };
+  page.on("pageerror", (error) => record(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") record(message.text());
+  });
+  return failures;
+}
+
+/**
  * Neutralise Convex for this page.
  *
  * The app wraps everything in `ConvexClientProvider` whenever `VITE_CONVEX_URL`

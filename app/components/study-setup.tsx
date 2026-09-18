@@ -31,15 +31,18 @@ import {
   FRONT_READING_KEY,
   loadPreference,
   loadSessions,
+  loadStudyConfigs,
   newSessionId,
   replaceSessionsOfKind,
   REPETITION_KEY,
   savePreference,
   saveSessions,
+  saveStudyConfigs,
   sessionsOfKind,
   STUDY_KIND_LABELS,
   type SavedSession,
   type StudyConfig,
+  type StudyConfigs,
   type StudyKind,
   type StudyRuleKind,
 } from "~/lib/study-prefs";
@@ -125,7 +128,7 @@ export function StudySetup({
   preselectedLists: number[];
   initialKind: StudyKind;
 }) {
-  const [configs, setConfigs] = React.useState<Record<StudyKind, StudyConfig>>(() => ({
+  const [configs, setConfigs] = React.useState<StudyConfigs>(() => ({
     words: { ...DEFAULT_STUDY_CONFIG, lists: preselectedLists },
     phrases: { ...DEFAULT_STUDY_CONFIG },
     forms: { ...DEFAULT_STUDY_CONFIG },
@@ -140,11 +143,38 @@ export function StudySetup({
   React.useEffect(() => {
     setFrontReading(loadPreference(FRONT_READING_KEY, "1", ["1", "0"]) === "1");
   }, []);
+
+  /**
+   * The remembered config, for the same reason and at the same cost as the
+   * switch above: the server cannot read localStorage, so a config read during
+   * render makes the client paint a tree the server did not — measured as one
+   * hydration failure per visit, with React discarding the whole builder. The
+   * price is one frame of the default config, paid only by a user who has
+   * changed something.
+   *
+   * Runs once: a deep link's lists win over the remembered ones on the way in,
+   * and the state below belongs to the user from then on.
+   */
+  React.useEffect(() => {
+    const stored = loadStudyConfigs();
+    setConfigs({
+      words: {
+        ...stored.words,
+        lists: preselectedLists.length > 0 ? preselectedLists : stored.words.lists,
+      },
+      phrases: stored.phrases,
+      forms: stored.forms,
+    });
+  }, []);
   // Stars are per-user and live in Convex, so they only arrive in the browser.
   const starred = useStarredIds();
 
   const updateConfig = (kind: StudyKind, patch: Partial<StudyConfig>) =>
-    setConfigs((prev) => ({ ...prev, [kind]: { ...prev[kind], ...patch } }));
+    setConfigs((prev) => {
+      const next = { ...prev, [kind]: { ...prev[kind], ...patch } };
+      saveStudyConfigs(next);
+      return next;
+    });
 
   const updateSessions = (kind: StudyKind, next: SavedSession[]) => {
     const merged = replaceSessionsOfKind(sessions, kind, next);

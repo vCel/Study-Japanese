@@ -47,9 +47,58 @@ export const DEFAULT_STUDY_CONFIG: StudyConfig = {
   ruleKind: "",
   important: false,
   limit: 40,
-  fixedSize: false,
+  // On, so a first visit deals the whole selection: the size pills are a choice
+  // about a sample, and there is no sample until this is turned off.
+  fixedSize: true,
   shuffle: true,
 };
+
+/** Each tab keeps its own remembered config, keyed by kind. */
+export type StudyConfigs = Record<StudyKind, StudyConfig>;
+
+const CONFIG_KEY = "jv:study:config";
+
+/** Each tab at its defaults — the shape both a cold start and a bad record fall back to. */
+function defaultConfigs(): StudyConfigs {
+  return {
+    words: { ...DEFAULT_STUDY_CONFIG },
+    phrases: { ...DEFAULT_STUDY_CONFIG },
+    forms: { ...DEFAULT_STUDY_CONFIG },
+  };
+}
+
+/**
+ * The config the builder was last left in, per tab.
+ *
+ * Read it *after* the first render (see `StudySetup`): the server cannot reach
+ * localStorage, so a remembered config read during render makes the client paint
+ * a different tree than the one it adopted.
+ */
+export function loadStudyConfigs(): StudyConfigs {
+  if (typeof window === "undefined") return defaultConfigs();
+  try {
+    const raw = window.localStorage.getItem(CONFIG_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    const stored = (parsed && typeof parsed === "object" ? parsed : {}) as Partial<StudyConfigs>;
+    return {
+      // A record with no `fixedSize` has simply never been set, so it takes
+      // today's default — unlike a saved session, which is dated (see below).
+      words: normalizeConfig(stored.words, DEFAULT_STUDY_CONFIG.fixedSize),
+      phrases: normalizeConfig(stored.phrases, DEFAULT_STUDY_CONFIG.fixedSize),
+      forms: normalizeConfig(stored.forms, DEFAULT_STUDY_CONFIG.fixedSize),
+    };
+  } catch {
+    return defaultConfigs();
+  }
+}
+
+export function saveStudyConfigs(configs: StudyConfigs) {
+  try {
+    window.localStorage.setItem(CONFIG_KEY, JSON.stringify(configs));
+  } catch {
+    // Storage unavailable — the in-session config still applies.
+  }
+}
 
 export function loadPreference<T extends string>(key: string, fallback: T, allowed: T[]): T {
   if (typeof window === "undefined") return fallback;
@@ -74,6 +123,39 @@ export interface SavedSession extends StudyConfig {
 
 const SESSIONS_KEY = "jv:study:sessions";
 
+/**
+ * Merge a stored config over the defaults, dropping anything malformed so a
+ * record written before a field existed still loads and a hand-edited value
+ * cannot produce a config the builder has no control for.
+ *
+ * `fixedSizeWhenAbsent` is the one field that cannot have a single answer. A
+ * remembered *preference* with no `fixedSize` has simply never been set, so it
+ * takes today's default; a saved *session* with no `fixedSize` was written
+ * before the option existed and meant a sized draw, and inheriting the default
+ * would silently turn every old "20 cards" session into the whole selection.
+ */
+function normalizeConfig(raw: unknown, fixedSizeWhenAbsent: boolean): StudyConfig {
+  const value = (raw && typeof raw === "object" ? raw : {}) as Partial<StudyConfig>;
+  return {
+    lists: Array.isArray(value.lists)
+      ? value.lists.filter((id): id is number => typeof id === "number")
+      : [],
+    tags: Array.isArray(value.tags)
+      ? value.tags.filter((tag): tag is string => typeof tag === "string")
+      : [],
+    pos: typeof value.pos === "string" ? value.pos : "",
+    ruleKind: value.ruleKind === "word" || value.ruleKind === "sentence" ? value.ruleKind : "",
+    important: value.important === true,
+    limit: typeof value.limit === "number" ? value.limit : DEFAULT_STUDY_CONFIG.limit,
+    // Absent means the behaviour from before the option existed, for both
+    // fields. For `shuffle` that is also today's default, which is why the
+    // literal is right here and `fixedSize` alone needs the caller's answer —
+    // and why neither should be "tidied" into the other's shape.
+    fixedSize: typeof value.fixedSize === "boolean" ? value.fixedSize : fixedSizeWhenAbsent,
+    shuffle: typeof value.shuffle === "boolean" ? value.shuffle : true,
+  };
+}
+
 function normalizeSession(item: unknown): SavedSession | null {
   if (!item || typeof item !== "object") return null;
   const raw = item as Partial<SavedSession>;
@@ -85,18 +167,12 @@ function normalizeSession(item: unknown): SavedSession | null {
     raw.kind === "phrases" || raw.kind === "forms" ? raw.kind : "words";
 
   return {
+    // A session written before `fixedSize` existed was a sized draw, so it is
+    // read as one rather than as today's default of "everything".
+    ...normalizeConfig(raw, false),
     id: raw.id,
     name: raw.name,
     kind,
-    lists: raw.lists.filter((id): id is number => typeof id === "number"),
-    tags: raw.tags.filter((tag): tag is string => typeof tag === "string"),
-    pos: typeof raw.pos === "string" ? raw.pos : "",
-    ruleKind: raw.ruleKind === "word" || raw.ruleKind === "sentence" ? raw.ruleKind : "",
-    important: raw.important === true,
-    limit: raw.limit,
-    // Sessions saved before these two existed were a shuffled, sized draw.
-    fixedSize: raw.fixedSize === true,
-    shuffle: raw.shuffle !== false,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
   };
 }
